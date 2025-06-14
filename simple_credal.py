@@ -381,12 +381,10 @@ class RealWorldCredalCBM(nn.Module):
         
         return concept_uncertainties
 
-def train_real_world_credal_cbm(model: RealWorldCredalCBM, train_loader: DataLoader, 
-                                val_loader: DataLoader, epochs: int = 50,
-                                device: str = 'cpu'):
+def train_real_world_credal_cbm(model, train_loader, val_loader, epochs=50,
+                               device='cpu', feature_extractor=None):
     """Enhanced training with validation and uncertainty regularization"""
     
-    model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
     
@@ -397,18 +395,22 @@ def train_real_world_credal_cbm(model: RealWorldCredalCBM, train_loader: DataLoa
     val_accuracies = []
     
     for epoch in range(epochs):
-        # Training phase
         model.train()
         epoch_loss = 0
         
-        for batch_idx, batch in enumerate(train_loader):
-            features = batch['features'].to(device)
+        for batch in train_loader:
+            images = batch['features'].to(device)
             concepts = batch['concepts'].to(device)
             labels = batch['label'].to(device)
             
-            optimizer.zero_grad()
+            # Extract features through frozen ResNet
+            if feature_extractor is not None:
+                with torch.no_grad():
+                    features = feature_extractor(images)
+            else:
+                features = images
             
-            # Forward pass
+            optimizer.zero_grad()
             credal_sets, predictions, metrics = model(features)
             
             # Compute concept loss using expectations
@@ -423,11 +425,10 @@ def train_real_world_credal_cbm(model: RealWorldCredalCBM, train_loader: DataLoa
             # Prediction loss
             prediction_loss = prediction_loss_fn(predictions, labels)
             
-            # Uncertainty regularization (encourage diverse credal sets)
+            # Uncertainty regularization
             uncertainty_reg = 0
             for sample_credal_sets in credal_sets:
                 for credal_set in sample_credal_sets:
-                    # Penalize overly certain predictions
                     uncertainty_reg += max(0, 0.1 - credal_set.size())
             uncertainty_reg = uncertainty_reg / (len(credal_sets) * len(credal_sets[0]))
             
@@ -447,8 +448,14 @@ def train_real_world_credal_cbm(model: RealWorldCredalCBM, train_loader: DataLoa
         
         with torch.no_grad():
             for batch in val_loader:
-                features = batch['features'].to(device)
+                images = batch['features'].to(device)
                 labels = batch['label'].to(device)
+                
+                # Extract features
+                if feature_extractor is not None:
+                    features = feature_extractor(images)
+                else:
+                    features = images
                 
                 _, predictions, _ = model(features)
                 
@@ -469,8 +476,7 @@ def train_real_world_credal_cbm(model: RealWorldCredalCBM, train_loader: DataLoa
     
     return train_losses, val_accuracies
 
-def analyze_concept_uncertainty(model: RealWorldCredalCBM, dataset: AnimalsWithAttributesDataset,
-                               device: str = 'cpu', n_samples: int = 100):
+def analyze_concept_uncertainty(model, dataset, device='cpu', n_samples=100, feature_extractor=None):
     """Comprehensive analysis of concept uncertainty patterns"""
     
     model.eval()
@@ -486,8 +492,14 @@ def analyze_concept_uncertainty(model: RealWorldCredalCBM, dataset: AnimalsWithA
             if len(all_credal_sets) * 32 >= n_samples:
                 break
                 
-            features = batch['features'].to(device)
+            images = batch['features'].to(device)
             labels = batch['label'].numpy()
+            
+            # Extract features if needed
+            if feature_extractor is not None:
+                features = feature_extractor(images)
+            else:
+                features = images
             
             credal_sets, predictions, metrics = model(features)
             
@@ -497,8 +509,8 @@ def analyze_concept_uncertainty(model: RealWorldCredalCBM, dataset: AnimalsWithA
             all_metrics.append(metrics)
     
     # Analysis 1: Uncertainty by concept
-    concept_uncertainties = np.zeros((len(all_credal_sets), len(dataset.concept_names)))
-    concept_values = np.zeros((len(all_credal_sets), len(dataset.concept_names)))
+    concept_uncertainties = np.zeros((len(all_credal_sets), len(dataset.get_concept_names())))
+    concept_values = np.zeros((len(all_credal_sets), len(dataset.get_concept_names())))
     
     for i, credal_sets in enumerate(all_credal_sets):
         for j, credal_set in enumerate(credal_sets):
@@ -517,7 +529,7 @@ def analyze_concept_uncertainty(model: RealWorldCredalCBM, dataset: AnimalsWithA
     axes[0, 0].set_ylabel('Average Uncertainty')
     axes[0, 0].set_title('Most Uncertain Concepts')
     axes[0, 0].set_xticks(range(len(concept_indices)))
-    axes[0, 0].set_xticklabels([dataset.concept_names[i] for i in concept_indices], 
+    axes[0, 0].set_xticklabels([dataset.get_concept_names()[i] for i in concept_indices], 
                                rotation=45, ha='right')
     
     # Plot 2: Uncertainty vs Concept Value correlation
@@ -529,11 +541,11 @@ def analyze_concept_uncertainty(model: RealWorldCredalCBM, dataset: AnimalsWithA
     
     # Plot 3: Uncertainty by animal class
     class_uncertainties = []
-    for class_idx in range(len(dataset.animal_classes)):
+    for class_idx in range(len(dataset.get_class_names())):
         class_mask = np.array(all_labels) == class_idx
         if np.any(class_mask):
             class_unc = np.mean(concept_uncertainties[class_mask])
-            class_uncertainties.append((dataset.animal_classes[class_idx], class_unc))
+            class_uncertainties.append((dataset.get_class_names()[class_idx], class_unc))
     
     class_uncertainties.sort(key=lambda x: x[1], reverse=True)
     class_names, class_uncs = zip(*class_uncertainties[:15])
@@ -555,7 +567,7 @@ def analyze_concept_uncertainty(model: RealWorldCredalCBM, dataset: AnimalsWithA
         axes[1, 1].set_ylabel('Learned Importance')
         axes[1, 1].set_title('Most Important Concepts (Learned)')
         axes[1, 1].set_xticks(range(len(important_concepts)))
-        axes[1, 1].set_xticklabels([dataset.concept_names[i] for i in important_concepts], 
+        axes[1, 1].set_xticklabels([dataset.get_concept_names()[i] for i in important_concepts], 
                                    rotation=45, ha='right')
     
     plt.tight_layout()
@@ -564,13 +576,11 @@ def analyze_concept_uncertainty(model: RealWorldCredalCBM, dataset: AnimalsWithA
     return {
         'concept_uncertainties': concept_uncertainties,
         'concept_values': concept_values,
-        'most_uncertain_concepts': [dataset.concept_names[i] for i in concept_indices[:10]],
+        'most_uncertain_concepts': [dataset.get_concept_names()[i] for i in concept_indices[:10]],
         'most_uncertain_classes': class_names[:10]
     }
 
-def demonstrate_uncertainty_guided_annotation(model: RealWorldCredalCBM, 
-                                             dataset: AnimalsWithAttributesDataset,
-                                             uncertainty_threshold: float = 0.3):
+def demonstrate_uncertainty_guided_annotation(model, dataset, uncertainty_threshold=0.3, feature_extractor=None):
     """Show how uncertainty can guide human annotation efforts"""
     
     model.eval()
@@ -587,8 +597,14 @@ def demonstrate_uncertainty_guided_annotation(model: RealWorldCredalCBM,
             if samples_analyzed >= 20:  # Analyze first 20 samples
                 break
                 
-            features = batch['features']
-            animal_name = batch['animal_name'][0]
+            images = batch['features'].to(device)
+            animal_name = dataset.get_class_names()[batch['label'][0]]
+            
+            # Extract features if needed
+            if feature_extractor is not None:
+                features = feature_extractor(images)
+            else:
+                features = images
             
             credal_sets, predictions, metrics = model(features)
             sample_credal_sets = credal_sets[0]
@@ -598,7 +614,7 @@ def demonstrate_uncertainty_guided_annotation(model: RealWorldCredalCBM,
             for i, credal_set in enumerate(sample_credal_sets):
                 if credal_set.size() > uncertainty_threshold:
                     uncertain_concepts.append({
-                        'concept': dataset.concept_names[i],
+                        'concept': dataset.get_concept_names()[i],
                         'uncertainty': credal_set.size(),
                         'interval': credal_set.interval_probability(1),
                         'entropy': credal_set.entropy()
@@ -670,8 +686,10 @@ def main():
     
     # Load Animals with Attributes dataset
     print("\n📁 Loading Animals with Attributes dataset...")
-    train_dataset = AnimalsWithAttributesDataset(train=True, download=True)
-    val_dataset = AnimalsWithAttributesDataset(train=False, download=False)
+    from Animal import AnimalDataset
+    
+    train_dataset = AnimalDataset('trainclasses.txt', root_dir='data')
+    val_dataset = AnimalDataset('testclasses.txt', root_dir='data')
     
     print(f"   Training samples: {len(train_dataset)}")
     print(f"   Validation samples: {len(val_dataset)}")
@@ -679,25 +697,33 @@ def main():
     print(f"   Animal classes: {len(train_dataset.get_class_names())}")
     
     # Create data loaders
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=4)
     
-    # Initialize model
+    # Initialize feature extractor (ResNet50)
+    print("\n🧠 Initializing feature extractor...")
+    feature_extractor = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V2)
+    feature_extractor.fc = nn.Identity()  # Remove classification head
+    feature_extractor = feature_extractor.to(device)
+    feature_extractor.eval()
+    
+    # Initialize Credal CBM
     print("\n🧠 Initializing Credal CBM...")
     model = RealWorldCredalCBM(
-        input_dim=2048,  # Simulated CNN features
+        input_dim=2048,  # ResNet50 feature dimension
         concept_names=train_dataset.get_concept_names(),
         class_names=train_dataset.get_class_names(),
         n_credal_points=5,
         uncertainty_method='ensemble'
-    )
+    ).to(device)
     
     print(f"   Model parameters: {sum(p.numel() for p in model.parameters()):,}")
     
     # Train model
     print("\n🎯 Training Credal CBM...")
     train_losses, val_accuracies = train_real_world_credal_cbm(
-        model, train_loader, val_loader, epochs=30, device=device
+        model, train_loader, val_loader, epochs=30, device=device,
+        feature_extractor=feature_extractor
     )
     
     print(f"   Final validation accuracy: {val_accuracies[-1]:.4f}")
@@ -705,7 +731,8 @@ def main():
     # Analyze uncertainty patterns
     print("\n🔍 Analyzing Concept Uncertainty Patterns...")
     uncertainty_analysis = analyze_concept_uncertainty(
-        model, val_dataset, device=device, n_samples=200
+        model, val_dataset, device=device, n_samples=200,
+        feature_extractor=feature_extractor
     )
     
     print(f"\n📊 Most uncertain concepts:")
@@ -715,9 +742,9 @@ def main():
     # Demonstrate uncertainty-guided annotation
     print("\n🎯 Demonstrating Uncertainty-Guided Annotation...")
     annotation_priorities = demonstrate_uncertainty_guided_annotation(
-        model, val_dataset, uncertainty_threshold=0.2
+        model, val_dataset, uncertainty_threshold=0.2,
+        feature_extractor=feature_extractor
     )
-    
     
     return model, uncertainty_analysis, annotation_priorities
 
