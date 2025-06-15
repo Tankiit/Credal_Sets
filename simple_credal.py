@@ -19,11 +19,16 @@ from io import BytesIO
 import os
 from typing import List, Tuple, Dict, Optional
 import warnings
-warnings.filterwarnings('ignore')
-
-# Import our credal CBM components
 from dataclasses import dataclass
 from scipy.optimize import linprog
+import tqdm
+warnings.filterwarnings('ignore')
+
+# Import base components
+from credal_base import CredalSet, ConceptAnnotation, RealWorldCredalCBM
+
+# Import MMD components
+from mmd_credal import MMDEnhancedCredalCBM, train_mmd_enhanced_credal_cbm, analyze_concept_stability
 
 @dataclass
 class ConceptAnnotation:
@@ -52,6 +57,25 @@ class CredalSet:
     def variance(self) -> np.ndarray:
         """Calculate variance across extreme points for each concept"""
         return np.var(self.extreme_points, axis=0)
+    
+    def size(self) -> float:
+        """Calculate the size/spread of the credal set"""
+        # Use the range between upper and lower probabilities as a measure of size
+        ranges = np.max(self.extreme_points, axis=0) - np.min(self.extreme_points, axis=0)
+        return np.mean(ranges)  # Average range across all classes
+    
+    def interval_probability(self, class_idx: int) -> Tuple[float, float]:
+        """Get probability interval [lower, upper] for a specific class"""
+        probs = self.extreme_points[:, class_idx]
+        return float(np.min(probs)), float(np.max(probs))
+    
+    def lower_probability(self, class_idx: int) -> float:
+        """Get lower probability for a specific class"""
+        return np.min(self.extreme_points[:, class_idx])
+    
+    def upper_probability(self, class_idx: int) -> float:
+        """Get upper probability for a specific class"""
+        return np.max(self.extreme_points[:, class_idx])
     
     def credal_dominance_score(self, target_concept: int) -> float:
         """Score indicating how strongly a concept is supported"""
@@ -382,7 +406,7 @@ class RealWorldCredalCBM(nn.Module):
         return concept_uncertainties
 
 def train_real_world_credal_cbm(model, train_loader, val_loader, epochs=50,
-                               device='cpu', feature_extractor=None):
+                               device='cpu'):
     """Enhanced training with validation and uncertainty regularization"""
     
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
@@ -398,17 +422,10 @@ def train_real_world_credal_cbm(model, train_loader, val_loader, epochs=50,
         model.train()
         epoch_loss = 0
         
-        for batch in train_loader:
-            images = batch['features'].to(device)
-            concepts = batch['concepts'].to(device)
-            labels = batch['label'].to(device)
-            
-            # Extract features through frozen ResNet
-            if feature_extractor is not None:
-                with torch.no_grad():
-                    features = feature_extractor(images)
-            else:
-                features = images
+        for features, concepts, labels in train_loader:
+            features = features.to(device)
+            concepts = concepts.to(device)
+            labels = labels.to(device)
             
             optimizer.zero_grad()
             credal_sets, predictions, metrics = model(features)
@@ -447,15 +464,9 @@ def train_real_world_credal_cbm(model, train_loader, val_loader, epochs=50,
         val_total = 0
         
         with torch.no_grad():
-            for batch in val_loader:
-                images = batch['features'].to(device)
-                labels = batch['label'].to(device)
-                
-                # Extract features
-                if feature_extractor is not None:
-                    features = feature_extractor(images)
-                else:
-                    features = images
+            for features, concepts, labels in val_loader:
+                features = features.to(device)
+                labels = labels.to(device)
                 
                 _, predictions, _ = model(features)
                 
@@ -476,37 +487,32 @@ def train_real_world_credal_cbm(model, train_loader, val_loader, epochs=50,
     
     return train_losses, val_accuracies
 
-def analyze_concept_uncertainty(model, dataset, device='cpu', n_samples=100, feature_extractor=None):
-    """Comprehensive analysis of concept uncertainty patterns"""
+def analyze_concept_uncertainty(model, dataset, device='cpu', n_samples=100):
+    """Analyze concept uncertainty patterns using pre-extracted features"""
     
     model.eval()
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=False)
+    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
     
     all_credal_sets = []
     all_labels = []
     all_predictions = []
     all_metrics = []
+    samples_seen = 0
     
     with torch.no_grad():
-        for batch in dataloader:
-            if len(all_credal_sets) * 32 >= n_samples:
+        for features, concepts, labels in dataloader:
+            if samples_seen >= n_samples:
                 break
-                
-            images = batch['features'].to(device)
-            labels = batch['label'].numpy()
             
-            # Extract features if needed
-            if feature_extractor is not None:
-                features = feature_extractor(images)
-            else:
-                features = images
-            
+            features = features.to(device)
             credal_sets, predictions, metrics = model(features)
             
             all_credal_sets.extend(credal_sets)
-            all_labels.extend(labels)
+            all_labels.extend(labels.numpy())
             all_predictions.extend(predictions.cpu().numpy())
             all_metrics.append(metrics)
+            
+            samples_seen += features.size(0)
     
     # Analysis 1: Uncertainty by concept
     concept_uncertainties = np.zeros((len(all_credal_sets), len(dataset.get_concept_names())))
@@ -580,8 +586,8 @@ def analyze_concept_uncertainty(model, dataset, device='cpu', n_samples=100, fea
         'most_uncertain_classes': class_names[:10]
     }
 
-def demonstrate_uncertainty_guided_annotation(model, dataset, uncertainty_threshold=0.3, feature_extractor=None):
-    """Show how uncertainty can guide human annotation efforts"""
+def demonstrate_uncertainty_guided_annotation(model, dataset, uncertainty_threshold=0.3, device='cpu'):
+    """Show uncertainty-guided annotation with pre-extracted features"""
     
     model.eval()
     dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
@@ -593,19 +599,11 @@ def demonstrate_uncertainty_guided_annotation(model, dataset, uncertainty_thresh
     high_uncertainty_samples = []
     
     with torch.no_grad():
-        for batch in dataloader:
+        for features, concepts, labels in dataloader:
             if samples_analyzed >= 20:  # Analyze first 20 samples
                 break
-                
-            images = batch['features'].to(device)
-            animal_name = dataset.get_class_names()[batch['label'][0]]
             
-            # Extract features if needed
-            if feature_extractor is not None:
-                features = feature_extractor(images)
-            else:
-                features = images
-            
+            features = features.to(device)
             credal_sets, predictions, metrics = model(features)
             sample_credal_sets = credal_sets[0]
             
@@ -625,14 +623,14 @@ def demonstrate_uncertainty_guided_annotation(model, dataset, uncertainty_thresh
                 uncertain_concepts.sort(key=lambda x: x['uncertainty'], reverse=True)
                 
                 sample_info = {
-                    'animal': animal_name,
+                    'animal': dataset.get_class_names()[labels[0]],
                     'prediction_confidence': F.softmax(predictions[0], dim=0).max().item(),
                     'uncertain_concepts': uncertain_concepts[:5]  # Top 5 most uncertain
                 }
                 
                 high_uncertainty_samples.append(sample_info)
                 
-                print(f"\n🦁 Animal: {animal_name}")
+                print(f"\n🦁 Animal: {sample_info['animal']}")
                 print(f"   Model confidence: {sample_info['prediction_confidence']:.3f}")
                 print(f"   Uncertain concepts:")
                 
@@ -681,72 +679,138 @@ def main():
     print("=" * 50)
     
     # Set device
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = 'mps' if torch.backends.mps.is_available() else 'cpu'
     print(f"Using device: {device}")
     
     # Load Animals with Attributes dataset
     print("\n📁 Loading Animals with Attributes dataset...")
     from Animal import AnimalDataset
     
-    train_dataset = AnimalDataset('trainclasses.txt', root_dir='data')
-    val_dataset = AnimalDataset('testclasses.txt', root_dir='data')
+    train_dataset = AnimalDataset('trainclasses.txt', root_dir='/Users/tanmoy/research/data/Animals_with_Attributes2')
+    val_dataset = AnimalDataset('testclasses.txt', root_dir='/Users/tanmoy/research/data/Animals_with_Attributes2')
     
     print(f"   Training samples: {len(train_dataset)}")
     print(f"   Validation samples: {len(val_dataset)}")
     print(f"   Concepts: {len(train_dataset.get_concept_names())}")
     print(f"   Animal classes: {len(train_dataset.get_class_names())}")
     
-    # Create data loaders
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=4)
+    # Create data loaders with smaller batch size
+    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True, num_workers=2)
+    val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False, num_workers=2)
     
-    # Initialize feature extractor (ResNet50)
+    # Initialize feature extractor
     print("\n🧠 Initializing feature extractor...")
     feature_extractor = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V2)
     feature_extractor.fc = nn.Identity()  # Remove classification head
     feature_extractor = feature_extractor.to(device)
     feature_extractor.eval()
     
-    # Initialize Credal CBM
-    print("\n🧠 Initializing Credal CBM...")
-    model = RealWorldCredalCBM(
+    # Cache features to disk if not already cached
+    train_cache = 'train_features.npz'
+    val_cache = 'val_features.npz'
+    
+    def extract_and_cache_features(loader, cache_file):
+        if os.path.exists(cache_file):
+            print(f"Loading cached features from {cache_file}")
+            data = np.load(cache_file)
+            return (torch.tensor(data['features']), 
+                   torch.tensor(data['concepts']), 
+                   torch.tensor(data['labels']))
+        
+        print(f"Extracting and caching features to {cache_file}")
+        all_features = []
+        all_concepts = []
+        all_labels = []
+        
+        with torch.no_grad():
+            for batch in tqdm.tqdm(loader):
+                images = batch['features'].to(device)
+                concepts = batch['concepts']
+                labels = batch['label']
+                
+                # Extract features in smaller sub-batches if needed
+                features = feature_extractor(images).cpu()
+                
+                all_features.append(features.numpy())
+                all_concepts.append(concepts.numpy())
+                all_labels.append(labels.numpy())
+        
+        # Concatenate and save
+        features = np.concatenate(all_features)
+        concepts = np.concatenate(all_concepts)
+        labels = np.concatenate(all_labels)
+        
+        np.savez(cache_file, 
+                 features=features,
+                 concepts=concepts,
+                 labels=labels)
+        
+        return (torch.tensor(features), 
+                torch.tensor(concepts), 
+                torch.tensor(labels))
+    
+    print("\n📦 Processing dataset features...")
+    train_features, train_concepts, train_labels = extract_and_cache_features(
+        train_loader, train_cache)
+    val_features, val_concepts, val_labels = extract_and_cache_features(
+        val_loader, val_cache)
+    
+    # Create memory-efficient feature datasets
+    from torch.utils.data import TensorDataset
+    train_feature_dataset = TensorDataset(train_features, train_concepts, train_labels)
+    val_feature_dataset = TensorDataset(val_features, val_concepts, val_labels)
+    
+    # Create feature loaders with smaller batch size
+    train_feature_loader = DataLoader(train_feature_dataset, batch_size=32, 
+                                    shuffle=True, num_workers=2)
+    val_feature_loader = DataLoader(val_feature_dataset, batch_size=32, 
+                                   shuffle=False, num_workers=2)
+    
+    # Initialize MMD-Enhanced Credal CBM
+    print("\n🧠 Initializing MMD-Enhanced Credal CBM...")
+    model = MMDEnhancedCredalCBM(
         input_dim=2048,  # ResNet50 feature dimension
         concept_names=train_dataset.get_concept_names(),
         class_names=train_dataset.get_class_names(),
         n_credal_points=5,
-        uncertainty_method='ensemble'
+        uncertainty_method='ensemble',
+        mmd_weight=0.01,
+        enable_drift_detection=True
     ).to(device)
     
     print(f"   Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+    print(f"   MMD weight: {model.mmd_weight}")
+    print(f"   Drift detection: {'enabled' if model.enable_drift_detection else 'disabled'}")
     
-    # Train model
-    print("\n🎯 Training Credal CBM...")
-    train_losses, val_accuracies = train_real_world_credal_cbm(
-        model, train_loader, val_loader, epochs=30, device=device,
-        feature_extractor=feature_extractor
+    # Train model using pre-extracted features with MMD regularization
+    print("\n🎯 Training MMD-Enhanced Credal CBM...")
+    train_losses, val_accuracies, mmd_losses = train_mmd_enhanced_credal_cbm(
+        model, train_feature_loader, val_feature_loader, 
+        epochs=30, device=device, feature_extractor=None
     )
     
     print(f"   Final validation accuracy: {val_accuracies[-1]:.4f}")
+    print(f"   Final MMD loss: {mmd_losses[-1]:.6f}")
     
-    # Analyze uncertainty patterns
-    print("\n🔍 Analyzing Concept Uncertainty Patterns...")
-    uncertainty_analysis = analyze_concept_uncertainty(
-        model, val_dataset, device=device, n_samples=200,
-        feature_extractor=feature_extractor
+    # Analyze concept stability and uncertainty patterns
+    print("\n🔍 Analyzing Concept Stability and Uncertainty Patterns...")
+    stability_analysis = analyze_concept_stability(
+        model, val_feature_dataset, device=device, n_samples=200
     )
     
-    print(f"\n📊 Most uncertain concepts:")
-    for concept in uncertainty_analysis['most_uncertain_concepts']:
-        print(f"   • {concept}")
+    print(f"\n📊 Stability Analysis Results:")
+    print(f"   Mean stability score: {stability_analysis['mean_stability']:.6f}")
+    print(f"   Drift rate: {stability_analysis['drift_rate']:.2%}")
+    print(f"   Number of drift events: {len(stability_analysis['drift_events'])}")
     
     # Demonstrate uncertainty-guided annotation
     print("\n🎯 Demonstrating Uncertainty-Guided Annotation...")
     annotation_priorities = demonstrate_uncertainty_guided_annotation(
-        model, val_dataset, uncertainty_threshold=0.2,
-        feature_extractor=feature_extractor
+        model, val_feature_dataset, uncertainty_threshold=0.2,
+        device=device
     )
     
-    return model, uncertainty_analysis, annotation_priorities
+    return model, stability_analysis, annotation_priorities
 
 if __name__ == "__main__":
     # Run the complete demonstration
