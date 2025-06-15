@@ -8,10 +8,16 @@ import torchvision.transforms as transforms
 
 class AnimalDataset(data.Dataset):
     def __init__(self, classes_file, root_dir='data', transform=None):
-        # Load the binary predicate matrix (50 classes x 85 attributes)
-        predicate_path = os.path.join(root_dir, 'predicate-matrix-binary.txt')
-        self.predicate_binary_mat = np.array(np.genfromtxt(predicate_path, dtype='int'))
+        # Load the continuous predicate matrix (50 classes x 85 attributes)
+        predicate_path = os.path.join(root_dir, 'predicate-matrix-continuous.txt')
+        self.predicate_mat = np.array(np.genfromtxt(predicate_path, dtype='float'))
         
+        # Load predicate (attribute) names
+        self.predicate_names = []
+        with open(os.path.join(root_dir, 'predicates.txt')) as f:
+            for line in f:
+                self.predicate_names.append(line.strip())
+
         # Default transform if none provided
         if transform is None:
             self.transform = transforms.Compose([
@@ -26,16 +32,19 @@ class AnimalDataset(data.Dataset):
         else:
             self.transform = transform
 
-        # Build class name to index mapping
-        self.class_to_index = dict()
-        with open(os.path.join(root_dir, 'classes.txt')) as f:
-            index = 0
-            for line in f:
-                class_name = line.split('\t')[1].strip()
-                self.class_to_index[class_name] = index
-                index += 1
+        # Build class name to index mapping from train/test files
+        self.class_to_index = {}
+        index = 0
+        # Read both train and test files to get all classes
+        for split_file in ['trainclasses.txt', 'testclasses.txt']:
+            with open(os.path.join(root_dir, split_file)) as f:
+                for line in f:
+                    class_name = line.strip()
+                    if class_name not in self.class_to_index:
+                        self.class_to_index[class_name] = index
+                        index += 1
 
-        # Load all image paths and their class indices
+        # Load all image paths and their class indices for this split
         self.img_names = []
         self.img_index = []
         with open(os.path.join(root_dir, classes_file)) as f:
@@ -60,7 +69,7 @@ class AnimalDataset(data.Dataset):
 
         # Get class index and attribute vector
         im_index = self.img_index[index]
-        im_predicate = self.predicate_binary_mat[im_index,:]
+        im_predicate = self.predicate_mat[im_index,:]
         
         return {
             'features': im,
@@ -74,11 +83,11 @@ class AnimalDataset(data.Dataset):
 
     def get_concept_names(self):
         """Return list of attribute names"""
-        return [f"attr_{i}" for i in range(self.predicate_binary_mat.shape[1])]
+        return self.predicate_names
     
     def get_class_names(self):
-        """Return list of class names"""
-        return list(self.class_to_index.keys())
+        """Return list of class names in index order"""
+        return [k for k, _ in sorted(self.class_to_index.items(), key=lambda x: x[1])]
 
 if __name__ == '__main__':
   dataset = AnimalDataset('testclasses.txt')
