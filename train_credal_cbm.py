@@ -616,6 +616,244 @@ class EnhancedCredalCBMTrainer:
 
         plt.show()
 
+    def run_single_experiment(self, dataset_name: str, encoder_name: str,
+                            credal_method: str) -> Dict[str, Any]:
+        """Run a single experiment configuration (compatible with original trainer)"""
+        # Get configurations
+        dataset_config = get_dataset_info(dataset_name)
+        encoder_config = get_encoder_info(encoder_name)
+        credal_config = get_credal_info(credal_method)
+
+        # Initialize data processor
+        processor = DataProcessor(dataset_config, encoder_config)
+
+        # Load and process data
+        try:
+            print(f"\n[1] Loading and processing {dataset_name}...")
+            texts, labels = processor.load_huggingface_data()
+
+            # Split data
+            X_train, X_val, X_test, y_train, y_val, y_test = processor.split_data(
+                texts, labels,
+                self.config.train_size,
+                self.config.val_size,
+                self.config.test_size
+            )
+
+            # Encode labels
+            y_train_enc = processor.process_labels(y_train)
+            y_val_enc = processor.process_labels(y_val)
+            y_test_enc = processor.process_labels(y_test)
+
+            print(f"Data splits - Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
+
+        except Exception as e:
+            print(f"Error processing data: {e}")
+            return {"error": str(e)}
+
+        # Encode texts
+        try:
+            print(f"[2] Encoding texts with {encoder_name}...")
+            X_train_enc = processor.encode_texts(X_train)
+            X_val_enc = processor.encode_texts(X_val)
+            X_test_enc = processor.encode_texts(X_test)
+
+        except Exception as e:
+            print(f"Error encoding texts: {e}")
+            return {"error": str(e)}
+
+        # Create concept labels
+        try:
+            print(f"[3] Creating concept labels...")
+            n_concepts = 10
+            if dataset_config.has_concepts and dataset_config.concept_columns:
+                concept_labels_train = processor.create_task_concepts(X_train_enc, y_train_enc, n_concepts)
+                concept_labels_val = processor.create_task_concepts(X_val_enc, y_val_enc, n_concepts)
+            else:
+                concept_labels_train = self._discover_concepts(None, X_train_enc, y_train_enc)
+                concept_labels_val = self._discover_concepts(None, X_val_enc, y_val_enc)
+
+        except Exception as e:
+            print(f"Error creating concepts: {e}")
+            return {"error": str(e)}
+
+        # Initialize and train model
+        try:
+            print(f"[4] Training Credal CBM...")
+            model = CredalCBM(
+                n_concepts=n_concepts,
+                n_estimators=credal_config.n_estimators,
+                max_depth=credal_config.max_depth,
+                random_state=self.config.seed
+            )
+
+            # Train the model
+            model.fit(X_train_enc, concept_labels_train)
+
+            # For enhanced training, also run epoch-based training
+            if hasattr(self, 'epochs'):
+                print(f"[5] Running enhanced epoch-based training...")
+                training_history = self.train_with_epochs(
+                    model=model,
+                    X_train=X_train_enc,
+                    concept_labels_train=concept_labels_train,
+                    y_train=y_train_enc,
+                    X_val=X_val_enc,
+                    concept_labels_val=concept_labels_val,
+                    y_val=y_val_enc,
+                    epochs=getattr(self, 'epochs', 3),
+                    patience=getattr(self, 'patience', 3)
+                )
+
+        except Exception as e:
+            print(f"Error training model: {e}")
+            return {"error": str(e)}
+
+        # Evaluate model
+        try:
+            print(f"[6] Evaluating model...")
+            results = self.evaluate_credal_model(
+                model, X_test_enc, y_test_enc, y_test,
+                processor.label_encoder, {}
+            )
+
+            # Add metadata to results
+            results.update({
+                "dataset": dataset_name,
+                "encoder": encoder_name,
+                "credal_method": credal_method,
+                "dataset_config": asdict(dataset_config),
+                "encoder_config": asdict(encoder_config),
+                "credal_config": asdict(credal_config),
+                "n_samples": len(X_test),
+                "n_features": X_test_enc.shape[1]
+            })
+
+            if 'training_history' in locals():
+                results['training_history'] = training_history
+
+        except Exception as e:
+            print(f"Error evaluating model: {e}")
+            return {"error": str(e)}
+
+        return results
+
+    def evaluate_credal_model(self, model, X_test, y_test_enc, y_test_orig,
+                             label_encoder, gpu_info) -> Dict[str, Any]:
+        """Evaluate the Credal CBM model"""
+
+        # Get predictions with uncertainty
+        pred_results = model.predict_with_uncertainty(X_test)
+
+        # Use concept predictions for final classification
+        concept_probs = pred_results['concept_probs']
+
+        # Train classifier on concept probabilities
+        from sklearn.linear_model import LogisticRegression
+        classifier = LogisticRegression(random_state=42, max_iter=1000)
+        classifier.fit(concept_probs, y_test_enc)
+        y_pred = classifier.predict(concept_probs)
+
+        # Calculate metrics
+        accuracy = accuracy_score(y_test_enc, y_pred)
+        f1_macro = f1_score(y_test_enc, y_pred, average='macro')
+        f1_micro = f1_score(y_test_enc, y_pred, average='micro')
+
+        # Uncertainty metrics
+        epistemic_uncertainty = pred_results['mean_epistemic']
+        credal_width = (pred_results['credal_upper'] - pred_results['credal_lower']).mean(axis=1)
+        concept_disagreement = pred_results['epistemic_uncertainty'].mean(axis=1)
+
+        # Correlation metrics
+        from scipy.stats import spearmanr
+        uncertainty_corr, p_value = spearmanr(epistemic_uncertainty, concept_disagreement)
+
+        results = {
+            "accuracy": accuracy,
+            "f1_macro": f1_macro,
+            "f1_micro": f1_micro,
+            "mean_epistemic": epistemic_uncertainty.mean(),
+            "std_epistemic": epistemic_uncertainty.std(),
+            "mean_credal_width": credal_width.mean(),
+            "uncertainty_correlation": uncertainty_corr,
+            "uncertainty_pvalue": p_value,
+            "precise_predictions": (credal_width < 0.1).mean(),
+            "high_uncertainty": (epistemic_uncertainty > 0.2).mean(),
+        }
+
+        return results
+
+    def save_results(self, results: Dict, output_dir: str):
+        """Save experiment results"""
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Save detailed results
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        results_file = os.path.join(output_dir, f"enhanced_results_{timestamp}.json")
+
+        # Convert numpy arrays to lists for JSON serialization
+        def convert_numpy(obj):
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, np.integer):
+                return int(obj)
+            elif isinstance(obj, np.floating):
+                return float(obj)
+            return obj
+
+        def convert_recursive(obj):
+            if isinstance(obj, dict):
+                return {k: convert_recursive(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_recursive(item) for item in obj]
+            else:
+                return convert_numpy(obj)
+
+        json_results = convert_recursive(results)
+
+        with open(results_file, 'w') as f:
+            json.dump(json_results, f, indent=2)
+
+        print(f"✅ Enhanced results saved to {results_file}")
+
+        # Save summary
+        summary_file = os.path.join(output_dir, f"enhanced_summary_{timestamp}.txt")
+        self.save_summary(results, summary_file)
+
+    def save_summary(self, results: Dict, filepath: str):
+        """Save a human-readable summary"""
+        with open(filepath, 'w') as f:
+            f.write("ENHANCED CREDAL CBM EXPERIMENT RESULTS\n")
+            f.write("=" * 50 + "\n\n")
+
+            for exp_key, exp_result in results.items():
+                if isinstance(exp_result, dict) and 'error' not in exp_result:
+                    f.write(f"Experiment: {exp_key}\n")
+                    f.write("-" * 30 + "\n")
+                    f.write(f"Dataset: {exp_result.get('dataset', 'N/A')}\n")
+                    f.write(f"Encoder: {exp_result.get('encoder', 'N/A')}\n")
+                    f.write(f"Credal Method: {exp_result.get('credal_method', 'N/A')}\n\n")
+
+                    # Performance metrics
+                    f.write("Performance Metrics:\n")
+                    f.write(f"  Accuracy: {exp_result.get('accuracy', 0):.3f}\n")
+                    f.write(f"  F1-Macro: {exp_result.get('f1_macro', 0):.3f}\n")
+                    f.write(f"  F1-Micro: {exp_result.get('f1_micro', 0):.3f}\n\n")
+
+                    # Uncertainty metrics
+                    f.write("Uncertainty Metrics:\n")
+                    f.write(f"  Mean Epistemic: {exp_result.get('mean_epistemic', 0):.3f}\n")
+                    f.write(f"  Mean Credal Width: {exp_result.get('mean_credal_width', 0):.3f}\n")
+                    f.write(f"  Uncertainty Correlation: {exp_result.get('uncertainty_correlation', 0):.3f}\n\n")
+
+                    # Enhanced training metrics
+                    if 'final_train_loss' in exp_result:
+                        f.write("Enhanced Training Metrics:\n")
+                        f.write(f"  Final Train Loss: {exp_result.get('final_train_loss', 0):.4f}\n")
+                        f.write(f"  Epochs Completed: {exp_result.get('epochs', 0)}\n\n")
+
+                    f.write("\n" + "=" * 50 + "\n\n")
+
 
 class CredalCBMTrainer:
     """Main training class for Credal CBM experiments"""
