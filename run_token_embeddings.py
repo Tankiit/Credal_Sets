@@ -798,10 +798,18 @@ def main():
 
     # For CEBaB, flatten the 3-class probabilities or use positive class
     if args.dataset == 'cebab' and len(concept_features.shape) == 3:
-        # Use positive class probabilities and class variances as features
-        positive_probs = concept_features[:, :, 2]  # (n_samples, n_concepts)
-        class_variances = results['class_variances']  # (n_samples, n_concepts)
-        concept_features = np.column_stack([positive_probs, class_variances])
+        # Check if we have 3 classes (ternary) or 2 classes (binary)
+        n_classes = concept_features.shape[2]
+        if n_classes == 3:
+            # Use positive class probabilities and class variances as features
+            positive_probs = concept_features[:, :, 2]  # (n_samples, n_concepts)
+            class_variances = results['class_variances']  # (n_samples, n_concepts)
+            concept_features = np.column_stack([positive_probs, class_variances])
+        else:
+            # For 2 classes, use max probability and class variances
+            max_probs = np.max(concept_features, axis=2)  # (n_samples, n_concepts)
+            class_variances = results['class_variances']  # (n_samples, n_concepts)
+            concept_features = np.column_stack([max_probs, class_variances])
     else:
         # For binary concepts, use as-is
         pass

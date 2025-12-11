@@ -1,14 +1,15 @@
 """
-Credal Concept Bottleneck Model (Credal CBM) - Main Implementation
+Credal Concept Bottleneck Model (Credal CBM) - Fixed Implementation
 
-A simplified implementation of Credal CBM for ambiguous tasks using sklearn ensembles.
+A corrected implementation of Credal CBM for ambiguous tasks using sklearn ensembles.
+Supports both binary and multi-class (ternary) concept predictions.
 """
 
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 import argparse
 
 
@@ -21,6 +22,7 @@ class CredalSet:
     upper: float
     mean: float
     predictions: np.ndarray
+    class_probs: Optional[np.ndarray] = None  # For multi-class: [n_trees, n_classes]
 
     @property
     def epistemic_uncertainty(self) -> float:
@@ -36,17 +38,19 @@ class CredalSet:
 class CredalCBM:
     """
     Main Credal CBM implementation using Random Forest ensembles
-    Includes training loop for end-to-end learning
+    Supports both binary and multi-class concept prediction
     """
 
     def __init__(
         self,
         n_concepts: int = 10,
+        n_classes: int = 2,  # Number of classes per concept (2 for binary, 3 for ternary)
         n_estimators: int = 100,
         max_depth: int = 10,
         random_state: int = 42
     ):
         self.n_concepts = n_concepts
+        self.n_classes = n_classes
         self.n_estimators = n_estimators
         self.max_depth = max_depth
         self.random_state = random_state
@@ -55,24 +59,37 @@ class CredalCBM:
         self.scaler = StandardScaler()
         self.is_fitted = False
 
+        # Track which concepts were actually trained
+        self.valid_concept_indices = []
+
     def fit(self, X: np.ndarray, concept_labels: np.ndarray):
         """
         Fit the Credal CBM model
 
         Args:
             X: Feature matrix [n_samples, n_features]
-            concept_labels: Binary concept labels [n_samples, n_concepts]
+            concept_labels: Concept labels [n_samples, n_concepts]
+                           For binary: {0, 1}
+                           For ternary: {0=Unknown, 1=Negative, 2=Positive}
         """
         # Scale features
         X_scaled = self.scaler.fit_transform(X)
 
         # Train separate ensemble for each concept
         self.concept_models = []
+        self.valid_concept_indices = []
+
         for k in range(self.n_concepts):
             y_k = concept_labels[:, k]
 
+            # Check number of unique classes
+            unique_classes = np.unique(y_k)
+            n_unique = len(unique_classes)
+
             # Skip if concept has only one class
-            if len(np.unique(y_k)) < 2:
+            if n_unique < 2:
+                print(f"Warning: Concept {k} has only {n_unique} class(es), skipping")
+                self.concept_models.append(None)
                 continue
 
             # Create and fit Random Forest
@@ -80,65 +97,100 @@ class CredalCBM:
                 n_estimators=self.n_estimators,
                 max_depth=self.max_depth,
                 min_samples_leaf=5,
-                random_state=self.random_state,
+                random_state=self.random_state + k,  # Different seed per concept
                 n_jobs=-1
             )
 
             model.fit(X_scaled, y_k)
             self.concept_models.append(model)
+            self.valid_concept_indices.append(k)
 
         self.is_fitted = True
+        print(f"Trained {len(self.valid_concept_indices)}/{self.n_concepts} concepts successfully")
 
-    def predict_credal_sets(self, X: np.ndarray, target_class: int = 2) -> List[List[CredalSet]]:
+    def predict_credal_sets_single_sample(
+        self,
+        x: np.ndarray,
+        target_class: Optional[int] = None
+    ) -> List[CredalSet]:
         """
-        Predict credal sets for each sample and concept
+        Predict credal sets for a single sample
 
         Args:
-            X: Feature matrix [n_samples, n_features]
-            target_class: Which class to get probability for (0=unknown, 1=negative, 2=positive)
+            x: Single sample [1, n_features] (already scaled)
+            target_class: If specified, get credal set for this class only
+                         If None, return full probability distribution
 
         Returns:
-            List of credal sets [n_samples][n_concepts]
+            List of credal sets, one per concept
         """
-        if not self.is_fitted:
-            raise RuntimeError("Model not fitted. Call fit() first.")
+        credal_sets = []
 
-        X_scaled = self.scaler.transform(X)
-        n_samples = X.shape[0]
+        for model in self.concept_models:
+            if model is None:
+                # Concept was skipped during training
+                credal_sets.append(CredalSet(
+                    lower=0.0,
+                    upper=0.0,
+                    mean=0.0,
+                    predictions=np.array([0.0])
+                ))
+                continue
 
-        all_credal_sets = []
+            # Get predictions from each tree
+            tree_probs = np.array([
+                tree.predict_proba(x)[0] for tree in model.estimators_
+            ])  # Shape: [n_trees, n_classes]
 
-        for i in range(n_samples):
-            sample_credal_sets = []
-            x_i = X_scaled[i:i+1]
+            if target_class is not None:
+                # Extract probabilities for target class only
+                if target_class < tree_probs.shape[1]:
+                    tree_preds = tree_probs[:, target_class]
+                else:
+                    # Class doesn't exist in this model
+                    tree_preds = np.zeros(len(tree_probs))
 
-            for model in self.concept_models:
-                # Get predictions from each tree for the target class
-                tree_preds = np.array([
-                    tree.predict_proba(x_i)[0, target_class] if target_class < len(tree.classes_) else 0.0
-                    for tree in model.estimators_
-                ])
-
-                # Create credal set
                 credal_set = CredalSet(
                     lower=tree_preds.min(),
                     upper=tree_preds.max(),
                     mean=tree_preds.mean(),
-                    predictions=tree_preds
+                    predictions=tree_preds,
+                    class_probs=None
+                )
+            else:
+                # Return full distribution
+                # Use mean probability across trees for each class
+                mean_probs = tree_probs.mean(axis=0)
+
+                # Epistemic uncertainty = variance in probability predictions
+                # Use entropy of mean distribution as the main prediction
+                epistemic = tree_probs.std(axis=0).mean()
+
+                credal_set = CredalSet(
+                    lower=mean_probs.min(),
+                    upper=mean_probs.max(),
+                    mean=mean_probs[mean_probs.argmax()],  # Max class probability
+                    predictions=mean_probs,
+                    class_probs=tree_probs  # Store all tree predictions
                 )
 
-                sample_credal_sets.append(credal_set)
+            credal_sets.append(credal_set)
 
-            all_credal_sets.append(sample_credal_sets)
-
-        return all_credal_sets
+        return credal_sets
 
     def predict_with_uncertainty_all_classes(self, X: np.ndarray) -> Dict[str, np.ndarray]:
         """
-        Get predictions with uncertainty for all 3 classes (ternary)
+        Get predictions with uncertainty for all classes (multi-class version)
 
         Returns:
-            Dict with concept probabilities for all classes, epistemic uncertainty, and credal bounds
+            Dict with:
+                - concept_probs: [n_samples, n_concepts, n_classes] probability distributions
+                - epistemic_uncertainty: [n_samples, n_concepts] per-concept epistemic uncertainty
+                - class_variances: [n_samples, n_concepts] variance across class predictions
+                - credal_lower: [n_samples, n_concepts] lower bound of credal set
+                - credal_upper: [n_samples, n_concepts] upper bound of credal set
+                - mean_epistemic: [n_samples] average epistemic uncertainty per sample
+                - max_epistemic: [n_samples] maximum epistemic uncertainty per sample
         """
         if not self.is_fitted:
             raise RuntimeError("Model not fitted. Call fit() first.")
@@ -146,83 +198,166 @@ class CredalCBM:
         X_scaled = self.scaler.transform(X)
         n_samples = X.shape[0]
         n_concepts = len(self.concept_models)
-        n_classes = 3  # unknown=0, negative=1, positive=2
 
         # Initialize arrays for all classes
-        concept_probs = np.zeros((n_samples, n_concepts, n_classes))
+        concept_probs = np.zeros((n_samples, n_concepts, self.n_classes))
         epistemic_uncertainty = np.zeros((n_samples, n_concepts))
         credal_lower = np.zeros((n_samples, n_concepts))
         credal_upper = np.zeros((n_samples, n_concepts))
 
-        # Get predictions for each class
-        for target_class in range(n_classes):
-            credal_sets = self.predict_credal_sets(X, target_class=target_class)
+        # Process each sample
+        for i in range(n_samples):
+            x_i = X_scaled[i:i+1]
 
-            for i, sample_cs in enumerate(credal_sets):
-                for k, cs in enumerate(sample_cs):
-                    if k < n_concepts:
-                        concept_probs[i, k, target_class] = cs.mean
-                        if target_class == 2:  # For positive class, store uncertainty metrics
-                            epistemic_uncertainty[i, k] = cs.epistemic_uncertainty
-                            credal_lower[i, k] = cs.lower
-                            credal_upper[i, k] = cs.upper
+            # Get credal sets for all classes
+            for k, model in enumerate(self.concept_models):
+                if model is None:
+                    continue
 
-        # Compute overall epistemic uncertainty (variance across classes)
+                # Get predictions from all trees
+                tree_probs = np.array([
+                    tree.predict_proba(x_i)[0] for tree in model.estimators_
+                ])  # Shape: [n_trees, n_classes]
+
+                # Ensure we have the right number of classes
+                n_model_classes = tree_probs.shape[1]
+
+                # Mean probabilities across trees
+                mean_probs = tree_probs.mean(axis=0)
+                # Handle case where model has different number of classes than expected
+                actual_classes = min(n_model_classes, min(mean_probs.shape[0], self.n_classes))
+                concept_probs[i, k, :actual_classes] = mean_probs[:actual_classes]
+
+                # Epistemic uncertainty: standard deviation across trees
+                # Average std across all classes
+                epistemic_uncertainty[i, k] = tree_probs.std(axis=0).mean()
+
+                # Credal bounds: min/max of predicted class
+                predicted_class = mean_probs.argmax()
+                class_preds = tree_probs[:, predicted_class]
+                credal_lower[i, k] = class_preds.min()
+                credal_upper[i, k] = class_preds.max()
+
+        # Compute sample-level uncertainty metrics
+        # Class variance: variance across class probabilities for each concept
         class_variances = np.var(concept_probs, axis=2)
-        overall_epistemic = np.mean(class_variances, axis=1)
-        max_epistemic = np.max(class_variances, axis=1)
+
+        # Mean epistemic: average across concepts
+        mean_epistemic = epistemic_uncertainty.mean(axis=1)
+
+        # Max epistemic: maximum across concepts
+        max_epistemic = epistemic_uncertainty.max(axis=1)
 
         return {
-            'concept_probs': concept_probs,  # (n_samples, n_concepts, 3)
+            'concept_probs': concept_probs,  # (n_samples, n_concepts, n_classes)
             'epistemic_uncertainty': epistemic_uncertainty,  # (n_samples, n_concepts)
             'credal_lower': credal_lower,
             'credal_upper': credal_upper,
-            'mean_epistemic': overall_epistemic,
-            'max_epistemic': max_epistemic,
-            'class_variances': class_variances,
+            'mean_epistemic': mean_epistemic,  # (n_samples,)
+            'max_epistemic': max_epistemic,  # (n_samples,)
+            'class_variances': class_variances,  # (n_samples, n_concepts)
         }
 
     def predict_with_uncertainty(self, X: np.ndarray) -> Dict[str, np.ndarray]:
         """
-        Get predictions with uncertainty decomposition
+        Get predictions with uncertainty decomposition (binary version for compatibility)
+        Uses the highest probability class for each concept
 
         Returns:
             Dict with concept probabilities, epistemic uncertainty, and credal bounds
         """
-        credal_sets = self.predict_credal_sets(X)
+        if not self.is_fitted:
+            raise RuntimeError("Model not fitted. Call fit() first.")
 
-        n_samples = len(credal_sets)
+        # Get full multi-class predictions
+        full_results = self.predict_with_uncertainty_all_classes(X)
+
+        n_samples = X.shape[0]
         n_concepts = len(self.concept_models)
 
-        # Initialize arrays
+        # Extract the predicted class probability (max across classes)
         concept_probs = np.zeros((n_samples, n_concepts))
-        epistemic_uncertainty = np.zeros((n_samples, n_concepts))
-        credal_lower = np.zeros((n_samples, n_concepts))
-        credal_upper = np.zeros((n_samples, n_concepts))
-
-        # Fill arrays from credal sets
-        for i, sample_cs in enumerate(credal_sets):
-            for k, cs in enumerate(sample_cs):
-                concept_probs[i, k] = cs.mean
-                epistemic_uncertainty[i, k] = cs.epistemic_uncertainty
-                credal_lower[i, k] = cs.lower
-                credal_upper[i, k] = cs.upper
+        for i in range(n_samples):
+            for k in range(n_concepts):
+                concept_probs[i, k] = full_results['concept_probs'][i, k].max()
 
         return {
-            'concept_probs': concept_probs,
-            'epistemic_uncertainty': epistemic_uncertainty,
-            'credal_lower': credal_lower,
-            'credal_upper': credal_upper,
-            'mean_epistemic': epistemic_uncertainty.mean(axis=1),
-            'max_epistemic': epistemic_uncertainty.max(axis=1),
+            'concept_probs': concept_probs,  # (n_samples, n_concepts)
+            'epistemic_uncertainty': full_results['epistemic_uncertainty'],
+            'credal_lower': full_results['credal_lower'],
+            'credal_upper': full_results['credal_upper'],
+            'mean_epistemic': full_results['mean_epistemic'],
+            'max_epistemic': full_results['max_epistemic'],
         }
 
-    
+
+def prepare_label_features(
+    concept_results: Dict[str, np.ndarray],
+    strategy: str = 'all_probs'
+) -> np.ndarray:
+    """
+    Prepare features for label prediction from concept predictions
+
+    Args:
+        concept_results: Output from predict_with_uncertainty_all_classes
+        strategy: Feature construction strategy
+            - 'all_probs': Flatten all class probabilities [n_concepts * n_classes features]
+            - 'summary': Use summary statistics [n_concepts * 4 features]
+            - 'positive_only': Use only positive class + uncertainty [n_concepts * 2 features]
+
+    Returns:
+        Feature matrix [n_samples, n_features]
+    """
+    concept_probs = concept_results['concept_probs']  # (n_samples, n_concepts, n_classes)
+    epistemic = concept_results['epistemic_uncertainty']  # (n_samples, n_concepts)
+
+    n_samples, n_concepts, n_classes = concept_probs.shape
+
+    if strategy == 'all_probs':
+        # Flatten all probabilities
+        features = concept_probs.reshape(n_samples, -1)  # (n_samples, n_concepts * n_classes)
+        # Add epistemic uncertainty
+        features = np.column_stack([features, epistemic])
+
+    elif strategy == 'summary':
+        # For each concept: [max_prob, argmax, entropy, epistemic]
+        max_probs = concept_probs.max(axis=2)  # (n_samples, n_concepts)
+        argmax = concept_probs.argmax(axis=2)  # (n_samples, n_concepts)
+
+        # Entropy: -sum(p * log(p))
+        entropy = -np.sum(
+            concept_probs * np.log(concept_probs + 1e-10),
+            axis=2
+        )  # (n_samples, n_concepts)
+
+        features = np.column_stack([
+            max_probs,
+            argmax,
+            entropy,
+            epistemic
+        ])
+
+    elif strategy == 'positive_only':
+        # For ternary: use positive class probability + epistemic
+        if n_classes == 3:
+            positive_probs = concept_probs[:, :, 2]  # (n_samples, n_concepts)
+        else:
+            # For binary, use class 1
+            positive_probs = concept_probs[:, :, -1]
+
+        features = np.column_stack([positive_probs, epistemic])
+
+    else:
+        raise ValueError(f"Unknown strategy: {strategy}")
+
+    return features
+
 
 def create_synthetic_data(
     n_samples: int = 1000,
     n_features: int = 100,
     n_concepts: int = 10,
+    n_classes: int = 2,
     noise_level: float = 0.1
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
@@ -230,7 +365,7 @@ def create_synthetic_data(
 
     Returns:
         X: Features
-        concept_labels: Binary concept labels
+        concept_labels: Concept labels (multi-class)
         true_uncertainty: Ground truth uncertainty per sample
     """
     np.random.seed(42)
@@ -239,7 +374,7 @@ def create_synthetic_data(
     X = np.random.randn(n_samples, n_features)
 
     # Create concept labels with varying difficulty
-    concept_labels = np.zeros((n_samples, n_concepts))
+    concept_labels = np.zeros((n_samples, n_concepts), dtype=int)
     true_uncertainty = np.zeros(n_samples)
 
     for i in range(n_samples):
@@ -250,18 +385,18 @@ def create_synthetic_data(
         for k in range(n_concepts):
             # Base probability depends on difficulty
             if difficulty < 0.3:  # Easy sample
-                base_prob = np.random.choice([0.1, 0.9])
+                # Strongly favor one class
+                class_probs = np.random.dirichlet([0.1] * n_classes)
+                dominant_class = np.random.randint(n_classes)
+                class_probs[dominant_class] = 0.8
+                class_probs = class_probs / class_probs.sum()
             elif difficulty < 0.7:  # Medium sample
-                base_prob = np.random.choice([0.3, 0.7])
-            else:  # Hard sample
-                base_prob = 0.5
+                class_probs = np.random.dirichlet([1.0] * n_classes)
+            else:  # Hard sample - uniform distribution
+                class_probs = np.ones(n_classes) / n_classes
 
-            # Add noise
-            prob = base_prob + np.random.normal(0, noise_level)
-            prob = np.clip(prob, 0.1, 0.9)
-
-            # Generate binary label
-            concept_labels[i, k] = np.random.binomial(1, prob)
+            # Sample class
+            concept_labels[i, k] = np.random.choice(n_classes, p=class_probs)
 
     return X, concept_labels, true_uncertainty
 
@@ -294,51 +429,6 @@ def evaluate_model(
     }
 
     return metrics
-
-
-def main():
-    """
-    Main function to demonstrate Credal CBM
-    """
-    parser = argparse.ArgumentParser(description='Credal CBM Demo')
-    parser.add_argument('--n-samples', type=int, default=1000, help='Number of samples')
-    parser.add_argument('--n-features', type=int, default=100, help='Number of features')
-    parser.add_argument('--n-concepts', type=int, default=10, help='Number of concepts')
-    parser.add_argument('--n-estimators', type=int, default=100, help='Number of trees in ensemble')
-    parser.add_argument('--test-size', type=float, default=0.2, help='Test set proportion')
-
-    args = parser.parse_args()
-
-    # Create synthetic data
-    X, concept_labels, true_uncertainty = create_synthetic_data(
-        n_samples=args.n_samples,
-        n_features=args.n_features,
-        n_concepts=args.n_concepts
-    )
-
-    # Split data
-    n_test = int(args.n_samples * args.test_size)
-    X_train, X_test = X[:-n_test], X[-n_test:]
-    y_train = concept_labels[:-n_test]
-    uncertainty_test = true_uncertainty[-n_test:]
-
-    # Initialize and fit model
-    model = CredalCBM(
-        n_concepts=args.n_concepts,
-        n_estimators=args.n_estimators,
-        max_depth=10,
-        random_state=42
-    )
-
-    model.fit(X_train, y_train)
-
-    # Evaluate model
-    metrics = evaluate_model(model, X_test, uncertainty_test)
-
-    # Show example predictions
-    credal_sets = model.predict_credal_sets(X_test[:3])
-
-    return results
 
 
 if __name__ == "__main__":
