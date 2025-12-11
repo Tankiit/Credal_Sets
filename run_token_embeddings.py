@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
 from datasets import load_dataset
 from tqdm import tqdm
 from sklearn.ensemble import RandomForestClassifier
@@ -18,6 +20,79 @@ import argparse
 import os
 import json
 from credal_cbm_main import CredalCBM
+
+@dataclass
+class DatasetConfig:
+    """Configuration for a dataset."""
+    name: str
+    hf_path: str
+    task: str  # sentiment, toxicity, emotion, topic, nli
+    text_col: str
+    label_col: str
+    has_concepts: bool = False
+    has_rationales: bool = False
+    multi_label: bool = False
+    concept_cols: List[str] = None
+
+    def __post_init__(self):
+        if self.concept_cols is None:
+            self.concept_cols = []
+
+# Dataset registry
+DATASETS = {
+    'sst2': DatasetConfig('sst2', 'glue', 'sentiment', 'sentence', 'label'),
+    'cebab': DatasetConfig('cebab', 'CEBaB/CEBaB', 'sentiment', 'description', 'review_majority',
+                         has_concepts=True, concept_cols=['food_aspect_majority', 'service_aspect_majority', 'ambiance_aspect_majority', 'noise_aspect_majority']),
+    'hatexplain': DatasetConfig('hatexplain', 'hatexplain', 'toxicity', 'post_tokens', 'annotators',
+                              has_concepts=True, has_rationales=True),
+    'goemotions': DatasetConfig('goemotions', 'go_emotions', 'emotion', 'text', 'labels', multi_label=True),
+    'ag_news': DatasetConfig('ag_news', 'ag_news', 'topic', 'text', 'label'),
+    'civil_comments': DatasetConfig('civil_comments', 'civil_comments', 'toxicity', 'text', 'toxicity', has_concepts=True),
+    'snli': DatasetConfig('snli', 'snli', 'nli', 'premise', 'label'),
+    'imdb': DatasetConfig('imdb', 'imdb', 'sentiment', 'text', 'label'),
+}
+
+# Encoder registry
+ENCODERS = {
+    # BERT family
+    'distilbert': 'distilbert-base-uncased',
+    'bert-base': 'bert-base-uncased',
+    'bert-tiny': 'prajjwal1/bert-tiny',  # debugging
+    'bert-large': 'bert-large-uncased',
+
+    # RoBERTa family
+    'roberta-base': 'roberta-base',
+    'roberta-large': 'roberta-large',  # best results, expensive
+
+    # DeBERTa family
+    'deberta-v3': 'microsoft/deberta-v3-base',
+    'deberta-v3-large': 'microsoft/deberta-v3-large',
+
+    # Llama family
+    'llama-3.1-8b': 'meta-llama/Llama-3.1-8B',
+    'llama-3.1-70b': 'meta-llama/Llama-3.1-70B',
+    'llama-3-8b': 'meta-llama/Meta-Llama-3-8B',
+    'llama-3-70b': 'meta-llama/Meta-Llama-3-70B',
+    'llama-2-7b': 'meta-llama/Llama-2-7b-hf',
+    'llama-2-13b': 'meta-llama/Llama-2-13b-hf',
+
+    # Mistral family
+    'mistral-7b': 'mistralai/Mistral-7B-v0.1',
+    'mistral-7b-instruct': 'mistralai/Mistral-7B-Instruct-v0.1',
+    'mixtral-8x7b': 'mistralai/Mixtral-8x7B-v0.1',
+    'mixtral-8x7b-instruct': 'mistralai/Mixtral-8x7B-Instruct-v0.1',
+
+    # Other popular models
+    'gpt-2': 'gpt2',
+    'gpt-2-medium': 'gpt2-medium',
+    'electra-base': 'google/electra-base-discriminator',
+    't5-base': 't5-base',
+    'flan-t5-base': 'google/flan-t5-base',
+
+    # Sentence transformers (good for embeddings)
+    'sentence-bert': 'sentence-transformers/all-MiniLM-L6-v2',
+    'sentence-bert-large': 'sentence-transformers/all-mpnet-base-v2',
+}
 
 class TokenEmbeddingProcessor:
     """
@@ -436,7 +511,10 @@ def main():
     # Model arguments
     parser.add_argument('--model', type=str,
                        default='distilbert-base-uncased',
-                       help='Hugging Face model name')
+                       help='Hugging Face model name (or use --encoder for preset)')
+    parser.add_argument('--encoder', type=str, default='distilbert',
+                       choices=list(ENCODERS.keys()),
+                       help='Encoder preset name (overrides --model)')
     parser.add_argument('--layer', type=int, default=-1,
                        help='Layer to extract embeddings from (-1 = last layer)')
     parser.add_argument('--batch-size', type=int, default=64,
@@ -444,7 +522,8 @@ def main():
 
     # Dataset arguments
     parser.add_argument('--dataset', type=str, default='sst2',
-                       help='Dataset name (sst2, imdb, cebab, etc.)')
+                       choices=['sst2', 'imdb', 'cebab', 'hatexplain', 'goemotions', 'ag_news', 'civil_comments', 'snli'],
+                       help='Dataset name')
     parser.add_argument('--train-size', type=int, default=None,
                        help='Number of training samples to use (None = use all available)')
     parser.add_argument('--test-size', type=int, default=None,
@@ -466,6 +545,20 @@ def main():
 
     args = parser.parse_args()
 
+    # Resolve encoder if specified
+    if args.encoder != 'distilbert' or args.model == 'distilbert-base-uncased':
+        if args.encoder in ENCODERS:
+            args.model = ENCODERS[args.encoder]
+            print(f"Using encoder preset: {args.encoder} -> {args.model}")
+        else:
+            print(f"Using custom model: {args.model}")
+
+    # Get dataset config
+    dataset_config = DATASETS[args.dataset]
+    print(f"Dataset: {dataset_config.name}")
+    print(f"Task: {dataset_config.task}")
+    print(f"Has concepts: {dataset_config.has_concepts}")
+
     # Initialize embedding processor
     processor = TokenEmbeddingProcessor(
         model_name=args.model,
@@ -480,39 +573,51 @@ def main():
     # Show model info
     model_info = processor.get_model_info()
 
-    # Load dataset
+    # Load dataset using configuration system
     try:
-        if args.dataset == 'sst2':
-            ds = load_dataset("stanfordnlp/sst2")
-            texts = ds["train"]["sentence"]
-            labels = ds["train"]["label"]
-        elif args.dataset == 'imdb':
+        config = DATASETS[args.dataset]
+        print(f"Loading {config.name} dataset from {config.hf_path}...")
+
+        if config.name == 'sst2':
+            ds = load_dataset("glue", "sst2")
+            train_texts = ds["train"]["sentence"]
+            train_labels = ds["train"]["label"]
+            test_texts = ds["validation"]["sentence"]
+            test_labels = ds["validation"]["label"]
+
+        elif config.name == 'imdb':
             ds = load_dataset("imdb")
-            texts = ds["train"]["text"]
-            labels = ds["train"]["label"]
-        elif args.dataset == 'ag_news':
+            train_texts = ds["train"]["text"]
+            train_labels = ds["train"]["label"]
+            test_texts = ds["test"]["text"]
+            test_labels = ds["test"]["label"]
+
+        elif config.name == 'ag_news':
             ds = load_dataset("ag_news")
-            texts = ds["train"]["text"]
-            labels = ds["train"]["label"]
-        elif args.dataset == 'cebab':
+            train_texts = ds["train"]["text"]
+            train_labels = ds["train"]["label"]
+            test_texts = ds["test"]["text"]
+            test_labels = ds["test"]["label"]
+
+        elif config.name == 'cebab':
             ds = load_dataset("CEBaB/CEBaB")
-            # Use proper train/test splits for CEBaB
             train_split = ds["train_inclusive"]
             test_split = ds["test"]
 
-            # Combine train and test for consistent splitting
-            all_texts = train_split["description"] + test_split["description"]
-            all_labels = train_split["review_majority"] + test_split["review_majority"]
+            train_texts = train_split["description"]
+            train_labels = train_split["review_majority"]
+            test_texts = test_split["description"]
+            test_labels = test_split["review_majority"]
 
             # Extract REAL concepts from CEBaB
-            all_concept_food = train_split["food_aspect_majority"] + test_split["food_aspect_majority"]
-            all_concept_service = train_split["service_aspect_majority"] + test_split["service_aspect_majority"]
-            all_concept_ambiance = train_split["ambiance_aspect_majority"] + test_split["ambiance_aspect_majority"]
-            all_concept_noise = train_split["noise_aspect_majority"] + test_split["noise_aspect_majority"]
+            all_concept_food = train_split[config.concept_cols[0]] + test_split[config.concept_cols[0]]
+            all_concept_service = train_split[config.concept_cols[1]] + test_split[config.concept_cols[1]]
+            all_concept_ambiance = train_split[config.concept_cols[2]] + test_split[config.concept_cols[2]]
+            all_concept_noise = train_split[config.concept_cols[3]] + test_split[config.concept_cols[3]]
 
             # Create proper train/test split
-            texts_train, texts_test, labels_train, labels_test, concepts_train, concepts_test = train_test_split(
-                all_texts, all_labels,
+            train_texts, test_texts, train_labels, test_labels, concepts_train, concepts_test = train_test_split(
+                train_texts + test_texts, train_labels + test_labels,
                 list(zip(all_concept_food, all_concept_service, all_concept_ambiance, all_concept_noise)),
                 test_size=args.test_split,
                 random_state=42,
@@ -523,69 +628,134 @@ def main():
             concept_food_train, concept_service_train, concept_ambiance_train, concept_noise_train = zip(*concepts_train)
             concept_food_test, concept_service_test, concept_ambiance_test, concept_noise_test = zip(*concepts_test)
 
-            # Limit samples if requested
-            if args.train_size is not None and len(texts_train) > args.train_size:
-                indices = np.random.choice(len(texts_train), args.train_size, replace=False)
-                texts_train = [texts_train[i] for i in indices]
-                labels_train = [labels_train[i] for i in indices]
+        elif config.name == 'hatexplain':
+            ds = load_dataset("hatexplain", trust_remote_code=True)
+            train_split = ds["train"]
+            test_split = ds["test"]
+
+            # Tokenize text (hatexplain provides tokenized posts)
+            train_texts = [" ".join(post) for post in train_split["post_tokens"]]
+            test_texts = [" ".join(post) for post in test_split["post_tokens"]]
+
+            # Handle multiple annotations (use majority vote)
+            def get_majority_label(annotations):
+                if not annotations:
+                    return 0
+                return max(set(annotations), key=annotations.count)
+
+            train_labels = [get_majority_label(ann) for ann in train_split["annotators"]]
+            test_labels = [get_majority_label(ann) for ann in test_split["annotators"]]
+
+        elif config.name == 'goemotions':
+            ds = load_dataset("go_emotions/simplified")
+            train_split = ds["train"]
+            test_split = ds["validation"]
+
+            train_texts = train_split["text"]
+            test_texts = test_split["text"]
+            train_labels = train_split["labels"]
+            test_labels = test_split["labels"]
+
+        elif config.name == 'civil_comments':
+            ds = load_dataset("civil_comments")
+            # Use smaller subset for testing
+            train_split = ds["train"].shuffle(seed=42).select(range(10000))
+            test_split = ds["test"].shuffle(seed=42).select(range(2000))
+
+            train_texts = train_split["text"]
+            test_texts = test_split["text"]
+            train_labels = (train_split["toxicity"] > 0.5).astype(int).tolist()
+            test_labels = (test_split["toxicity"] > 0.5).astype(int).tolist()
+
+        elif config.name == 'snli':
+            ds = load_dataset("snli")
+            train_split = ds["train"]
+            test_split = ds["validation"]
+
+            # Filter out examples with -1 label
+            train_filter = [i for i, label in enumerate(train_split["label"]) if label != -1]
+            test_filter = [i for i, label in enumerate(test_split["label"]) if label != -1]
+
+            train_texts = [train_split["premise"][i] for i in train_filter]
+            test_texts = [test_split["premise"][i] for i in test_filter]
+            train_labels = [train_split["label"][i] for i in train_filter]
+            test_labels = [test_split["label"][i] for i in test_filter]
+
+        else:
+            raise ValueError(f"Unknown dataset: {config.name}")
+
+        # Limit samples if requested
+        if args.train_size is not None and len(train_texts) > args.train_size:
+            indices = np.random.choice(len(train_texts), args.train_size, replace=False)
+            train_texts = [train_texts[i] for i in indices]
+            train_labels = [train_labels[i] for i in indices]
+            if config.has_concepts and config.name == 'cebab':
                 concept_food_train = [concept_food_train[i] for i in indices]
                 concept_service_train = [concept_service_train[i] for i in indices]
                 concept_ambiance_train = [concept_ambiance_train[i] for i in indices]
                 concept_noise_train = [concept_noise_train[i] for i in indices]
+            print(f"Limited train set to {len(train_texts)} samples")
 
-            if args.test_size is not None and len(texts_test) > args.test_size:
-                indices = np.random.choice(len(texts_test), args.test_size, replace=False)
-                texts_test = [texts_test[i] for i in indices]
-                labels_test = [labels_test[i] for i in indices]
+        if args.test_size is not None and len(test_texts) > args.test_size:
+            indices = np.random.choice(len(test_texts), args.test_size, replace=False)
+            test_texts = [test_texts[i] for i in indices]
+            test_labels = [test_labels[i] for i in indices]
+            if config.has_concepts and config.name == 'cebab':
                 concept_food_test = [concept_food_test[i] for i in indices]
                 concept_service_test = [concept_service_test[i] for i in indices]
                 concept_ambiance_test = [concept_ambiance_test[i] for i in indices]
                 concept_noise_test = [concept_noise_test[i] for i in indices]
-        else:
-            raise ValueError(f"Unknown dataset: {args.dataset}")
+            print(f"Limited test set to {len(test_texts)} samples")
+
+        print(f"Final split - Train: {len(train_texts)}, Test: {len(test_texts)}")
 
     except Exception as e:
         print(f"Error loading dataset: {e}")
         return
 
-    # Handle embedding extraction separately for train and test
-    if args.dataset == 'cebab':
-        # Extract embeddings for train set
-        train_embeddings = processor.extract_token_embeddings(texts_train, layer=args.layer)
-
-        # Extract embeddings for test set
-        test_embeddings = processor.extract_token_embeddings(texts_test, layer=args.layer)
+    # Handle embedding extraction and concept creation
+    if config.has_concepts:
+        # Extract embeddings for train and test sets
+        train_embeddings = processor.extract_token_embeddings(train_texts, layer=args.layer)
+        test_embeddings = processor.extract_token_embeddings(test_texts, layer=args.layer)
 
         if train_embeddings is None or test_embeddings is None:
             return
 
-        # Create concepts for train and test separately
-        # Convert train concepts
-        train_concept_labels = convert_cebab_concepts_to_numerical(
-            concept_food_train, concept_service_train, concept_ambiance_train, concept_noise_train
-        )
+        if config.name == 'cebab':
+            # Create concepts for train and test separately
+            train_concept_labels = convert_cebab_concepts_to_numerical(
+                concept_food_train, concept_service_train, concept_ambiance_train, concept_noise_train
+            )
+            test_concept_labels = convert_cebab_concepts_to_numerical(
+                concept_food_test, concept_service_test, concept_ambiance_test, concept_noise_test
+            )
+            args.n_concepts = 4
+        else:
+            # For other datasets with concepts, create synthetic concepts
+            all_embeddings = np.vstack([train_embeddings, test_embeddings])
+            all_labels = np.array(train_labels + test_labels)
+            all_concept_labels = create_concepts_from_embeddings(
+                all_embeddings, all_labels, args.n_concepts
+            )
+            # Split back
+            n_train = len(train_embeddings)
+            train_concept_labels = all_concept_labels[:n_train]
+            test_concept_labels = all_concept_labels[n_train:]
 
-        # Convert test concepts
-        test_concept_labels = convert_cebab_concepts_to_numerical(
-            concept_food_test, concept_service_test, concept_ambiance_test, concept_noise_test
-        )
-
-        # Set n_concepts to match real concepts
-        args.n_concepts = 4
-
-        # Use the split embeddings directly
         X_train, X_test = train_embeddings, test_embeddings
         y_train, y_test = train_concept_labels, test_concept_labels
+
     else:
-        # For other datasets, keep the old approach but with new parameter names
-        all_embeddings = processor.extract_token_embeddings(texts_train + texts_test, layer=args.layer)
+        # For datasets without concepts, create synthetic concepts
+        all_embeddings = processor.extract_token_embeddings(train_texts + test_texts, layer=args.layer)
 
         if all_embeddings is None:
             return
 
         all_concept_labels = create_concepts_from_embeddings(
             all_embeddings,
-            np.array(labels_train + labels_test),
+            np.array(train_labels + test_labels),
             args.n_concepts
         )
 
@@ -605,15 +775,8 @@ def main():
     model.fit(X_train, y_train)
 
     # Get original test labels for classifier
-    if args.dataset == 'cebab':
-        y_train_orig = labels_train
-        y_test_orig = labels_test
-    else:
-        # For other datasets, we need to split the combined labels
-        all_labels = labels_train + labels_test
-        _, _, y_train_orig, y_test_orig = train_test_split(
-            texts_train + texts_test, all_labels, test_size=args.test_split, random_state=42
-        )
+    y_train_orig = train_labels
+    y_test_orig = test_labels
 
     # Predict and evaluate
     if args.dataset == 'cebab':
@@ -643,6 +806,7 @@ def main():
         # For binary concepts, use as-is
         pass
 
+    
     # Train neural label head on concept features
     # Convert labels to numeric format for CEBaB (handle string labels)
     label_encoder = LabelEncoder()
@@ -741,9 +905,14 @@ def main():
         f1_micro = f1_score(y_test_orig_clean, y_pred_encoded, average='micro')
     else:
         # Use original labels for other datasets
-        label_accuracy = accuracy_score(y_test_orig, y_pred)
-        f1_macro = f1_score(y_test_orig, y_pred, average='macro')
-        f1_micro = f1_score(y_test_orig, y_pred, average='micro')
+        # Ensure we only evaluate on samples that have concept predictions
+        n_concept_samples = concept_features.shape[0]
+        y_test_orig_subset = y_test_orig[:n_concept_samples]
+        y_pred_subset = y_pred[:n_concept_samples]
+
+        label_accuracy = accuracy_score(y_test_orig_subset, y_pred_subset)
+        f1_macro = f1_score(y_test_orig_subset, y_pred_subset, average='macro')
+        f1_micro = f1_score(y_test_orig_subset, y_pred_subset, average='micro')
 
     # Save results
     os.makedirs(args.output_dir, exist_ok=True)
@@ -752,9 +921,9 @@ def main():
         'model_name': args.model,
         'layer': args.layer,
         'dataset': args.dataset,
-        'n_samples': len(texts_train) + len(texts_test),
-        'train_samples': len(texts_train),
-        'test_samples': len(texts_test),
+        'n_samples': len(train_texts) + len(test_texts),
+        'train_samples': len(train_texts),
+        'test_samples': len(test_texts),
         'n_concepts': args.n_concepts,
         'label_accuracy': label_accuracy,
         'f1_macro': f1_macro,
@@ -776,6 +945,10 @@ def main():
         json.dump(output, f, indent=2)
 
     print(f"Results saved to: {output_file}")
+
+    total_samples = len(train_texts) + len(test_texts)
+    print(f"Completed processing {total_samples} samples ({len(train_texts)} train, {len(test_texts)} test)!")
+    print(f"\nTraining completed on {len(train_texts):,} samples, tested on {len(test_texts):,} samples!")
 
     return output
 
