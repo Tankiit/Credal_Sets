@@ -1,238 +1,358 @@
-import sys
-import os
-import pickle
-import numpy as np
-from sklearn.model_selection import train_test_split
-from scipy.stats import entropy, wasserstein_distance
+import argparse
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
+import logging
+from pathlib import Path
+from datetime import datetime
+import json
+from typing import Dict
 
-import pdb
-from transformers import BertTokenizer, BertModel
-
-# Load data
-with open(os.path.join("/Users/cril/tanmoy/research/data", "chaosNLI", "embeddings", "snli.pkl"), 'rb') as f:
-    snli = pickle.load(f)
-
-with open(os.path.join("/Users/cril/tanmoy/research/data", "chaosNLI", "embeddings", "mnli_m.pkl"), 'rb') as f:
-    mnli = pickle.load(f)
-
-premise = np.concatenate((snli["premise"], mnli["premise"]), axis=0)
-hypothesis = np.concatenate((snli["hypothesis"], mnli["hypothesis"]), axis=0)
-label_dist = np.concatenate((snli["label_dist"], mnli["label_dist"]), axis=0)
-
-# Step 1: Initialize tokenizer and model
-tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-model = BertModel.from_pretrained('bert-base-uncased')
-
-# Create set representations
-combined_sets = []
-
-for premise_text, hypothesis_text in zip(premise, hypothesis):
-    premise_tokens = tokenizer(premise_text)
-    hypothesis_tokens = tokenizer(hypothesis_text)
-
-    premise_embedding_set=model(**premise_tokens)
-    hypothesis_embedding_set=model(**hypothesis_tokens)
-
-    # Combine premise and hypothesis embeddings
-    combined_set = premise_embedding_set + hypothesis_embedding_set
-    combined_sets.append(combined_set)
+from dataloader import load_dataset_splits, DatasetConfig
+from model import (
+    VariationalCredalCBM,
+    ModelConfig,
+    create_trainer,
+    add_model_config_args
+)
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import Callback
 
 
-# Determine the maximum set length (you can set a fixed max length to limit)
-max_set_length = max(len(s) for s in combined_sets)
-max_set_length = min(max_set_length, 50)  # For example, limit to 50 tokens
-
-def pad_sequences(embedding_sets, max_length, embedding_dim):
-    padded_sets = []
-    set_lengths = []
-    for embedding_set in embedding_sets:
-        set_length = len(embedding_set)
-        set_lengths.append(min(set_length, max_length))
-        if set_length < max_length:
-            padding = [np.zeros(embedding_dim) for _ in range(max_length - set_length)]
-            padded_set = embedding_set + padding
-        else:
-            padded_set = embedding_set[:max_length]
-        padded_sets.append(padded_set)
-    return np.array(padded_sets), np.array(set_lengths)
-
-X_padded, set_lengths = pad_sequences(combined_sets, max_set_length, embedding_dim)
-X_padded = torch.tensor(X_padded, dtype=torch.float32).to(device)  # Shape: (num_examples, max_set_length, embedding_dim)
-y = torch.tensor(label_dist, dtype=torch.float32).to(device)       # Shape: (num_examples, num_classes)
-set_lengths = torch.tensor(set_lengths, dtype=torch.long).to(device)  # Shape: (num_examples,)
-
-# Prepare data loaders
-from torch.utils.data import Dataset, DataLoader
-
-class NliDataset(Dataset):
-    def __init__(self, X, set_lengths, y):
-        self.X = X
-        self.set_lengths = set_lengths
-        self.y = y
-        
-    def __len__(self):
-        return self.X.size(0)
+class CheckpointLogger(Callback):
+    """Callback to log checkpoint saves"""
     
-    def __getitem__(self, idx):
-        return self.X[idx], self.set_lengths[idx], self.y[idx]
+    def __init__(self, logger: logging.Logger):
+        super().__init__()
+        self.logger = logger
     
-    # Split the data
-X_train, X_test, lengths_train, lengths_test, y_train, y_test = train_test_split(
-    X_padded.cpu(), set_lengths.cpu(), y.cpu(), test_size=500, random_state=2024+exp_seed)
-X_train, X_calib, lengths_train, lengths_calib, y_train, y_calib = train_test_split(
-    X_train, lengths_train, y_train, test_size=500, random_state=2024+exp_seed)
-
-# Convert back to tensors and move to device
-X_train = X_train.to(device)
-lengths_train = lengths_train.to(device)
-y_train = y_train.to(device)
-X_calib = X_calib.to(device)
-lengths_calib = lengths_calib.to(device)
-y_calib = y_calib.to(device)
-X_test = X_test.to(device)
-lengths_test = lengths_test.to(device)
-y_test = y_test.to(device)
-# Create datasets and data loaders
-train_dataset = NliDataset(X_train, y_train)
-calib_dataset = NliDataset(X_calib, y_calib)
-test_dataset = NliDataset(X_test, y_test)
-
-train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
-calib_loader = DataLoader(calib_dataset, batch_size=8, shuffle=False)
-test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False)
-
-embedding_dim = X_padded.shape[2]
-hidden_dim = 128
-output_dim = 64  # Dimension of the distribution embedding
+    def on_train_epoch_end(self, trainer, pl_module):
+        """Log at end of each training epoch"""
+        metrics = trainer.callback_metrics
+        if 'train/loss' in metrics:
+            self.logger.info(
+                f"Epoch {trainer.current_epoch}: "
+                f"train_loss={metrics['train/loss'].item():.4f}, "
+                f"train_acc={metrics.get('train/acc', torch.tensor(0.0)).item():.4f}, "
+                f"val_loss={metrics.get('val/loss', torch.tensor(0.0)).item():.4f}, "
+                f"val_acc={metrics.get('val/acc', torch.tensor(0.0)).item():.4f}"
+            )
+    
+    def on_save_checkpoint(self, trainer, pl_module, checkpoint):
+        """Log when checkpoint is saved"""
+        checkpoint_path = trainer.checkpoint_callback.best_model_path if hasattr(trainer.checkpoint_callback, 'best_model_path') else None
+        if checkpoint_path:
+            self.logger.info(f"Checkpoint saved: {checkpoint_path}")
 
 
-# Define the model
-class DeepSets(nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim):
-        super(DeepSets, self).__init__()
-        # Phi network processes individual elements
-        self.phi = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU()
-        )
-        # Rho network processes aggregated set representation
-        self.rho = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, output_dim)
-        )
+def setup_logging(output_dir: str) -> logging.Logger:
+    """Setup logging to both file and console"""
+    log_dir = Path(output_dir) / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create log filename with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = log_dir / f"training_{timestamp}.log"
+    
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler()
+        ]
+    )
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"Logging initialized. Log file: {log_file}")
+    
+    return logger
+
+
+def save_training_summary(output_dir: str, args, model_config: ModelConfig, metadata: Dict, trainer=None):
+    """Save training summary to JSON file"""
+    summary = {
+        'timestamp': datetime.now().isoformat(),
+        'dataset': {
+            'name': args.dataset,
+            'label_type': args.label_type,
+            'train_size': metadata['train_size'],
+            'val_size': metadata['val_size'],
+            'test_size': metadata['test_size'],
+            'num_classes': metadata['num_classes'],
+            'num_concepts': metadata['num_concepts'],
+            'concept_names': metadata['concept_names']
+        },
+        'model': {
+            'encoder_name': model_config.encoder_name,
+            'freeze_encoder': model_config.freeze_encoder,
+            'variational_family': model_config.variational_family,
+            'num_mc_samples': model_config.num_mc_samples,
+            'prior_std': model_config.prior_std,
+            'kl_weight': model_config.kl_weight,
+            'concept_weight': model_config.concept_weight,
+            'aleatoric_weight': model_config.aleatoric_weight
+        },
+        'training': {
+            'max_epochs': args.max_epochs,
+            'batch_size': args.batch_size,
+            'learning_rate': model_config.learning_rate,
+            'weight_decay': model_config.weight_decay,
+            'warmup_ratio': model_config.warmup_ratio,
+            'gradient_clip_val': args.gradient_clip_val,
+            'early_stopping_patience': args.early_stopping_patience,
+            'accelerator': args.accelerator,
+            'devices': args.devices,
+            'precision': args.precision
+        },
+        'checkpoints': {
+            'directory': str(Path(output_dir) / "checkpoints"),
+            'save_every_n_epochs': args.save_every_n_epochs
+        }
+    }
+    
+    # Add final metrics if trainer is provided
+    if trainer and hasattr(trainer, 'callback_metrics'):
+        metrics = trainer.callback_metrics
+        summary['final_metrics'] = {
+            'train_loss': float(metrics.get('train/loss', torch.tensor(0.0)).item()),
+            'train_acc': float(metrics.get('train/acc', torch.tensor(0.0)).item()),
+            'val_loss': float(metrics.get('val/loss', torch.tensor(0.0)).item()),
+            'val_acc': float(metrics.get('val/acc', torch.tensor(0.0)).item()),
+            'test_acc': float(metrics.get('test/acc', torch.tensor(0.0)).item()),
+            'test_f1': float(metrics.get('test/f1', torch.tensor(0.0)).item())
+        }
+    
+    # Save summary
+    summary_file = Path(output_dir) / "logs" / "training_summary.json"
+    with open(summary_file, 'w') as f:
+        json.dump(summary, f, indent=2)
+    
+    return summary_file
+
+
+def log_config(logger: logging.Logger, args, model_config: ModelConfig, metadata: Dict):
+    """Log configuration details"""
+    logger.info("=" * 60)
+    logger.info("TRAINING CONFIGURATION")
+    logger.info("=" * 60)
+    
+    logger.info("\nDataset Configuration:")
+    logger.info(f"  Dataset: {args.dataset}")
+    logger.info(f"  Label type: {args.label_type}")
+    logger.info(f"  Batch size: {args.batch_size}")
+    logger.info(f"  Tokenizer: {args.tokenizer_name}")
+    logger.info(f"  Train size: {metadata['train_size']:,}")
+    logger.info(f"  Val size: {metadata['val_size']:,}")
+    logger.info(f"  Test size: {metadata['test_size']:,}")
+    logger.info(f"  Num classes: {metadata['num_classes']}")
+    logger.info(f"  Num concepts: {metadata['num_concepts']}")
+    logger.info(f"  Concept names: {metadata['concept_names']}")
+    
+    logger.info("\nModel Configuration:")
+    logger.info(f"  Encoder: {model_config.encoder_name}")
+    logger.info(f"  Freeze encoder: {model_config.freeze_encoder}")
+    logger.info(f"  Variational family: {model_config.variational_family}")
+    logger.info(f"  MC samples: {model_config.num_mc_samples}")
+    logger.info(f"  Prior std: {model_config.prior_std}")
+    logger.info(f"  KL weight: {model_config.kl_weight}")
+    logger.info(f"  Concept weight: {model_config.concept_weight}")
+    logger.info(f"  Aleatoric weight: {model_config.aleatoric_weight}")
+    
+    logger.info("\nTraining Configuration:")
+    logger.info(f"  Max epochs: {args.max_epochs}")
+    logger.info(f"  Learning rate: {model_config.learning_rate}")
+    logger.info(f"  Weight decay: {model_config.weight_decay}")
+    logger.info(f"  Warmup ratio: {model_config.warmup_ratio}")
+    logger.info(f"  Gradient clip: {args.gradient_clip_val}")
+    logger.info(f"  Early stopping patience: {args.early_stopping_patience}")
+    logger.info(f"  LR Scheduler: {'Enabled' if model_config.use_lr_scheduler else 'Disabled'}")
+    if model_config.use_lr_scheduler:
+        logger.info(f"    - Factor: {model_config.lr_scheduler_factor}")
+        logger.info(f"    - Patience: {model_config.lr_scheduler_patience} epochs")
+        logger.info(f"    - Min LR: {model_config.lr_scheduler_min_lr}")
+        logger.info(f"    - Mode: {model_config.lr_scheduler_mode}")
+    logger.info(f"  Output directory: {args.output_dir}")
+    logger.info(f"  Accelerator: {args.accelerator}")
+    logger.info(f"  Devices: {args.devices}")
+    logger.info(f"  Precision: {args.precision}")
+    
+    logger.info("=" * 60)
+
+
+def parse_args():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(
+        description="Train Variational Credal CBM",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    
+    # Dataset arguments
+    parser.add_argument('--dataset', type=str, default='cebab',
+                       choices=['cebab', 'hatexplain', 'goemotions', 'civil_comments', 'sst2', 'ag_news'],
+                       help='Dataset name')
+    parser.add_argument('--label_type', type=str, default='default',
+                       help='Label type (default uses dataset default)')
+    parser.add_argument('--batch_size', type=int, default=16,
+                       help='Batch size for dataloaders')
+    parser.add_argument('--tokenizer_name', type=str, default='distilbert-base-uncased',
+                       help='Tokenizer name')
+    parser.add_argument('--max_samples', type=int, default=None,
+                       help='Maximum samples per split (for debugging)')
+    
+    # Model config arguments (will be added)
+    parser = add_model_config_args(parser)
+    
+    # Training arguments
+    parser.add_argument('--max_epochs', type=int, default=100,
+                       help='Maximum training epochs')
+    parser.add_argument('--output_dir', type=str, default='./outputs',
+                       help='Output directory for checkpoints and logs')
+    parser.add_argument('--accelerator', type=str, default='auto',
+                       choices=['auto', 'gpu', 'cpu', 'mps'],
+                       help='Accelerator type')
+    parser.add_argument('--devices', type=int, default=1,
+                       help='Number of devices')
+    parser.add_argument('--precision', type=str, default='16-mixed',
+                       choices=['32', '16-mixed', 'bf16-mixed'],
+                       help='Training precision')
+    parser.add_argument('--early_stopping_patience', type=int, default=3,
+                       help='Early stopping patience (set to -1 to disable early stopping)')
+    parser.add_argument('--gradient_clip_val', type=float, default=1.0,
+                       help='Gradient clipping value')
+    parser.add_argument('--log_every_n_steps', type=int, default=10,
+                       help='Logging frequency')
+    parser.add_argument('--save_every_n_epochs', type=int, default=10,
+                       help='Save checkpoint every N epochs (in addition to best checkpoints)')
+    
+    # Inference arguments
+    parser.add_argument('--test_only', action='store_true',
+                       help='Only run testing (requires checkpoint)')
+    parser.add_argument('--checkpoint_path', type=str, default=None,
+                       help='Path to checkpoint for testing')
+    
+    return parser.parse_args()
+
+
+def main():
+    """Main training function"""
+    args = parse_args()
+    
+    # Setup logging
+    logger = setup_logging(args.output_dir)
+    logger.info("Starting Variational Credal CBM Training")
+    logger.info(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    # 1. Load dataset and get metadata
+    data_config = DatasetConfig(
+        label_type=args.label_type if args.label_type != 'default' else 'default',
+        max_samples=args.max_samples,
+        batch_size=args.batch_size,
+        tokenizer_name=args.tokenizer_name,
+        max_length=args.max_length
+    )
+    
+    logger.info(f"Loading dataset: {args.dataset}")
+    train_loader, val_loader, test_loader, tokenizer, metadata = load_dataset_splits(
+        args.dataset,
+        config=data_config,
+        tokenizer_name=args.tokenizer_name,
+        batch_size=args.batch_size
+    )
+    logger.info(f"Dataset loaded successfully")
+    
+    # 2. Create model config from args, then update with metadata
+    model_config = ModelConfig.from_args(args)
+    
+    # Override with dataset metadata
+    model_config.num_classes = metadata['num_classes']
+    model_config.num_concepts = metadata['num_concepts']
+    model_config.max_length = args.max_length
+    
+    # Log configuration
+    log_config(logger, args, model_config, metadata)
+    
+    # 3. Create model
+    logger.info("Creating model...")
+    model = VariationalCredalCBM(model_config)
+    
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(f"Model created - Total params: {total_params:,}, Trainable: {trainable_params:,}")
+    
+    # 4. Create trainer
+    logger.info("Creating trainer...")
+    trainer = create_trainer(
+        output_dir=args.output_dir,
+        max_epochs=args.max_epochs,
+        accelerator=args.accelerator,
+        devices=args.devices,
+        precision=args.precision,
+        gradient_clip_val=args.gradient_clip_val,
+        early_stopping_patience=args.early_stopping_patience,
+        log_every_n_steps=args.log_every_n_steps,
+        save_every_n_epochs=args.save_every_n_epochs
+    )
+    
+    # Add checkpoint logger callback
+    checkpoint_logger = CheckpointLogger(logger)
+    trainer.callbacks.append(checkpoint_logger)
+    logger.info("Trainer created with checkpoint logging")
+    
+    # 5. Train or test
+    if args.test_only:
+        logger.info("Running test only mode...")
+        if args.checkpoint_path is None:
+            # Try to find best checkpoint
+            checkpoint_dir = Path(args.output_dir) / "checkpoints"
+            checkpoints = list(checkpoint_dir.glob("*.ckpt"))
+            if checkpoints:
+                args.checkpoint_path = str(checkpoints[0])
+                logger.info(f"Using checkpoint: {args.checkpoint_path}")
+            else:
+                raise ValueError("No checkpoint found. Please specify --checkpoint_path")
         
-    def forward(self, x, set_lengths):
-        # x: (batch_size, max_set_length, input_dim)
-        # set_lengths: (batch_size,)
-        batch_size = x.size(0)
-        
-        # Apply phi to each element
-        x = self.phi(x)  # (batch_size, max_set_length, hidden_dim)
-        
-        # Mask padding positions
-        mask = torch.arange(max_set_length).expand(batch_size, max_set_length).to(device)
-        mask = mask < set_lengths.unsqueeze(1)
-        mask = mask.unsqueeze(-1)  # (batch_size, max_set_length, 1)
-        x = x * mask.float()
-        
-        # Aggregate using sum
-        x = torch.sum(x, dim=1)  # (batch_size, hidden_dim)
-        
-        # Apply rho
-        x = self.rho(x)  # (batch_size, output_dim)
-        return x
-
-
-def compute_mmd_loss(x1, x2, kernel='rbf', sigma=1.0):
-    # x1, x2: (batch_size, embedding_dim)
-    if kernel == 'rbf':
-        # Compute pairwise distances
-        x1_square = x1.pow(2).sum(dim=1, keepdim=True)
-        x2_square = x2.pow(2).sum(dim=1, keepdim=True)
-        xy = x1 @ x2.t()
-        distances = x1_square + x2_square.t() - 2 * xy
-        
-        k = torch.exp(-distances / (2 * sigma ** 2))
-        mmd = k.mean()
+        logger.info("Starting testing...")
+        trainer.test(model, test_loader, ckpt_path=args.checkpoint_path)
+        logger.info("Testing completed")
     else:
-        raise ValueError('Unsupported kernel type')
-    return mmd
-
-
-def contrastive_mmd_loss(z_i, z_j, z_k, sigma=1.0):
-    # z_i, z_j: Positive pair embeddings (batch_size, embedding_dim)
-    # z_k: Negative examples embeddings (batch_size, embedding_dim)
-    mmd_pos = compute_mmd_loss(z_i, z_j, sigma=sigma)
-    mmd_neg = compute_mmd_loss(z_i, z_k, sigma=sigma)
-    loss = mmd_neg - mmd_pos
-    return loss
-
-
-model = DeepSets(input_dim=embedding_dim, hidden_dim=hidden_dim, output_dim=output_dim).to(device)
-optimizer = optim.Adam(model.parameters(), lr=1e-4)
-
-num_epochs = 10
-sigma = 1.0  # Kernel bandwidth for MMD
-
-for epoch in range(num_epochs):
-    model.train()
-    total_loss = 0.0
-    for batch in train_loader:
-        X_batch, lengths_batch, y_batch = batch
-        batch_size = X_batch.size(0)
+        logger.info("Starting training...")
+        logger.info(f"Training will run for up to {args.max_epochs} epochs")
+        if args.early_stopping_patience > 0:
+            logger.info(f"Early stopping enabled with patience={args.early_stopping_patience} epochs")
+        else:
+            logger.info(f"Early stopping disabled - will train for full {args.max_epochs} epochs")
         
-        # Forward pass
-        z_i = model(X_batch, lengths_batch)  # Embeddings of the sets
+        trainer.fit(model, train_loader, val_loader)
         
-        # Create positive pairs (shift embeddings by one)
-        z_j = torch.roll(z_i, shifts=-1, dims=0)
+        # Log training completion details
+        if trainer.current_epoch < args.max_epochs - 1:
+            logger.info(f"Training stopped early at epoch {trainer.current_epoch + 1} (out of {args.max_epochs} max)")
+            logger.info("This is likely due to early stopping - validation accuracy did not improve")
+            logger.info(f"Best validation accuracy: {trainer.callback_metrics.get('val/acc', torch.tensor(0.0)).item():.4f}")
+        else:
+            logger.info(f"Training completed all {args.max_epochs} epochs")
         
-        # Create negative pairs (shuffle embeddings)
-        indices = torch.randperm(batch_size)
-        z_k = z_i[indices]
+        # Log checkpoint information
+        checkpoint_dir = Path(args.output_dir) / "checkpoints"
+        checkpoints = list(checkpoint_dir.glob("*.ckpt"))
+        logger.info(f"Checkpoints saved: {len(checkpoints)}")
+        for ckpt in checkpoints:
+            logger.info(f"  - {ckpt.name}")
         
-        # Compute contrastive MMD loss
-        loss = contrastive_mmd_loss(z_i, z_j, z_k, sigma=sigma)
+        logger.info("Starting testing...")
+        trainer.test(model, test_loader)
+        logger.info("Testing completed")
         
-        # Backward and optimize
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        
-        total_loss += loss.item()
-    avg_loss = total_loss / len(train_loader)
-    print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {avg_loss:.4f}')
-
-class Classifier(nn.Module):
-    def __init__(self, input_dim, num_classes):
-        super(Classifier, self).__init__()
-        self.fc = nn.Linear(input_dim, num_classes)
-        
-    def forward(self, x):
-        return F.log_softmax(self.fc(x), dim=1)
-
-# Get embeddings for training data
-model.eval()
-with torch.no_grad():
-    z_train = model(X_train, lengths_train)  # (num_examples, output_dim)
-    z_calib = model(X_calib, lengths_calib)
-    z_test = model(X_test, lengths_test)
-
-# Create datasets for classifier
-train_dataset = torch.utils.data.TensorDataset(z_train, y_train)
-calib_dataset = torch.utils.data.TensorDataset(z_calib, y_calib)
-test_dataset = torch.utils.data.TensorDataset(z_test, y_test)
-
-train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
-calib_loader = DataLoader(calib_dataset, batch_size=8, shuffle=False)
-test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False)
+        # Save training summary
+        summary_file = save_training_summary(args.output_dir, args, model_config, metadata, trainer)
+        logger.info(f"Training summary saved to: {summary_file}")
+    
+    logger.info("=" * 60)
+    logger.info("Training session completed")
+    logger.info(f"End time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info("=" * 60)
 
 
-#encoded_input = tokenizer(text, return_tensors='pt')
+if __name__ == "__main__":
+    main()
+
