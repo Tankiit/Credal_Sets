@@ -16,11 +16,17 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from scipy import stats
 from tqdm import tqdm
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from datasets import load_dataset as hf_load_dataset
 import matplotlib.pyplot as plt
 
-
+# Optional: LoRA for LLMs
+try:
+    from peft import LoraConfig, get_peft_model, TaskType, prepare_model_for_kbit_training
+    PEFT_AVAILABLE = True
+except ImportError:
+    PEFT_AVAILABLE = False
+    print("Note: peft not installed. LLM training requires: pip install peft bitsandbytes")
 
 # Your dataloader
 from dataloader import (
@@ -28,6 +34,58 @@ from dataloader import (
     DatasetConfig, 
     DATASET_INFO
 )
+
+# =============================================================================
+# MODEL REGISTRY
+# =============================================================================
+
+MODEL_REGISTRY = {
+    # Encoder models (frozen encoder, train heads)
+    "distilbert-base-uncased": {
+        "type": "encoder",
+        "hidden_size": 768,
+        "max_length": 512,
+    },
+    "roberta-base": {
+        "type": "encoder", 
+        "hidden_size": 768,
+        "max_length": 512,
+    },
+    "roberta-large": {
+        "type": "encoder",
+        "hidden_size": 1024,
+        "max_length": 512,
+    },
+    "microsoft/deberta-v3-base": {
+        "type": "encoder",
+        "hidden_size": 768,
+        "max_length": 512,
+    },
+    "microsoft/deberta-v3-large": {
+        "type": "encoder",
+        "hidden_size": 1024,
+        "max_length": 512,
+    },
+    # LLM models (LoRA fine-tuning)
+    "microsoft/phi-3-mini-4k-instruct": {
+        "type": "llm",
+        "hidden_size": 3072,
+        "max_length": 256,
+        "target_modules": ["qkv_proj", "o_proj"],
+    },
+    "mistralai/Mistral-7B-v0.1": {
+        "type": "llm",
+        "hidden_size": 4096,
+        "max_length": 256,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+    },
+    "meta-llama/Llama-3.1-8B": {
+        "type": "llm",
+        "hidden_size": 4096,
+        "max_length": 256,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+    },
+}
 
 @dataclass
 class HeadConfig:
@@ -57,8 +115,14 @@ class ExperimentConfig:
     freeze_encoder: bool = True
     aleatoric_mode: str = "supervised"  # "supervised" | "entropy" | "none"
     
+    # LoRA (for LLMs)
+    use_lora: bool = False
+    lora_r: int = 16
+    lora_alpha: int = 32
+    lora_dropout: float = 0.1
+    
     # Training
-    epochs: int = 50
+    epochs: int = 10
     lr: float = 1e-4
     weight_decay: float = 0.01
     concept_weight: float = 1.0
@@ -87,6 +151,115 @@ class ExperimentConfig:
             HeadConfig(4, "high_drop_mean", 256, 0.20, "mean"),
         ]
         return configs[:self.n_heads]
+    
+    def get_model_type(self) -> str:
+        """Determine if model is encoder or LLM."""
+        info = MODEL_REGISTRY.get(self.encoder_name, {})
+        return info.get("type", "encoder")
+
+# =============================================================================
+# MODEL LOADING
+# =============================================================================
+
+def load_encoder_model(model_name: str, device: str, freeze: bool = True):
+    """Load encoder model (BERT-style)."""
+    print(f"Loading encoder: {model_name}")
+    
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    
+    encoder = AutoModel.from_pretrained(model_name)
+    
+    if freeze:
+        for param in encoder.parameters():
+            param.requires_grad = False
+        print("  Encoder frozen")
+    
+    encoder = encoder.to(device)
+    
+    # Get hidden size
+    with torch.no_grad():
+        dummy = tokenizer("test", return_tensors="pt", padding=True)
+        out = encoder(dummy['input_ids'].to(device), attention_mask=dummy['attention_mask'].to(device))
+        hidden_size = out.last_hidden_state.shape[-1]
+    
+    print(f"  Hidden size: {hidden_size}")
+    return encoder, tokenizer, hidden_size, "encoder"
+
+
+def load_llm_model(model_name: str, device: str, config: ExperimentConfig):
+    """Load LLM with LoRA for parameter-efficient fine-tuning."""
+    print(f"Loading LLM: {model_name}")
+    
+    if not PEFT_AVAILABLE:
+        raise ImportError("peft is required for LLM training. Install with: pip install peft bitsandbytes")
+    
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"  # For decoder-only models
+    
+    # Quantization config for memory efficiency
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_use_double_quant=True,
+    )
+    
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        quantization_config=bnb_config,
+        device_map="auto",
+        trust_remote_code=True,
+        torch_dtype=torch.float16,
+    )
+    
+    # Prepare for k-bit training
+    model = prepare_model_for_kbit_training(model)
+    
+    # Get target modules from registry
+    model_info = MODEL_REGISTRY.get(model_name, {})
+    target_modules = model_info.get("target_modules", ["q_proj", "v_proj"])
+    
+    # Apply LoRA
+    lora_config = LoraConfig(
+        r=config.lora_r,
+        lora_alpha=config.lora_alpha,
+        target_modules=target_modules,
+        lora_dropout=config.lora_dropout,
+        bias="none",
+        task_type=TaskType.FEATURE_EXTRACTION,
+    )
+    
+    model = get_peft_model(model, lora_config)
+    model.print_trainable_parameters()
+    
+    hidden_size = model.config.hidden_size
+    print(f"  Hidden size: {hidden_size}")
+    
+    return model, tokenizer, hidden_size, "llm"
+
+
+def load_model(config: ExperimentConfig, device: str):
+    """Load model based on type (encoder or LLM)."""
+    model_type = config.get_model_type()
+    
+    if model_type == "llm" or config.use_lora:
+        return load_llm_model(config.encoder_name, device, config)
+    else:
+        return load_encoder_model(config.encoder_name, device, config.freeze_encoder)
+
+
+def get_hidden_states(encoder, input_ids, attention_mask, model_type: str):
+    """Get hidden states from encoder or LLM."""
+    if model_type == "encoder":
+        outputs = encoder(input_ids, attention_mask=attention_mask)
+        return outputs.last_hidden_state
+    else:  # LLM
+        outputs = encoder(input_ids, attention_mask=attention_mask, output_hidden_states=True)
+        return outputs.hidden_states[-1]  # Last layer
 
 class ConceptHead(nn.Module):
     """A single concept prediction head."""
@@ -109,6 +282,11 @@ class ConceptHead(nn.Module):
         elif self.config.pooling == "mean":
             mask = attention_mask.unsqueeze(-1).float()
             return (hidden_states * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-9)
+        elif self.config.pooling == "last":
+            # For decoder-only models, use last non-padded token
+            seq_lens = attention_mask.sum(dim=1) - 1
+            batch_size = hidden_states.size(0)
+            return hidden_states[torch.arange(batch_size, device=hidden_states.device), seq_lens]
         raise ValueError(f"Unknown pooling: {self.config.pooling}")
     
     def forward(self, hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
@@ -124,8 +302,9 @@ class AleatoricHead(nn.Module):
     In CEBaB, concept=1 (unknown) represents ambiguity.
     """
     
-    def __init__(self, input_dim: int, num_concepts: int):
+    def __init__(self, input_dim: int, num_concepts: int, pooling: str = "cls"):
         super().__init__()
+        self.pooling = pooling
         
         self.net = nn.Sequential(
             nn.Linear(input_dim, 256),
@@ -134,9 +313,19 @@ class AleatoricHead(nn.Module):
             nn.Linear(256, num_concepts),
         )
     
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        # Use CLS token
-        pooled = hidden_states[:, 0, :]
+    def pool(self, hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+        if self.pooling == "cls":
+            return hidden_states[:, 0, :]
+        elif self.pooling == "last":
+            seq_lens = attention_mask.sum(dim=1) - 1
+            batch_size = hidden_states.size(0)
+            return hidden_states[torch.arange(batch_size, device=hidden_states.device), seq_lens]
+        else:
+            mask = attention_mask.unsqueeze(-1).float()
+            return (hidden_states * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-9)
+    
+    def forward(self, hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+        pooled = self.pool(hidden_states, attention_mask)
         logits = self.net(pooled)
         return torch.sigmoid(logits)  # P(unknown) in [0, 1]   
 
@@ -184,6 +373,7 @@ class CREDENCE(nn.Module):
         num_classes: int,
         head_configs: List[HeadConfig],
         aleatoric_mode: str = "supervised",  # "supervised" | "entropy" | "none"
+        model_type: str = "encoder",  # "encoder" | "llm"
     ):
         super().__init__()
         
@@ -192,6 +382,12 @@ class CREDENCE(nn.Module):
         self.num_classes = num_classes
         self.n_heads = len(head_configs)
         self.aleatoric_mode = aleatoric_mode
+        self.model_type = model_type
+        
+        # Adjust pooling for LLMs (use last token instead of CLS)
+        if model_type == "llm":
+            for cfg in head_configs:
+                cfg.pooling = "last"
         
         # Ensemble heads (epistemic)
         self.heads = nn.ModuleList([
@@ -200,8 +396,9 @@ class CREDENCE(nn.Module):
         ])
         
         # Aleatoric head (only if supervised mode)
+        pooling = "last" if model_type == "llm" else "cls"
         if aleatoric_mode == "supervised":
-            self.aleatoric_head = AleatoricHead(input_dim, num_concepts)
+            self.aleatoric_head = AleatoricHead(input_dim, num_concepts, pooling=pooling)
         else:
             self.aleatoric_head = None
         
@@ -212,9 +409,9 @@ class CREDENCE(nn.Module):
     
     def _print_info(self):
         total = sum(p.numel() for p in self.parameters())
-        print(f"CREDENCE v2: {self.n_heads} heads, {self.num_concepts} concepts, "
+        print(f"CREDENCE: {self.n_heads} heads, {self.num_concepts} concepts, "
               f"{self.num_classes} classes, aleatoric={self.aleatoric_mode}, "
-              f"{total:,} params")
+              f"model_type={self.model_type}, {total:,} params")
     
     def forward(self, hidden_states: torch.Tensor, attention_mask: torch.Tensor):
         # Get predictions from all heads
@@ -241,7 +438,7 @@ class CREDENCE(nn.Module):
         # Aleatoric: predicted P(unknown) per concept
         if self.aleatoric_mode == "supervised":
             # Learned prediction of P(unknown) - true aleatoric signal
-            ambiguity = self.aleatoric_head(hidden_states)
+            ambiguity = self.aleatoric_head(hidden_states, attention_mask)
         elif self.aleatoric_mode == "entropy":
             # Proxy: mean entropy of individual head predictions
             eps = 1e-8
@@ -322,10 +519,14 @@ def train_epoch(
     optimizer: torch.optim.Optimizer,
     config: ExperimentConfig,
     device: str,
+    model_type: str,
     profiler: Optional[torch.profiler.profiler] = None,
 ):
     model.train()
-    encoder.eval()
+    if model_type == "encoder":
+        encoder.eval()
+    else:
+        encoder.train()  # LoRA is trainable
     
     epoch_losses = defaultdict(float)
     n_batches = 0
@@ -341,9 +542,12 @@ def train_epoch(
         # is_unknown is binary: 1.0 if concept==1 (unknown), 0.0 otherwise
         is_unknown = (concepts == 1).float()  # [batch, num_concepts]
         
-        # Encode (frozen)
-        with torch.no_grad():
-            hidden_states = encoder(input_ids, attention_mask=attention_mask).last_hidden_state
+        # Encode
+        if model_type == "encoder":
+            with torch.no_grad():
+                hidden_states = get_hidden_states(encoder, input_ids, attention_mask, model_type)
+        else:
+            hidden_states = get_hidden_states(encoder, input_ids, attention_mask, model_type)
         
         # Forward pass
         outputs = model(hidden_states, attention_mask)
@@ -364,6 +568,8 @@ def train_epoch(
             profiler.step()
         
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        if model_type == "llm":
+            torch.nn.utils.clip_grad_norm_(encoder.parameters(), max_norm=1.0)
         optimizer.step()
         
         # Track
@@ -390,6 +596,7 @@ def evaluate(
     encoder: nn.Module,
     data_loader: DataLoader,
     device: str,
+    model_type: str,
 ):
     model.eval()
     encoder.eval()
@@ -411,7 +618,7 @@ def evaluate(
         is_unknown = (concepts == 1).float()  # [batch, num_concepts]
         is_unknown_mean = is_unknown.mean(dim=-1).numpy()  # Mean unknown rate per sample
         
-        hidden_states = encoder(input_ids, attention_mask=attention_mask).last_hidden_state
+        hidden_states = get_hidden_states(encoder, input_ids, attention_mask, model_type)
         outputs = model(hidden_states, attention_mask)
         
         preds = outputs["logits"].argmax(dim=-1)
@@ -473,7 +680,7 @@ def evaluate(
 # SIMPLE ANALYSIS
 # =============================================================================
 
-def analyze_test_set(model, encoder, test_loader, device, output_dir="./analysis"):
+def analyze_test_set(model, encoder, test_loader, device, model_type, output_dir="./analysis"):
     """
     Run after training to analyze uncertainty decomposition.
     
@@ -693,7 +900,7 @@ def analyze_test_set(model, encoder, test_loader, device, output_dir="./analysis
 # QUALITATIVE EXAMPLES EXTRACTION
 # =============================================================================
 
-def extract_qualitative_examples(model, encoder, test_loader, dataset, device, n_examples=3, output_dir=None):
+def extract_qualitative_examples(model, encoder, test_loader, dataset, device, model_type, n_examples=3, output_dir=None):
     """
     Extract representative examples from each uncertainty quadrant.
     
@@ -722,7 +929,7 @@ def extract_qualitative_examples(model, encoder, test_loader, dataset, device, n
             attention_mask = batch['attention_mask'].to(device)
             labels = batch['labels'].to(device)
             
-            hidden_states = encoder(input_ids, attention_mask=attention_mask).last_hidden_state
+            hidden_states = get_hidden_states(encoder, input_ids, attention_mask, model_type)
             outputs = model(hidden_states, attention_mask)
             
             preds = outputs["logits"].argmax(dim=-1)
@@ -975,30 +1182,35 @@ def run_experiment(config: ExperimentConfig):
         print("Switching aleatoric_mode from 'supervised' to 'entropy'")
         config.aleatoric_mode = "entropy"
 
-    encoder = AutoModel.from_pretrained(config.encoder_name)
-    if config.freeze_encoder:
-        for param in encoder.parameters():
-            param.requires_grad = False
-        print(f"Loaded {config.encoder_name} (frozen)")
-    encoder = encoder.to(device)
+    # Load model
+    encoder, tokenizer, hidden_size, model_type = load_model(config, device)
     
-    # Get input dim
-    with torch.no_grad():
-        dummy = next(iter(train_loader))
-        out = encoder(dummy['input_ids'][:1].to(device), 
-                     attention_mask=dummy['attention_mask'][:1].to(device))
-        input_dim = out.last_hidden_state.shape[-1]
+    # Adjust max_length for LLMs
+    model_info = MODEL_REGISTRY.get(config.encoder_name, {})
+    if model_type == "llm":
+        config.max_length = min(config.max_length, model_info.get("max_length", 256))
+        print(f"Using max_length={config.max_length} for LLM")
 
     model = CREDENCE(
-        input_dim=input_dim,
+        input_dim=hidden_size,
         num_concepts=metadata['num_concepts'],
         num_classes=metadata['num_classes'],
         head_configs=config.get_head_configs(),
         aleatoric_mode=config.aleatoric_mode,
+        model_type=model_type,
     )
     model = model.to(device)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
+    # Optimizer
+    if model_type == "encoder":
+        optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
+    else:
+        # Include LoRA parameters
+        optimizer = torch.optim.AdamW(
+            list(model.parameters()) + list(encoder.parameters()),
+            lr=config.lr,
+            weight_decay=config.weight_decay
+        )
     best_val_acc = 0.0
     best_state = None
     history = []
@@ -1046,8 +1258,8 @@ def run_experiment(config: ExperimentConfig):
         
         # Only profile first epoch if profiler is enabled
         current_profiler = profiler if (config.enable_profiler and epoch == 0) else None
-        train_losses = train_epoch(model, encoder, train_loader, optimizer, config, device, current_profiler)
-        val_results = evaluate(model, encoder, val_loader, device)
+        train_losses = train_epoch(model, encoder, train_loader, optimizer, config, device, model_type, current_profiler)
+        val_results = evaluate(model, encoder, val_loader, device, model_type)
         
         # Stop profiler after first epoch
         if current_profiler is not None:
@@ -1116,7 +1328,7 @@ def run_experiment(config: ExperimentConfig):
     # Load best
     if best_state:
         model.load_state_dict(best_state)
-        test_results = evaluate(model, encoder, test_loader, device)
+        test_results = evaluate(model, encoder, test_loader, device, model_type)
         print(f"  Accuracy: {test_results['accuracy']:.4f}")
         print(f"  rho(disagreement, error): {test_results['disagree_error_corr']:.4f} "
           f"(p={test_results['disagree_error_pval']:.2e})")
@@ -1125,7 +1337,7 @@ def run_experiment(config: ExperimentConfig):
         print(f"  Disagreement ratio: {test_results['disagree_ratio']:.2f}x")
         
         # Run analysis
-        analysis = analyze_test_set(model, encoder, test_loader, device, 
+        analysis = analyze_test_set(model, encoder, test_loader, device, model_type, 
                                     os.path.join(config.output_dir, 'analysis'))
         
         results = {
@@ -1151,22 +1363,37 @@ def run_experiment(config: ExperimentConfig):
     print(f"Results saved to {output_path}")
     # After training and loading best model - extract qualitative examples
     examples_dir = os.path.join(config.output_dir, 'qualitative_examples')
-    examples = extract_qualitative_examples(model, encoder, test_loader, test_loader.dataset, device, 
+    examples = extract_qualitative_examples(model, encoder, test_loader, test_loader.dataset, device, model_type,
                                            n_examples=3, output_dir=examples_dir)
     format_examples_for_paper(examples)
     print_latex_examples(examples)
     return results
 
 def main():
-    parser = argparse.ArgumentParser(description="CREDENCE")
+    parser = argparse.ArgumentParser(description="CREDENCE Multi-Model")
     
+    # Model selection
+    parser.add_argument("--encoder_name", type=str, default="distilbert-base-uncased",
+                       help="Model name (e.g., roberta-base, microsoft/deberta-v3-base)")
+    parser.add_argument("--use_lora", action="store_true",
+                       help="Use LoRA for LLM fine-tuning")
+    parser.add_argument("--lora_r", type=int, default=16)
+    parser.add_argument("--lora_alpha", type=int, default=32)
+    parser.add_argument("--lora_dropout", type=float, default=0.1)
+    
+    # Data
     parser.add_argument("--dataset", type=str, default="cebab",
                        choices=list(DATASET_INFO.keys()))
     parser.add_argument("--label_type", type=str, default="ternary")
     parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--max_length", type=int, default=128)
     parser.add_argument("--n_heads", type=int, default=5)
-    parser.add_argument("--epochs", type=int, default=40)
+    
+    # Training
+    parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-4)
+    
+    # Output
     parser.add_argument("--output_dir", type=str, default="./results")
     parser.add_argument("--seed", type=int, default=42)
     
@@ -1185,9 +1412,15 @@ def main():
     args = parser.parse_args()
     
     config = ExperimentConfig(
+        encoder_name=args.encoder_name,
+        use_lora=args.use_lora,
+        lora_r=args.lora_r,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
         dataset=args.dataset,
         label_type=args.label_type,
         batch_size=args.batch_size,
+        max_length=args.max_length,
         n_heads=args.n_heads,
         epochs=args.epochs,
         lr=args.lr,
