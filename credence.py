@@ -1,0 +1,1223 @@
+import os
+import json
+import argparse
+from dataclasses import dataclass, field, asdict
+from typing import Dict, List, Tuple, Optional, Any, Set
+from collections import defaultdict
+
+import sys
+import logging
+
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+from scipy import stats
+from tqdm import tqdm
+from transformers import AutoModel, AutoTokenizer
+from datasets import load_dataset as hf_load_dataset
+import matplotlib.pyplot as plt
+
+
+
+# Your dataloader
+from dataloader import (
+    load_dataset_splits, 
+    DatasetConfig, 
+    DATASET_INFO
+)
+
+@dataclass
+class HeadConfig:
+    """Configuration for a single ensemble head."""
+    head_id: int
+    name: str
+    hidden_dim: int = 256
+    dropout_rate: float = 0.1
+    pooling: str = "cls"  # "cls" | "mean"
+    
+    def __repr__(self):
+        return f"Head({self.name}, d={self.dropout_rate:.2f}, pool={self.pooling})"
+
+
+@dataclass 
+class ExperimentConfig:
+    """Full experiment configuration."""
+    # Data
+    dataset: str = "cebab"
+    label_type: str = "binary"
+    max_length: int = 128
+    batch_size: int = 16
+    
+    # Model
+    encoder_name: str = "distilbert-base-uncased"
+    n_heads: int = 5
+    freeze_encoder: bool = True
+    aleatoric_mode: str = "supervised"  # "supervised" | "entropy" | "none"
+    
+    # Training
+    epochs: int = 50
+    lr: float = 1e-4
+    weight_decay: float = 0.01
+    concept_weight: float = 1.0
+    aleatoric_weight: float = 0.5
+    
+    # Profiling
+    enable_profiler: bool = False
+    profiler_warmup: int = 1
+    profiler_active: int = 3
+    profiler_repeat: int = 1
+    profiler_output_dir: Optional[str] = None
+    
+    # Output
+    output_dir: str = "./results"
+    seed: int = 42
+
+
+    def get_head_configs(self) -> List[HeadConfig]:
+        """Generate diverse head configurations."""
+        # Diversity through dropout and pooling
+        configs = [
+            HeadConfig(0, "low_drop_cls", 256, 0.05, "cls"),
+            HeadConfig(1, "med_drop_cls", 256, 0.15, "cls"),
+            HeadConfig(2, "high_drop_cls", 256, 0.25, "cls"),
+            HeadConfig(3, "low_drop_mean", 256, 0.10, "mean"),
+            HeadConfig(4, "high_drop_mean", 256, 0.20, "mean"),
+        ]
+        return configs[:self.n_heads]
+
+class ConceptHead(nn.Module):
+    """A single concept prediction head."""
+    def __init__(self, config: HeadConfig, input_dim: int, n_concepts: int):
+        super().__init__()
+        self.config = config
+        self.dropout = nn.Dropout(config.dropout_rate)
+        self.fc1 = nn.Linear(input_dim, config.hidden_dim)
+        self.fc2 = nn.Linear(config.hidden_dim, n_concepts)
+
+        self.net=nn.Sequential(
+            self.dropout,
+            self.fc1,
+            nn.ReLU(),
+            self.fc2
+        )
+    def pool(self, hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+        if self.config.pooling == "cls":
+            return hidden_states[:, 0, :]
+        elif self.config.pooling == "mean":
+            mask = attention_mask.unsqueeze(-1).float()
+            return (hidden_states * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-9)
+        raise ValueError(f"Unknown pooling: {self.config.pooling}")
+    
+    def forward(self, hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+        x = self.pool(hidden_states, attention_mask)
+        logits = self.net(x)
+        probs = torch.sigmoid(logits)
+        return logits, probs
+
+    
+class AleatoricHead(nn.Module):
+    """
+    Predicts P(unknown) per concept - true aleatoric signal.
+    In CEBaB, concept=1 (unknown) represents ambiguity.
+    """
+    
+    def __init__(self, input_dim: int, num_concepts: int):
+        super().__init__()
+        
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 256),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(256, num_concepts),
+        )
+    
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        # Use CLS token
+        pooled = hidden_states[:, 0, :]
+        logits = self.net(pooled)
+        return torch.sigmoid(logits)  # P(unknown) in [0, 1]   
+
+
+class CredalClassifier(nn.Module):
+    """
+    Classifier for concept prediction.
+    """
+    def __init__(self, num_concepts: int, num_classes: int):
+        super().__init__()
+        self.W = nn.Parameter(torch.randn(num_classes, num_concepts) * 0.1)
+        self.b = nn.Parameter(torch.zeros(num_classes))
+    
+    def forward(self, concept_probs: torch.Tensor) -> torch.Tensor:
+        return F.linear(concept_probs, self.W, self.b)
+    
+    def forward_credal(self, p_lower: torch.Tensor, p_upper: torch.Tensor):
+        W_pos = torch.clamp(self.W, min=0)
+        W_neg = torch.clamp(self.W, max=0)
+        
+        logit_lower = F.linear(p_lower, W_pos) + F.linear(p_upper, W_neg) + self.b
+        logit_upper = F.linear(p_upper, W_pos) + F.linear(p_lower, W_neg) + self.b
+        
+        return {
+            "logit_lower": logit_lower,
+            "logit_upper": logit_upper,
+            "prob_lower": torch.sigmoid(logit_lower),
+            "prob_upper": torch.sigmoid(logit_upper),
+        }
+
+class CREDENCE(nn.Module):
+    """
+    CREDENCE v2: Proper Uncertainty Decomposition
+    
+    Epistemic: Ensemble disagreement (Var_h[p_h])
+    Aleatoric: 
+        - Supervised: Trained to predict annotator variance
+        - Entropy: Head prediction entropy as proxy
+    """
+    
+    def __init__(
+        self,
+        input_dim: int,
+        num_concepts: int,
+        num_classes: int,
+        head_configs: List[HeadConfig],
+        aleatoric_mode: str = "supervised",  # "supervised" | "entropy" | "none"
+    ):
+        super().__init__()
+        
+        self.input_dim = input_dim
+        self.num_concepts = num_concepts
+        self.num_classes = num_classes
+        self.n_heads = len(head_configs)
+        self.aleatoric_mode = aleatoric_mode
+        
+        # Ensemble heads (epistemic)
+        self.heads = nn.ModuleList([
+            ConceptHead(cfg, input_dim, num_concepts)
+            for cfg in head_configs
+        ])
+        
+        # Aleatoric head (only if supervised mode)
+        if aleatoric_mode == "supervised":
+            self.aleatoric_head = AleatoricHead(input_dim, num_concepts)
+        else:
+            self.aleatoric_head = None
+        
+        # Classifier
+        self.classifier = CredalClassifier(num_concepts, num_classes)
+        
+        self._print_info()
+    
+    def _print_info(self):
+        total = sum(p.numel() for p in self.parameters())
+        print(f"CREDENCE v2: {self.n_heads} heads, {self.num_concepts} concepts, "
+              f"{self.num_classes} classes, aleatoric={self.aleatoric_mode}, "
+              f"{total:,} params")
+    
+    def forward(self, hidden_states: torch.Tensor, attention_mask: torch.Tensor):
+        # Get predictions from all heads
+        all_logits = []
+        all_probs = []
+        
+        for head in self.heads:
+            logits, probs = head(hidden_states, attention_mask)
+            all_logits.append(logits)
+            all_probs.append(probs)
+        
+        # Stack: [batch, num_concepts, n_heads]
+        probs_stack = torch.stack(all_probs, dim=-1)
+        
+        # Credal aggregation
+        credal_lower = probs_stack.min(dim=-1).values
+        credal_upper = probs_stack.max(dim=-1).values
+        credal_width = credal_upper - credal_lower
+        concept_probs = probs_stack.mean(dim=-1)
+        
+        # Epistemic: ensemble disagreement
+        disagreement = probs_stack.var(dim=-1)
+        
+        # Aleatoric: predicted P(unknown) per concept
+        if self.aleatoric_mode == "supervised":
+            # Learned prediction of P(unknown) - true aleatoric signal
+            ambiguity = self.aleatoric_head(hidden_states)
+        elif self.aleatoric_mode == "entropy":
+            # Proxy: mean entropy of individual head predictions
+            eps = 1e-8
+            entropies = -(probs_stack * torch.log(probs_stack + eps) + 
+                         (1 - probs_stack) * torch.log(1 - probs_stack + eps))
+            ambiguity = entropies.mean(dim=-1)  # Average entropy across heads
+        else:
+            ambiguity = torch.zeros_like(disagreement)
+        
+        # Classification
+        logits = self.classifier(concept_probs)
+        credal_out = self.classifier.forward_credal(credal_lower, credal_upper)
+        
+        return {
+            "logits": logits,
+            "concept_probs": concept_probs,
+            "credal_lower": credal_lower,
+            "credal_upper": credal_upper,
+            "credal_width": credal_width,
+            "disagreement": disagreement,
+            "ambiguity": ambiguity,
+            "total_uncertainty": disagreement + ambiguity,
+            "label_prob_lower": credal_out["prob_lower"],
+            "label_prob_upper": credal_out["prob_upper"],
+            "head_logits": all_logits,
+            "head_probs": all_probs,
+        }
+    
+    def compute_loss(
+        self,
+        outputs: Dict[str, Any],
+        labels: torch.Tensor,
+        concepts: torch.Tensor,
+        is_unknown: Optional[torch.Tensor] = None,
+        concept_weight: float = 1.0,
+        aleatoric_weight: float = 0.5,
+    ):
+        device = labels.device
+        
+        # 1. Task loss
+        task_loss = F.cross_entropy(outputs["logits"], labels)
+        
+        # 2. Concept loss (BCE per head, averaged)
+        # Ternary -> binary: 0->0, 1->0.5, 2->1
+        concept_targets = concepts.float() / 2.0
+        
+        concept_loss = torch.tensor(0.0, device=device)
+        for logits in outputs["head_logits"]:
+            concept_loss = concept_loss + F.binary_cross_entropy_with_logits(
+                logits, concept_targets
+            )
+        concept_loss = concept_loss / self.n_heads
+        
+        # 3. Aleatoric loss: predict P(unknown) per concept
+        # is_unknown is binary (0 or 1) where 1 means concept=1 (unknown) in ternary encoding
+        aleatoric_loss = torch.tensor(0.0, device=device)
+        if self.aleatoric_mode == "supervised" and is_unknown is not None:
+            # BCE because is_unknown is binary (0 or 1)
+            aleatoric_loss = F.binary_cross_entropy(outputs["ambiguity"], is_unknown)
+        
+        # Total
+        total_loss = (task_loss + 
+                     concept_weight * concept_loss + 
+                     aleatoric_weight * aleatoric_loss)
+        
+        return total_loss, {
+            "total": total_loss.item(),
+            "task": task_loss.item(),
+            "concept": concept_loss.item(),
+            "aleatoric": aleatoric_loss.item(),
+        }
+
+
+def train_epoch(
+    model: CREDENCE,
+    encoder: nn.Module,
+    train_loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    config: ExperimentConfig,
+    device: str,
+    profiler: Optional[torch.profiler.profiler] = None,
+):
+    model.train()
+    encoder.eval()
+    
+    epoch_losses = defaultdict(float)
+    n_batches = 0
+    
+    pbar = tqdm(train_loader, desc="Training")
+    for batch_idx, batch in enumerate(pbar):
+        input_ids = batch['input_ids'].to(device)
+        attention_mask = batch['attention_mask'].to(device)
+        labels = batch['labels'].to(device)
+        concepts = batch['concept_labels'].to(device)
+        
+        # Compute is_unknown from concepts: concept=1 (unknown) in ternary encoding
+        # is_unknown is binary: 1.0 if concept==1 (unknown), 0.0 otherwise
+        is_unknown = (concepts == 1).float()  # [batch, num_concepts]
+        
+        # Encode (frozen)
+        with torch.no_grad():
+            hidden_states = encoder(input_ids, attention_mask=attention_mask).last_hidden_state
+        
+        # Forward pass
+        outputs = model(hidden_states, attention_mask)
+        
+        # Loss
+        loss, loss_dict = model.compute_loss(
+            outputs, labels, concepts, is_unknown,
+            concept_weight=config.concept_weight,
+            aleatoric_weight=config.aleatoric_weight,
+        )
+        
+        # Backward pass
+        optimizer.zero_grad()
+        loss.backward()
+        
+        # Advance profiler step (handles schedule automatically)
+        if profiler is not None:
+            profiler.step()
+        
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+        
+        # Track
+        for k, v in loss_dict.items():
+            epoch_losses[k] += v
+        n_batches += 1
+        
+        pbar.set_postfix({
+            "loss": f"{loss_dict['total']:.4f}",
+            "disagree": f"{outputs['disagreement'].mean():.4f}",
+            "ambig": f"{outputs['ambiguity'].mean():.4f}",
+        })
+    
+    return {k: v / n_batches for k, v in epoch_losses.items()}
+
+
+# =============================================================================
+# EVALUATION
+# =============================================================================
+
+@torch.no_grad()
+def evaluate(
+    model: CREDENCE,
+    encoder: nn.Module,
+    data_loader: DataLoader,
+    device: str,
+):
+    model.eval()
+    encoder.eval()
+    
+    all_preds = []
+    all_labels = []
+    all_disagreement = []
+    all_ambiguity = []
+    all_credal_width = []
+    all_annotator_var = []
+    
+    for batch in tqdm(data_loader, desc="Evaluating"):
+        input_ids = batch['input_ids'].to(device)
+        attention_mask = batch['attention_mask'].to(device)
+        labels = batch['labels'].to(device)
+        concepts = batch['concept_labels']
+        
+        # Compute is_unknown from concepts: concept=1 (unknown) in ternary encoding
+        is_unknown = (concepts == 1).float()  # [batch, num_concepts]
+        is_unknown_mean = is_unknown.mean(dim=-1).numpy()  # Mean unknown rate per sample
+        
+        hidden_states = encoder(input_ids, attention_mask=attention_mask).last_hidden_state
+        outputs = model(hidden_states, attention_mask)
+        
+        preds = outputs["logits"].argmax(dim=-1)
+        
+        all_preds.extend(preds.cpu().numpy())
+        all_labels.extend(labels.cpu().numpy())
+        all_disagreement.append(outputs["disagreement"].mean(dim=-1).cpu().numpy())
+        all_ambiguity.append(outputs["ambiguity"].mean(dim=-1).cpu().numpy())
+        all_credal_width.append(outputs["credal_width"].mean(dim=-1).cpu().numpy())
+        all_annotator_var.extend(is_unknown_mean)
+    
+    # Convert
+    all_preds = np.array(all_preds)
+    all_labels = np.array(all_labels)
+    all_disagreement = np.concatenate(all_disagreement)
+    all_ambiguity = np.concatenate(all_ambiguity)
+    all_credal_width = np.concatenate(all_credal_width)
+    all_annotator_var = np.array(all_annotator_var)
+    
+    # Metrics
+    accuracy = (all_preds == all_labels).mean()
+    errors = (all_preds != all_labels).astype(float)
+    
+    # Disagreement-error correlation (epistemic validation)
+    if errors.std() > 0 and all_disagreement.std() > 0:
+        disagree_error_corr, disagree_error_pval = stats.spearmanr(all_disagreement, errors)
+    else:
+        disagree_error_corr, disagree_error_pval = 0.0, 1.0
+    
+    # Aleatoric validation: ambiguity vs is_unknown (unknown concept labels)
+    if all_annotator_var.std() > 0 and all_ambiguity.std() > 0:
+        ambig_unknown_corr, ambig_unknown_pval = stats.spearmanr(all_ambiguity, all_annotator_var)
+    else:
+        ambig_unknown_corr, ambig_unknown_pval = 0.0, 1.0
+    
+    # Disagreement ratio
+    correct_mask = errors == 0
+    incorrect_mask = errors == 1
+    if correct_mask.sum() > 0 and incorrect_mask.sum() > 0:
+        disagree_ratio = (all_disagreement[incorrect_mask].mean() / 
+                         (all_disagreement[correct_mask].mean() + 1e-8))
+    else:
+        disagree_ratio = 1.0
+    
+    return {
+        "accuracy": float(accuracy),
+        "disagree_error_corr": float(disagree_error_corr),
+        "disagree_error_pval": float(disagree_error_pval),
+        "disagree_ratio": float(disagree_ratio),
+        "ambig_unknown_corr": float(ambig_unknown_corr),
+        "ambig_unknown_pval": float(ambig_unknown_pval),
+        "mean_disagreement": float(all_disagreement.mean()),
+        "mean_ambiguity": float(all_ambiguity.mean()),
+        "mean_credal_width": float(all_credal_width.mean()),
+    }
+
+
+# =============================================================================
+# SIMPLE ANALYSIS
+# =============================================================================
+
+def analyze_test_set(model, encoder, test_loader, device, output_dir="./analysis"):
+    """
+    Run after training to analyze uncertainty decomposition.
+    
+    Usage (add to end of training):
+        # After training loop completes and best model is loaded:
+        model.load_state_dict(best_state)  # Make sure best model is loaded!
+        results = analyze_test_set(model, encoder, test_loader, device)
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    
+    model.eval()
+    encoder.eval()
+    
+    # =========================================================================
+    # 1. COLLECT PREDICTIONS
+    # =========================================================================
+    print("\n" + "="*60)
+    print("Analyzing Test Set")
+    print("="*60)
+    
+    all_preds = []
+    all_labels = []
+    all_disagreement = []
+    all_ambiguity = []
+    
+    with torch.no_grad():
+        for batch in tqdm(test_loader, desc="Collecting predictions"):
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            labels = batch['labels'].to(device)
+            
+            # Encode
+            hidden_states = encoder(input_ids, attention_mask=attention_mask).last_hidden_state
+            
+            # Forward
+            outputs = model(hidden_states, attention_mask)
+            
+            # Store
+            preds = outputs["logits"].argmax(dim=-1)
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+            all_disagreement.extend(outputs["disagreement"].mean(dim=-1).cpu().numpy())
+            all_ambiguity.extend(outputs["ambiguity"].mean(dim=-1).cpu().numpy())
+    
+    # Convert to arrays
+    preds = np.array(all_preds)
+    labels = np.array(all_labels)
+    disagreement = np.array(all_disagreement)
+    ambiguity = np.array(all_ambiguity)
+    
+    correct = (preds == labels)
+    errors = ~correct
+    
+    # =========================================================================
+    # 2. SANITY CHECK
+    # =========================================================================
+    accuracy = correct.mean()
+    print(f"\n[SANITY CHECK] Accuracy: {accuracy*100:.2f}%")
+    if accuracy < 0.4:
+        print("  WARNING: Accuracy < 40% - model may not be properly loaded!")
+        print("  WARNING: Make sure you called model.load_state_dict(best_state) before analysis")
+    
+    # =========================================================================
+    # 3. COMPUTE METRICS
+    # =========================================================================
+    print("\n--- Metrics ---")
+    
+    # Epistemic-error correlation
+    rho_epi, p_epi = stats.spearmanr(disagreement, errors.astype(float))
+    print(f"rho(epistemic, error) = {rho_epi:.4f} (p = {p_epi:.2e})")
+    
+    # Disagreement ratio
+    disagree_correct = disagreement[correct].mean()
+    disagree_error = disagreement[errors].mean()
+    ratio = disagree_error / (disagree_correct + 1e-8)
+    print(f"Disagree ratio (error/correct) = {ratio:.2f}x")
+    print(f"  Mean on correct: {disagree_correct:.6f}")
+    print(f"  Mean on errors:  {disagree_error:.6f}")
+    
+    # =========================================================================
+    # 4. ERROR DETECTION CURVE
+    # =========================================================================
+    print("\n--- Error Detection ---")
+    
+    # Sort by disagreement (high to low)
+    sorted_idx = np.argsort(disagreement)[::-1]
+    sorted_errors = errors[sorted_idx].astype(float)
+    
+    # Cumulative errors found
+    cumsum_errors = np.cumsum(sorted_errors)
+    total_errors = errors.sum()
+    
+    pct_reviewed = np.arange(1, len(sorted_errors) + 1) / len(sorted_errors) * 100
+    pct_errors_found = cumsum_errors / total_errors * 100
+    
+    # Key metrics
+    idx_50 = np.searchsorted(pct_errors_found, 50)
+    pct_to_catch_50 = pct_reviewed[idx_50] if idx_50 < len(pct_reviewed) else 100
+    
+    idx_20 = int(0.2 * len(pct_reviewed))
+    errors_in_top_20 = pct_errors_found[idx_20]
+    
+    print(f"To catch 50% of errors: review {pct_to_catch_50:.1f}% of data")
+    print(f"Top 20% (by disagreement) catches: {errors_in_top_20:.1f}% of errors")
+    print(f"Efficiency: {50/pct_to_catch_50:.2f}x faster than random")
+    
+    # =========================================================================
+    # 5. QUADRANT ANALYSIS
+    # =========================================================================
+    print("\n--- Quadrant Analysis ---")
+    
+    epi_thresh = np.median(disagreement)
+    ale_thresh = np.median(ambiguity)
+    
+    quadrants = {
+        'Low Epi, Low Ale (Trust)': (disagreement < epi_thresh) & (ambiguity < ale_thresh),
+        'High Epi, Low Ale (More Data)': (disagreement >= epi_thresh) & (ambiguity < ale_thresh),
+        'Low Epi, High Ale (Human Review)': (disagreement < epi_thresh) & (ambiguity >= ale_thresh),
+        'High Epi, High Ale (Abstain)': (disagreement >= epi_thresh) & (ambiguity >= ale_thresh),
+    }
+    
+    quadrant_stats = {}
+    for name, mask in quadrants.items():
+        n = mask.sum()
+        acc = correct[mask].mean() if n > 0 else 0
+        print(f"  {name}: n={n}, accuracy={acc*100:.1f}%")
+        quadrant_stats[name] = {'count': int(n), 'accuracy': float(acc)}
+    
+    # =========================================================================
+    # 6. PLOT ERROR DETECTION CURVE
+    # =========================================================================
+    fig, ax = plt.subplots(figsize=(7, 5))
+    
+    ax.plot(pct_reviewed, pct_errors_found, color='#e74c3c', linewidth=2.5, label='Epistemic-guided')
+    ax.plot(pct_reviewed, pct_reviewed, color='gray', linewidth=1.5, linestyle='--', label='Random')
+    ax.fill_between(pct_reviewed, pct_reviewed, pct_errors_found, 
+                    where=(pct_errors_found > pct_reviewed), alpha=0.2, color='#e74c3c')
+    
+    ax.axhline(y=50, color='gray', linestyle=':', alpha=0.5)
+    ax.scatter([pct_to_catch_50], [50], color='#e74c3c', s=100, zorder=5)
+    ax.annotate(f"50% errors caught\nreviewing {pct_to_catch_50:.1f}% of data",
+                xy=(pct_to_catch_50, 50), xytext=(pct_to_catch_50 + 10, 35),
+                fontsize=10, arrowprops=dict(arrowstyle='->', color='gray'))
+    
+    ax.set_xlabel('% of Samples Reviewed (highest disagreement first)')
+    ax.set_ylabel('% of Errors Detected')
+    ax.set_title('Error Detection via Epistemic Uncertainty', fontweight='bold')
+    ax.legend(loc='lower right')
+    ax.set_xlim(0, 100)
+    ax.set_ylim(0, 100)
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/fig_error_detection.pdf", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{output_dir}/fig_error_detection.png", dpi=150, bbox_inches='tight')
+    print(f"\nSaved: {output_dir}/fig_error_detection.pdf")
+    plt.close()
+    
+    # =========================================================================
+    # 7. PLOT DISAGREEMENT DISTRIBUTION
+    # =========================================================================
+    fig, ax = plt.subplots(figsize=(7, 5))
+    
+    bins = np.linspace(0, disagreement.max(), 30)
+    ax.hist(disagreement[correct], bins=bins, alpha=0.6, color='#28a745', 
+            label=f'Correct (n={correct.sum()})', density=True)
+    ax.hist(disagreement[errors], bins=bins, alpha=0.6, color='#dc3545',
+            label=f'Errors (n={errors.sum()})', density=True)
+    
+    ax.axvline(disagree_correct, color='#28a745', linestyle='--', linewidth=2)
+    ax.axvline(disagree_error, color='#dc3545', linestyle='--', linewidth=2)
+    
+    ax.set_xlabel('Epistemic Uncertainty (Disagreement)')
+    ax.set_ylabel('Density')
+    ax.set_title('Disagreement Distribution: Correct vs Errors', fontweight='bold')
+    ax.legend()
+    ax.text(0.95, 0.95, f'Ratio: {ratio:.2f}x', transform=ax.transAxes,
+            fontsize=12, ha='right', va='top',
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/fig_disagreement_dist.pdf", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{output_dir}/fig_disagreement_dist.png", dpi=150, bbox_inches='tight')
+    print(f"Saved: {output_dir}/fig_disagreement_dist.pdf")
+    plt.close()
+    
+    # =========================================================================
+    # 8. SAVE RESULTS
+    # =========================================================================
+    results = {
+        'accuracy': float(accuracy),
+        'n_samples': int(len(preds)),
+        'n_correct': int(correct.sum()),
+        'n_errors': int(errors.sum()),
+        'rho_epistemic_error': float(rho_epi),
+        'p_value': float(p_epi),
+        'disagree_ratio': float(ratio),
+        'mean_disagree_correct': float(disagree_correct),
+        'mean_disagree_error': float(disagree_error),
+        'pct_to_catch_50': float(pct_to_catch_50),
+        'errors_in_top_20': float(errors_in_top_20),
+        'quadrant_stats': quadrant_stats,
+    }
+    
+    with open(f"{output_dir}/analysis_results.json", 'w') as f:
+        json.dump(results, f, indent=2)
+    print(f"Saved: {output_dir}/analysis_results.json")
+    
+    print("\n" + "="*60)
+    print("Analysis Complete!")
+    print("="*60)
+    
+    return results
+
+
+# =============================================================================
+# QUALITATIVE EXAMPLES EXTRACTION
+# =============================================================================
+
+def extract_qualitative_examples(model, encoder, test_loader, dataset, device, n_examples=3, output_dir=None):
+    """
+    Extract representative examples from each uncertainty quadrant.
+    
+    Args:
+        model: Trained CREDENCE model
+        encoder: Frozen encoder
+        test_loader: Test DataLoader
+        dataset: Original dataset object (to get raw text)
+        device: 'cuda' or 'cpu'
+        n_examples: Number of examples per quadrant
+        output_dir: Directory to save examples (if None, only returns dict)
+    
+    Returns:
+        dict with examples for each quadrant
+    """
+    model.eval()
+    encoder.eval()
+    
+    # Collect all predictions
+    all_data = []
+    sample_idx = 0
+    
+    with torch.no_grad():
+        for batch in tqdm(test_loader, desc="Collecting examples"):
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            labels = batch['labels'].to(device)
+            
+            hidden_states = encoder(input_ids, attention_mask=attention_mask).last_hidden_state
+            outputs = model(hidden_states, attention_mask)
+            
+            preds = outputs["logits"].argmax(dim=-1)
+            disagreement = outputs["disagreement"].mean(dim=-1)  # Mean across concepts
+            ambiguity = outputs["ambiguity"].mean(dim=-1)
+            
+            batch_size = input_ids.size(0)
+            for i in range(batch_size):
+                # Get original text from dataset
+                if hasattr(dataset, 'examples'):
+                    text = dataset.examples[sample_idx]['text']
+                elif hasattr(dataset, 'texts') and sample_idx < len(dataset.texts):
+                    text = dataset.texts[sample_idx]
+                else:
+                    text = f"[Sample {sample_idx}]"
+                
+                all_data.append({
+                    'idx': sample_idx,
+                    'text': text[:200] if isinstance(text, str) else str(text)[:200],  # Truncate for display
+                    'label': labels[i].item(),
+                    'pred': preds[i].item(),
+                    'correct': (preds[i] == labels[i]).item(),
+                    'disagreement': disagreement[i].item(),
+                    'ambiguity': ambiguity[i].item(),
+                })
+                sample_idx += 1
+    
+    # Convert to arrays for thresholding
+    disagreements = np.array([d['disagreement'] for d in all_data])
+    ambiguities = np.array([d['ambiguity'] for d in all_data])
+    
+    epi_thresh = np.median(disagreements)
+    ale_thresh = np.median(ambiguities)
+    
+    print(f"Thresholds: epistemic={epi_thresh:.6f}, aleatoric={ale_thresh:.4f}")
+    
+    # Classify into quadrants
+    quadrants = {
+        'low_epi_low_ale': [],   # Trust
+        'high_epi_low_ale': [],  # More Data
+        'low_epi_high_ale': [],  # Human Review
+        'high_epi_high_ale': [], # Abstain
+    }
+    
+    for d in all_data:
+        epi_high = d['disagreement'] >= epi_thresh
+        ale_high = d['ambiguity'] >= ale_thresh
+        
+        if not epi_high and not ale_high:
+            quadrants['low_epi_low_ale'].append(d)
+        elif epi_high and not ale_high:
+            quadrants['high_epi_low_ale'].append(d)
+        elif not epi_high and ale_high:
+            quadrants['low_epi_high_ale'].append(d)
+        else:
+            quadrants['high_epi_high_ale'].append(d)
+    
+    # Select best examples for each quadrant
+    label_names = {0: 'Negative', 1: 'Neutral', 2: 'Positive', 3: 'Very Negative', 4: 'Very Positive'}
+    selected = {}
+    
+    for name, examples in quadrants.items():
+        print(f"\n{name}: {len(examples)} samples")
+        
+        if name == 'low_epi_low_ale':
+            # Want: correct predictions, lowest uncertainty
+            candidates = [e for e in examples if e['correct']]
+            candidates.sort(key=lambda x: x['disagreement'] + x['ambiguity'])
+        
+        elif name == 'high_epi_low_ale':
+            # Want: errors (model confused), highest disagreement
+            candidates = [e for e in examples if not e['correct']]
+            if not candidates:
+                candidates = examples
+            candidates.sort(key=lambda x: -x['disagreement'])
+        
+        elif name == 'low_epi_high_ale':
+            # Want: correct but high ambiguity (model agrees on ambiguous case)
+            candidates = [e for e in examples if e['correct']]
+            if not candidates:
+                candidates = examples
+            candidates.sort(key=lambda x: -x['ambiguity'])
+        
+        else:  # high_epi_high_ale
+            # Want: highest combined uncertainty
+            candidates = sorted(examples, key=lambda x: -(x['disagreement'] + x['ambiguity']))
+        
+        selected[name] = []
+        for ex in candidates[:n_examples]:
+            selected[name].append({
+                'text': ex['text'],
+                'label': label_names.get(ex['label'], ex['label']),
+                'pred': label_names.get(ex['pred'], ex['pred']),
+                'correct': 'CORRECT' if ex['correct'] else 'ERROR',
+                'epistemic': f"{ex['disagreement']:.4f}",
+                'aleatoric': f"{ex['ambiguity']:.3f}",
+            })
+            print(f"  [{ex['correct']}] {ex['text'][:80]}...")
+            print(f"      Epi={ex['disagreement']:.4f}, Ale={ex['ambiguity']:.3f}")
+    
+    # Save to files if output_dir is provided
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Save as JSON
+        json_path = os.path.join(output_dir, "qualitative_examples.json")
+        with open(json_path, 'w') as f:
+            json.dump(selected, f, indent=2)
+        print(f"\nSaved examples to: {json_path}")
+        
+        # Save as text file
+        txt_path = os.path.join(output_dir, "qualitative_examples.txt")
+        with open(txt_path, 'w') as f:
+            f.write("Qualitative Examples from Uncertainty Quadrants\n")
+            f.write("=" * 60 + "\n\n")
+            
+            quadrant_info = {
+                'low_epi_low_ale': ('TRUST', 'Clear signal, confident model'),
+                'high_epi_low_ale': ('MORE DATA', 'Model confused, needs more training'),
+                'low_epi_high_ale': ('HUMAN REVIEW', 'Inherently ambiguous'),
+                'high_epi_high_ale': ('ABSTAIN', 'Confused model + ambiguous data'),
+            }
+            
+            for qname, (label, desc) in quadrant_info.items():
+                f.write(f"\n{'='*60}\n")
+                f.write(f"{label}: {desc}\n")
+                f.write(f"{'='*60}\n\n")
+                
+                if qname in selected:
+                    for i, ex in enumerate(selected[qname], 1):
+                        f.write(f"Example {i}:\n")
+                        f.write(f"  Text: \"{ex['text']}\"\n")
+                        f.write(f"  Prediction: {ex['pred']} ({ex['correct']})\n")
+                        f.write(f"  Epistemic: {ex['epistemic']}\n")
+                        f.write(f"  Aleatoric: {ex['aleatoric']}\n")
+                        f.write("\n")
+        
+        print(f"Saved text format to: {txt_path}")
+        
+        # Save LaTeX format
+        latex_path = os.path.join(output_dir, "qualitative_examples_latex.tex")
+        with open(latex_path, 'w') as f:
+            f.write("% Qualitative Examples for Paper\n")
+            f.write("% Generated automatically\n\n")
+            
+            quadrant_info = {
+                'low_epi_low_ale': ('green!15', 'Low Epistemic, Low Aleatoric', 'Trust Prediction'),
+                'high_epi_low_ale': ('blue!15', 'High Epistemic, Low Aleatoric', 'Collect More Data'),
+                'low_epi_high_ale': ('yellow!15', 'Low Epistemic, High Aleatoric', 'Human Review'),
+                'high_epi_high_ale': ('red!15', 'High Epistemic, High Aleatoric', 'Abstain'),
+            }
+            
+            for qname, (color, label, action) in quadrant_info.items():
+                f.write(f"\n% {label}\n")
+                f.write(f"\\multicolumn{{5}}{{l}}{{\\colorbox{{{color}}}{{\\textit{{{label}}} -> \\textbf{{{action}}}}}}} \\\\\n")
+                
+                if qname in selected and selected[qname]:
+                    for ex in selected[qname]:
+                        text_escaped = ex['text'].replace('&', '\\&').replace('%', '\\%').replace('_', '\\_')
+                        text_escaped = text_escaped[:100] + "..." if len(text_escaped) > 100 else text_escaped
+                        
+                        f.write(f"``{text_escaped}'' & {ex['pred'][:3]} {ex['correct']} & {ex['epistemic']} & {ex['aleatoric']} & [interpretation] \\\\\n")
+        
+        print(f"Saved LaTeX format to: {latex_path}")
+    
+    return selected
+
+
+def print_latex_examples(selected):
+    """Print examples as LaTeX table rows."""
+    
+    print("\n" + "="*60)
+    print("LATEX TABLE ROWS")
+    print("="*60)
+    
+    quadrant_info = {
+        'low_epi_low_ale': ('green!15', 'Low Epistemic, Low Aleatoric', 'Trust Prediction'),
+        'high_epi_low_ale': ('blue!15', 'High Epistemic, Low Aleatoric', 'Collect More Data'),
+        'low_epi_high_ale': ('yellow!15', 'Low Epistemic, High Aleatoric', 'Human Review'),
+        'high_epi_high_ale': ('red!15', 'High Epistemic, High Aleatoric', 'Abstain'),
+    }
+    
+    for qname, (color, label, action) in quadrant_info.items():
+        print(f"\n% {label}")
+        print(f"\\multicolumn{{5}}{{l}}{{\\colorbox{{{color}}}{{\\textit{{{label}}} -> \\textbf{{{action}}}}}}} \\\\")
+        
+        if qname in selected and selected[qname]:
+            ex = selected[qname][0]  # First example
+            text_escaped = ex['text'].replace('&', '\\&').replace('%', '\\%').replace('_', '\\_')
+            text_escaped = text_escaped[:100] + "..." if len(text_escaped) > 100 else text_escaped
+            
+            print(f"``{text_escaped}'' & {ex['pred'][:3]} {ex['correct']} & {ex['epistemic']} & {ex['aleatoric']} & [interpretation] \\\\")
+
+
+def format_examples_for_paper(selected):
+    """Format examples as markdown for easy viewing."""
+    
+    print("\n" + "="*60)
+    print("EXAMPLES FOR PAPER")
+    print("="*60)
+    
+    quadrant_info = {
+        'low_epi_low_ale': ('TRUST', 'Clear signal, confident model'),
+        'high_epi_low_ale': ('MORE DATA', 'Model confused, needs more training'),
+        'low_epi_high_ale': ('HUMAN REVIEW', 'Inherently ambiguous'),
+        'high_epi_high_ale': ('ABSTAIN', 'Confused model + ambiguous data'),
+    }
+    
+    for qname, (label, desc) in quadrant_info.items():
+        print(f"\n### {label}")
+        print(f"*{desc}*\n")
+        
+        if qname in selected:
+            for i, ex in enumerate(selected[qname], 1):
+                print(f"**Example {i}:** \"{ex['text'][:150]}...\"")
+                print(f"- Prediction: {ex['pred']} {ex['correct']}")
+                print(f"- Epistemic: {ex['epistemic']}, Aleatoric: {ex['aleatoric']}")
+                print()
+
+
+# =============================================================================
+# MAIN
+# =============================================================================
+
+def run_experiment(config: ExperimentConfig):
+    torch.manual_seed(config.seed)
+    np.random.seed(config.seed)
+    
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Device: {device}")
+    
+    os.makedirs(config.output_dir, exist_ok=True)
+    
+    # Create DatasetConfig from ExperimentConfig
+    dataset_config = DatasetConfig(
+        label_type=config.label_type,
+        max_length=config.max_length,
+        tokenizer_name=config.encoder_name,
+        batch_size=config.batch_size
+    )
+    
+    train_loader, val_loader, test_loader, tokenizer, metadata = load_dataset_splits(
+        config.dataset,
+        config=dataset_config
+    )
+    
+    # Set aleatoric mode based on dataset
+    if not metadata["has_multi_annotator"]:
+        print(f"Dataset {config.dataset} has no multi-annotator data.")
+        print("Switching aleatoric_mode from 'supervised' to 'entropy'")
+        config.aleatoric_mode = "entropy"
+
+    encoder = AutoModel.from_pretrained(config.encoder_name)
+    if config.freeze_encoder:
+        for param in encoder.parameters():
+            param.requires_grad = False
+        print(f"Loaded {config.encoder_name} (frozen)")
+    encoder = encoder.to(device)
+    
+    # Get input dim
+    with torch.no_grad():
+        dummy = next(iter(train_loader))
+        out = encoder(dummy['input_ids'][:1].to(device), 
+                     attention_mask=dummy['attention_mask'][:1].to(device))
+        input_dim = out.last_hidden_state.shape[-1]
+
+    model = CREDENCE(
+        input_dim=input_dim,
+        num_concepts=metadata['num_concepts'],
+        num_classes=metadata['num_classes'],
+        head_configs=config.get_head_configs(),
+        aleatoric_mode=config.aleatoric_mode,
+    )
+    model = model.to(device)
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
+    best_val_acc = 0.0
+    best_state = None
+    history = []
+    
+    # Setup profiler if enabled
+    profiler = None
+    if config.enable_profiler:
+        profiler_output = config.profiler_output_dir or os.path.join(config.output_dir, "profiler")
+        os.makedirs(profiler_output, exist_ok=True)
+        
+        activities = [torch.profiler.ProfilerActivity.CPU]
+        if device == "cuda":
+            activities.append(torch.profiler.ProfilerActivity.CUDA)
+        
+        # Build profiler kwargs (with_flops may not be available in all PyTorch versions)
+        profiler_kwargs = {
+            "activities": activities,
+            "schedule": torch.profiler.schedule(
+                wait=0,
+                warmup=config.profiler_warmup,
+                active=config.profiler_active,
+                repeat=config.profiler_repeat,
+            ),
+            "on_trace_ready": torch.profiler.tensorboard_trace_handler(profiler_output),
+            "record_shapes": True,
+            "profile_memory": True,
+            "with_stack": True,
+        }
+        # Add with_flops if available (PyTorch 1.8.1+)
+        if hasattr(torch.profiler.profile, '__init__'):
+            try:
+                import inspect
+                sig = inspect.signature(torch.profiler.profile.__init__)
+                if 'with_flops' in sig.parameters:
+                    profiler_kwargs["with_flops"] = True
+            except:
+                pass
+        
+        profiler = torch.profiler.profile(**profiler_kwargs)
+        profiler.start()
+        print(f"Profiler enabled. Output: {profiler_output}")
+    
+    for epoch in range(config.epochs):
+        print(f"\nEpoch {epoch+1}/{config.epochs}")
+        
+        # Only profile first epoch if profiler is enabled
+        current_profiler = profiler if (config.enable_profiler and epoch == 0) else None
+        train_losses = train_epoch(model, encoder, train_loader, optimizer, config, device, current_profiler)
+        val_results = evaluate(model, encoder, val_loader, device)
+        
+        # Stop profiler after first epoch
+        if current_profiler is not None:
+            profiler.stop()
+            print(f"Profiler stopped. Results saved to {profiler_output}")
+            # Export profiler results (tensorboard handler already saves traces, so wrap in try-except)
+            try:
+                profiler.export_chrome_trace(os.path.join(profiler_output, "trace.json"))
+            except RuntimeError as e:
+                if "already saved" in str(e):
+                    print(f"  Note: Chrome trace already saved by tensorboard handler")
+                else:
+                    raise
+            try:
+                profiler.export_stacks(os.path.join(profiler_output, "stacks.txt"), "profiler_stacks")
+            except Exception as e:
+                print(f"  Warning: Could not export stacks: {e}")
+            
+            # Print summary
+            print("\n=== Profiler Summary ===")
+            sort_key = "cuda_time_total" if device == "cuda" else "cpu_time_total"
+            print(profiler.key_averages().table(sort_by=sort_key, row_limit=20))
+            
+            # Save detailed statistics
+            with open(os.path.join(profiler_output, "profiler_summary.txt"), "w") as f:
+                f.write("=== Profiler Summary (sorted by total time) ===\n\n")
+                f.write(profiler.key_averages().table(sort_by=sort_key))
+                f.write("\n\n=== Profiler Summary (sorted by self time) ===\n\n")
+                self_sort_key = "self_cuda_time_total" if device == "cuda" else "self_cpu_time_total"
+                f.write(profiler.key_averages().table(sort_by=self_sort_key))
+                f.write("\n\n=== Memory Usage ===\n\n")
+                memory_sort_key = "cuda_memory_usage" if device == "cuda" else "cpu_memory_usage"
+                try:
+                    f.write(profiler.key_averages().table(sort_by=memory_sort_key))
+                except Exception:
+                    # Fallback if memory sorting not available
+                    f.write(profiler.key_averages().table(sort_by=sort_key))
+            
+            print(f"Detailed profiler summary saved to {os.path.join(profiler_output, 'profiler_summary.txt')}")
+            profiler = None  # Disable for remaining epochs
+        
+        history.append({
+            "epoch": epoch + 1,
+            **{f"train_{k}": v for k, v in train_losses.items()},
+            **{f"val_{k}": v for k, v in val_results.items()},
+        })
+        
+        
+        if val_results['accuracy'] > best_val_acc:
+            best_val_acc = val_results['accuracy']
+            best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            print(f"  [NEW BEST] Saving model...")
+            
+            # Save best model checkpoint
+            model_path = os.path.join(config.output_dir, f"{config.dataset}_best_model.pt")
+            torch.save({
+                'epoch': epoch + 1,
+                'model_state_dict': best_state,
+                'optimizer_state_dict': optimizer.state_dict(),
+                'best_val_acc': best_val_acc,
+                'config': asdict(config),
+                'metadata': metadata,
+            }, model_path)
+            print(f"  Model saved to {model_path}")
+        
+    # Load best
+    if best_state:
+        model.load_state_dict(best_state)
+        test_results = evaluate(model, encoder, test_loader, device)
+        print(f"  Accuracy: {test_results['accuracy']:.4f}")
+        print(f"  rho(disagreement, error): {test_results['disagree_error_corr']:.4f} "
+          f"(p={test_results['disagree_error_pval']:.2e})")
+        print(f"  rho(ambiguity, unknown): {test_results['ambig_unknown_corr']:.4f} "
+          f"(p={test_results['ambig_unknown_pval']:.2e})")
+        print(f"  Disagreement ratio: {test_results['disagree_ratio']:.2f}x")
+        
+        # Run analysis
+        analysis = analyze_test_set(model, encoder, test_loader, device, 
+                                    os.path.join(config.output_dir, 'analysis'))
+        
+        results = {
+            "config": asdict(config),
+            "metadata": metadata,
+            "history": history,
+            "test_results": test_results,
+            "best_val_acc": best_val_acc,
+            "analysis": analysis,
+        }
+    else:
+        results = {
+            "config": asdict(config),
+            "metadata": metadata,
+            "history": history,
+            "test_results": {},
+            "best_val_acc": best_val_acc,
+        }
+    
+    output_path = os.path.join(config.output_dir, f"{config.dataset}_results.json")
+    with open(output_path, "w") as f:
+        json.dump(results, f, indent=2, default=str)
+    print(f"Results saved to {output_path}")
+    # After training and loading best model - extract qualitative examples
+    examples_dir = os.path.join(config.output_dir, 'qualitative_examples')
+    examples = extract_qualitative_examples(model, encoder, test_loader, test_loader.dataset, device, 
+                                           n_examples=3, output_dir=examples_dir)
+    format_examples_for_paper(examples)
+    print_latex_examples(examples)
+    return results
+
+def main():
+    parser = argparse.ArgumentParser(description="CREDENCE")
+    
+    parser.add_argument("--dataset", type=str, default="cebab",
+                       choices=list(DATASET_INFO.keys()))
+    parser.add_argument("--label_type", type=str, default="ternary")
+    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--n_heads", type=int, default=5)
+    parser.add_argument("--epochs", type=int, default=40)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--output_dir", type=str, default="./results")
+    parser.add_argument("--seed", type=int, default=42)
+    
+    # Profiler arguments
+    parser.add_argument("--enable_profiler", action="store_true", 
+                       help="Enable PyTorch profiler to track forward/backward pass")
+    parser.add_argument("--profiler_warmup", type=int, default=1,
+                       help="Number of warmup batches for profiler")
+    parser.add_argument("--profiler_active", type=int, default=3,
+                       help="Number of active batches to profile")
+    parser.add_argument("--profiler_repeat", type=int, default=1,
+                       help="Number of times to repeat profiling")
+    parser.add_argument("--profiler_output_dir", type=str, default=None,
+                       help="Directory to save profiler results (default: output_dir/profiler)")
+    
+    args = parser.parse_args()
+    
+    config = ExperimentConfig(
+        dataset=args.dataset,
+        label_type=args.label_type,
+        batch_size=args.batch_size,
+        n_heads=args.n_heads,
+        epochs=args.epochs,
+        lr=args.lr,
+        output_dir=args.output_dir,
+        seed=args.seed,
+        enable_profiler=args.enable_profiler,
+        profiler_warmup=args.profiler_warmup,
+        profiler_active=args.profiler_active,
+        profiler_repeat=args.profiler_repeat,
+        profiler_output_dir=args.profiler_output_dir,
+    )
+    
+    run_experiment(config)
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -788,6 +788,589 @@ def print_dataset_summary(metadata: Dict):
     pass
 
 
+
+# ============================================================
+# Unambiguous loaders with 3 upgrades:
+#  A) Negation-aware lexical filter
+#  B) Teacher confidence gate
+#  C) Multi-criteria scoring + threshold + class balancing
+# ============================================================
+
+import re
+import random
+from dataclasses import dataclass
+from typing import Dict, Any, List, Optional, Tuple, Callable
+
+import numpy as np
+import torch
+from torch.utils.data import Dataset, DataLoader
+from datasets import load_dataset
+from transformers import (
+    AutoTokenizer,
+    AutoModelForSequenceClassification,
+)
+
+
+# ----------------------------
+# 0) Utilities
+# ----------------------------
+
+def set_seed(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+
+def softmax_np(x: np.ndarray) -> np.ndarray:
+    x = x - np.max(x, axis=-1, keepdims=True)
+    ex = np.exp(x)
+    return ex / np.sum(ex, axis=-1, keepdims=True)
+
+
+# ----------------------------
+# 1) Upgrade A: Negation-aware lexical scoring
+# ----------------------------
+
+class NegationAwareLexicon:
+    """
+    Counts strong pos/neg hits, but discounts words in a negation window.
+    Simple & robust enough for fast filtering.
+    """
+
+    def __init__(
+        self,
+        strong_positive_words=None,
+        strong_negative_words=None,
+        negation_words=None,
+        window: int = 3,
+    ):
+        self.strong_positive_words = strong_positive_words or {
+            "amazing", "excellent", "fantastic", "perfect", "incredible",
+            "wonderful", "outstanding", "delicious", "superb", "best"
+        }
+        self.strong_negative_words = strong_negative_words or {
+            "terrible", "awful", "horrible", "disgusting", "worst",
+            "dreadful", "inedible", "pathetic", "abysmal", "revolting"
+        }
+        self.negation_words = negation_words or {
+            "not", "n't", "never", "no", "hardly", "scarcely", "barely"
+        }
+        self.window = window
+
+        self._token_re = re.compile(r"[A-Za-z']+")
+
+    def tokenize(self, text: str) -> List[str]:
+        return [t.lower() for t in self._token_re.findall(text)]
+
+    def _is_negated(self, toks: List[str], idx: int) -> bool:
+        lo = max(0, idx - self.window)
+        for j in range(lo, idx):
+            if toks[j] in self.negation_words:
+                return True
+        return False
+
+    def score(self, text: str) -> Dict[str, Any]:
+        """
+        Returns:
+          pos_hits, neg_hits: negation-aware counts
+          lex_margin: pos_hits - neg_hits
+          lex_strength: pos_hits + neg_hits
+        """
+        toks = self.tokenize(text)
+        pos_hits, neg_hits = 0, 0
+
+        for i, tok in enumerate(toks):
+            if tok in self.strong_positive_words:
+                if not self._is_negated(toks, i):
+                    pos_hits += 1
+            elif tok in self.strong_negative_words:
+                if not self._is_negated(toks, i):
+                    neg_hits += 1
+
+        return {
+            "pos_hits": pos_hits,
+            "neg_hits": neg_hits,
+            "lex_margin": pos_hits - neg_hits,
+            "lex_strength": pos_hits + neg_hits,
+            "n_tokens": len(toks),
+        }
+
+
+# ----------------------------
+# 2) Upgrade B: Teacher confidence gate
+# ----------------------------
+
+@dataclass
+class TeacherConfig:
+    # Strong open sentiment teacher (works for SST/Yelp reasonably well)
+    # You can swap to something else if you prefer.
+    teacher_name: str = "cardiffnlp/twitter-roberta-base-sentiment-latest"
+    batch_size: int = 64
+    max_length: int = 256
+    device: Optional[str] = None  # "cuda" / "cpu" / None(auto)
+
+
+class SentimentTeacher:
+    """
+    A thin wrapper around a sequence classification model that returns:
+      pred_label in {0=neg,1=pos} and confidence in [0,1]
+    Supports teachers with 2 or 3 labels (NEG/NEU/POS).
+    """
+
+    def __init__(self, cfg: TeacherConfig):
+        self.cfg = cfg
+        self.tokenizer = AutoTokenizer.from_pretrained(cfg.teacher_name, use_fast=True)
+        self.model = AutoModelForSequenceClassification.from_pretrained(cfg.teacher_name)
+        self.model.eval()
+
+        if cfg.device is None:
+            cfg.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = torch.device(cfg.device)
+        self.model.to(self.device)
+
+        # Try to map teacher labels to NEG/NEU/POS
+        self.id2label = {int(k): v for k, v in self.model.config.id2label.items()}
+        self.num_labels = self.model.config.num_labels
+
+    @torch.no_grad()
+    def predict_proba(self, texts: List[str]) -> np.ndarray:
+        """
+        Returns probabilities [B, num_labels] as numpy.
+        """
+        all_probs = []
+        bs = self.cfg.batch_size
+        for i in range(0, len(texts), bs):
+            chunk = texts[i:i+bs]
+            enc = self.tokenizer(
+                chunk,
+                truncation=True,
+                padding=True,
+                max_length=self.cfg.max_length,
+                return_tensors="pt",
+            ).to(self.device)
+
+            logits = self.model(**enc).logits  # [B, L]
+            probs = torch.softmax(logits, dim=-1).detach().cpu().numpy()
+            all_probs.append(probs)
+
+        return np.concatenate(all_probs, axis=0)
+
+    def _to_binary(self, probs: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Converts multi-class probs to binary {neg,pos}:
+          - if 2 labels: direct
+          - if 3 labels: drop/ignore neutral by comparing neg vs pos
+        Returns:
+          pred_bin: [B] in {0,1}
+          conf_bin: [B] confidence for predicted bin
+        """
+        if probs.shape[1] == 2:
+            pred = probs.argmax(axis=1)
+            conf = probs.max(axis=1)
+            return pred.astype(int), conf
+
+        # 3 labels case: assume labels contain NEG/NEU/POS somewhere
+        # We'll find indices by string matching; fallback to [0,1,2] = NEG,NEU,POS
+        labels = [self.id2label.get(i, str(i)).lower() for i in range(probs.shape[1])]
+        neg_idx = next((i for i, s in enumerate(labels) if "neg" in s), 0)
+        pos_idx = next((i for i, s in enumerate(labels) if "pos" in s), probs.shape[1]-1)
+
+        neg_p = probs[:, neg_idx]
+        pos_p = probs[:, pos_idx]
+
+        pred = (pos_p >= neg_p).astype(int)
+        conf = np.maximum(pos_p, neg_p)
+        return pred, conf
+
+    @torch.no_grad()
+    def predict_binary(self, texts: List[str]) -> Tuple[np.ndarray, np.ndarray]:
+        probs = self.predict_proba(texts)
+        return self._to_binary(probs)
+
+
+# ----------------------------
+# 3) Upgrade C: Multi-criteria scoring
+# ----------------------------
+
+@dataclass
+class UnambiguousScoringConfig:
+    # gates
+    min_tokens: int = 6
+    min_lex_strength: int = 1          # at least one strong word hit (after negation handling)
+    teacher_conf_threshold: float = 0.95
+
+    # scoring weights
+    w_extreme: float = 1.0
+    w_lex: float = 0.7
+    w_teacher: float = 1.2
+    w_agreement: float = 0.0           # set >0 if you have agreement signals
+
+    # final threshold on total score
+    score_threshold: float = 2.2
+
+
+def normalize01(x: float, cap: float = 5.0) -> float:
+    # keep in [0,1] with a soft cap
+    return float(min(x, cap) / cap)
+
+
+# ----------------------------
+# 4) Dataset-specific label extraction (binary extremes)
+# ----------------------------
+
+def extract_binary_extreme_label(dataset_name: str, ex: Dict[str, Any]) -> Optional[int]:
+    """
+    Returns 0/1 for negative/positive if example is an extreme, else None.
+    """
+    if dataset_name == "sst5":
+        # SetFit/sst5 labels: 0..4; keep 0 and 4
+        if ex["label"] == 0:
+            return 0
+        if ex["label"] == 4:
+            return 1
+        return None
+
+    if dataset_name == "yelp5":
+        # yelp_review_full label: 0..4; keep 0 and 4
+        if ex["label"] == 0:
+            return 0
+        if ex["label"] == 4:
+            return 1
+        return None
+
+    if dataset_name == "cebab":
+        # CEBaB: use review_majority + aspect consistency
+        rating = str(ex.get("review_majority", "")).lower()
+        if ("1" in rating) or ("2" in rating):
+            return 0
+        if ("4" in rating) or ("5" in rating):
+            return 1
+        return None
+
+    raise ValueError(f"Unknown dataset_name={dataset_name}")
+
+
+def get_text_field(dataset_name: str, ex: Dict[str, Any]) -> str:
+    if dataset_name == "sst5":
+        return ex["text"]
+    if dataset_name == "yelp5":
+        return ex["text"]
+    if dataset_name == "cebab":
+        return ex["description"]
+    raise ValueError(dataset_name)
+
+
+def cebab_aspect_agreement_score(ex: Dict[str, Any]) -> float:
+    """
+    Optional: returns 0..1 agreement/consistency proxy for CEBaB.
+    Here: if >=3 known aspects and all same polarity -> 1.0 else 0.0
+    """
+    aspects = [
+        ex.get("food_aspect_majority"),
+        ex.get("service_aspect_majority"),
+        ex.get("ambiance_aspect_majority"),
+        ex.get("noise_aspect_majority"),
+    ]
+    known = [a for a in aspects if a in ["Positive", "Negative"]]
+    if len(known) < 3:
+        return 0.0
+    if all(a == "Positive" for a in known) or all(a == "Negative" for a in known):
+        return 1.0
+    return 0.0
+
+
+# ----------------------------
+# 5) Build filtered examples list (with the 3 upgrades)
+# ----------------------------
+
+def build_unambiguous_examples(
+    *,
+    dataset_name: str,
+    split: str,
+    n_per_class: int,
+    lex: NegationAwareLexicon,
+    teacher: SentimentTeacher,
+    cfg: UnambiguousScoringConfig,
+    max_text_len_chars: int = 512,
+) -> List[Dict[str, Any]]:
+
+    # Load HF dataset
+    if dataset_name == "sst5":
+        ds = load_dataset("SetFit/sst5", split=split)
+    elif dataset_name == "yelp5":
+        ds = load_dataset("yelp_review_full", split=split)
+    elif dataset_name == "cebab":
+        ds = load_dataset("CEBaB/CEBaB", split=split)
+    else:
+        raise ValueError(dataset_name)
+
+    # First pass: keep only extreme-label candidates + lexical gates
+    candidates: List[Dict[str, Any]] = []
+    for ex in ds:
+        y = extract_binary_extreme_label(dataset_name, ex)
+        if y is None:
+            continue
+
+        text = get_text_field(dataset_name, ex)
+        text = text.strip()
+        if len(text) == 0:
+            continue
+        if len(text) > max_text_len_chars:
+            text = text[:max_text_len_chars]
+
+        lex_stats = lex.score(text)
+
+        # Gate 1: minimum tokens
+        if lex_stats["n_tokens"] < cfg.min_tokens:
+            continue
+
+        # Gate 2: minimum lexical strength (after negation handling)
+        if lex_stats["lex_strength"] < cfg.min_lex_strength:
+            continue
+
+        # Optional: for CEBaB enforce aspect consistency early
+        agree = 0.0
+        if dataset_name == "cebab":
+            agree = cebab_aspect_agreement_score(ex)
+            if agree < 1.0:
+                continue
+
+        candidates.append({
+            "text": text,
+            "label": y,
+            "source": dataset_name,
+            "lex_stats": lex_stats,
+            "agreement": agree,
+        })
+
+    if len(candidates) == 0:
+        return []
+
+    # Teacher pass (batched)
+    texts = [c["text"] for c in candidates]
+    t_pred, t_conf = teacher.predict_binary(texts)  # arrays
+
+    # Second pass: teacher gate + scoring
+    scored: List[Dict[str, Any]] = []
+    for c, tp, tc in zip(candidates, t_pred.tolist(), t_conf.tolist()):
+        y = c["label"]
+
+        # Gate 3: teacher must agree with label
+        if int(tp) != int(y):
+            continue
+
+        # Gate 4: teacher confidence threshold
+        if float(tc) < cfg.teacher_conf_threshold:
+            continue
+
+        # Multi-criteria score
+        # extreme = 1 always here (since we filtered to extremes), but keep structure
+        extreme_score = 1.0
+
+        # lexical: reward margin in correct direction + strength
+        lex_margin = c["lex_stats"]["lex_margin"]
+        lex_strength = c["lex_stats"]["lex_strength"]
+
+        # direction correctness: for positive, margin should be positive; for negative, margin negative
+        dir_ok = (lex_margin > 0) if y == 1 else (lex_margin < 0)
+        lex_dir = 1.0 if dir_ok else 0.0
+        lex_str = normalize01(lex_strength, cap=4.0)   # 0..1
+        lex_score = 0.6 * lex_dir + 0.4 * lex_str      # 0..1-ish
+
+        teacher_score = float(tc)                       # already 0..1
+
+        agreement_score = float(c["agreement"])         # 0..1 (only used if cfg.w_agreement > 0)
+
+        total = (
+            cfg.w_extreme * extreme_score +
+            cfg.w_lex * lex_score +
+            cfg.w_teacher * teacher_score +
+            cfg.w_agreement * agreement_score
+        )
+
+        if total < cfg.score_threshold:
+            continue
+
+        scored.append({
+            "text": c["text"],
+            "label": y,
+            "source": dataset_name,
+            "scenario": "unambiguous",
+            "teacher_conf": float(tc),
+            "lex_strength": int(lex_strength),
+            "lex_margin": int(lex_margin),
+            "score": float(total),
+        })
+
+    # Balance classes & take top by score
+    pos = [x for x in scored if x["label"] == 1]
+    neg = [x for x in scored if x["label"] == 0]
+
+    pos.sort(key=lambda z: z["score"], reverse=True)
+    neg.sort(key=lambda z: z["score"], reverse=True)
+
+    pos = pos[:n_per_class]
+    neg = neg[:n_per_class]
+
+    final = pos + neg
+    random.shuffle(final)
+    return final
+
+
+# ----------------------------
+# 6) Torch Dataset that tokenizes with your target tokenizer
+# ----------------------------
+
+class TokenizedTextDataset(Dataset):
+    def __init__(self, examples: List[Dict[str, Any]], tokenizer, max_length: int = 128):
+        self.examples = examples
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+
+    def __len__(self):
+        return len(self.examples)
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        ex = self.examples[idx]
+        enc = self.tokenizer(
+            ex["text"],
+            truncation=True,
+            padding="max_length",
+            max_length=self.max_length,
+            return_tensors="pt",
+        )
+        item = {
+            "input_ids": enc["input_ids"].squeeze(0),
+            "attention_mask": enc["attention_mask"].squeeze(0),
+            "labels": torch.tensor(ex["label"], dtype=torch.long),
+            # optional metadata (can remove if you want pure tensors)
+            "source": ex.get("source", "unknown"),
+            "score": ex.get("score", 0.0),
+            "teacher_conf": ex.get("teacher_conf", 0.0),
+        }
+        return item
+
+
+# ----------------------------
+# 7) Public API: build train + OOD loaders
+# ----------------------------
+
+@dataclass
+class LoaderBuildConfig:
+    # Target tokenizer used for embeddings/LLM
+    target_tokenizer_name: str = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+    max_length: int = 128
+    batch_size: int = 16
+    seed: int = 0
+
+    # Which datasets
+    train_source: str = "sst5"   # "sst5" | "yelp5" | "cebab"
+    train_split: str = "train"   # sst5: train, yelp: train, cebab: train_inclusive
+    ood_source: str = "yelp5"
+    ood_split: str = "test"
+
+    n_per_class_train: int = 500
+    n_per_class_ood: int = 500
+
+    # Teacher
+    teacher: TeacherConfig = field(default_factory=TeacherConfig)
+
+    # Unambiguous scoring settings
+    scoring: UnambiguousScoringConfig = field(default_factory=UnambiguousScoringConfig)
+
+
+def build_unambiguous_train_and_ood_loaders(cfg: LoaderBuildConfig):
+    set_seed(cfg.seed)
+
+    # Lexicon + teacher
+    lex = NegationAwareLexicon()
+    teacher = SentimentTeacher(cfg.teacher)
+
+    # Build example sets (filtered + scored)
+    train_examples = build_unambiguous_examples(
+        dataset_name=cfg.train_source,
+        split=cfg.train_split,
+        n_per_class=cfg.n_per_class_train,
+        lex=lex,
+        teacher=teacher,
+        cfg=cfg.scoring,
+    )
+    ood_examples = build_unambiguous_examples(
+        dataset_name=cfg.ood_source,
+        split=cfg.ood_split,
+        n_per_class=cfg.n_per_class_ood,
+        lex=lex,
+        teacher=teacher,
+        cfg=cfg.scoring,
+    )
+    for ex in ood_examples:
+        ex["scenario"] = "ood_unambiguous"
+
+    # Target tokenizer (must match your embedding model vocab!)
+    tok = AutoTokenizer.from_pretrained(cfg.target_tokenizer_name, use_fast=True)
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token
+
+    train_ds = TokenizedTextDataset(train_examples, tok, max_length=cfg.max_length)
+    ood_ds = TokenizedTextDataset(ood_examples, tok, max_length=cfg.max_length)
+
+    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, drop_last=False)
+    ood_loader = DataLoader(ood_ds, batch_size=cfg.batch_size, shuffle=False, drop_last=False)
+
+    meta = {
+        "train_source": cfg.train_source,
+        "ood_source": cfg.ood_source,
+        "train_size": len(train_ds),
+        "ood_size": len(ood_ds),
+        "teacher_name": cfg.teacher.teacher_name,
+        "teacher_conf_threshold": cfg.scoring.teacher_conf_threshold,
+        "score_threshold": cfg.scoring.score_threshold,
+        "target_tokenizer_name": cfg.target_tokenizer_name,
+    }
+
+    return train_loader, ood_loader, tok, meta
+
+
+# # ----------------------------
+# # 8) Example usage
+# # ----------------------------
+
+# if __name__ == "__main__":
+#     cfg = LoaderBuildConfig(
+#         target_tokenizer_name="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+#         max_length=128,
+#         batch_size=16,
+#         seed=0,
+
+#         train_source="sst5",
+#         train_split="train",
+#         ood_source="yelp5",
+#         ood_split="test",
+
+#         n_per_class_train=200,
+#         n_per_class_ood=200,
+
+#         # tighten if you want “very clean” sets
+#         scoring=UnambiguousScoringConfig(
+#             min_tokens=6,
+#             min_lex_strength=1,
+#             teacher_conf_threshold=0.97,
+#             score_threshold=2.35,
+#             w_extreme=1.0,
+#             w_lex=0.7,
+#             w_teacher=1.2,
+#         ),
+#     )
+
+    # train_loader, ood_loader, tok, meta = build_unambiguous_train_and_ood_loaders(cfg)
+    # print(meta)
+
+    # b = next(iter(train_loader))
+    # print("Train batch:", b["input_ids"].shape, b["labels"].shape, b["source"][:3], b["teacher_conf"][:3])
+
+    # b2 = next(iter(ood_loader))
+    # print("OOD batch:", b2["input_ids"].shape, b2["labels"].shape, b2["source"][:3], b2["teacher_conf"][:3])
+
 # ============================================================================
 # MAIN: DEMO ALL DATASETS
 # ============================================================================
