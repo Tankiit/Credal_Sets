@@ -1,27 +1,139 @@
 """
-CREDENCE Multi-Dataset Dataloader (Fixed)
+CREDENCE Multi-Dataset Dataloader v2
 
-==========================================
+=====================================
 
-Key fixes for HateXplain:
+Verified against actual HuggingFace dataset structures.
 
-1. Use ternary concepts (0=Neg, 1=Unknown, 2=Pos) like CEBaB
+Dataset Field Reference (from HF documentation):
 
-2. is_unknown is binary (0 or 1), not continuous
+================================================
 
-3. Multiple concepts instead of single binary
+CEBaB:
 
-Supports:
+  - description: str (review text)
 
-- Sentiment: CEBaB, SST-2, SST-5, IMDB, Yelp, Amazon
+  - review_majority: str ("1", "2", "3", "4", "5", "no majority")
 
-- Toxicity: HateXplain, Civil Comments
+  - food_aspect_majority: str ("Positive", "Negative", "unknown", "")
 
-- Emotion: GoEmotions
+  - service_aspect_majority: str
 
-- NLI: MNLI, SNLI
+  - ambiance_aspect_majority: str  
 
-- Topic: AG News
+  - noise_aspect_majority: str
+
+  - Splits: train_inclusive, train_exclusive, validation, test
+
+HateXplain:
+
+  - post_tokens: list[str] (tokenized text)
+
+  - annotators: dict with keys:
+
+      - label: list[int] (0=hatespeech, 1=normal, 2=offensive)
+
+      - target: list[list[str]] (target communities per annotator)
+
+  - rationales: list[list[int]] (token-level rationales)
+
+  - Splits: train, validation, test
+
+GoEmotions (simplified):
+
+  - text: str
+
+  - labels: list[int] (emotion indices 0-27, multi-label)
+
+  - id: str
+
+  - Splits: train, validation, test
+
+Civil Comments:
+
+  - text: str
+
+  - toxicity: float (0.0-1.0)
+
+  - severe_toxicity: float
+
+  - obscene: float
+
+  - threat: float
+
+  - insult: float
+
+  - identity_attack: float
+
+  - sexual_explicit: float
+
+  - Splits: train, validation, test
+
+  - Note: identity columns NOT in default config
+
+SST-2 (glue):
+
+  - sentence: str
+
+  - label: int (0=negative, 1=positive)
+
+  - idx: int
+
+  - Splits: train, validation, test
+
+SST-5 (SetFit/sst5):
+
+  - text: str
+
+  - label: int (0-4)
+
+  - label_text: str
+
+  - Splits: train, validation, test
+
+ChaosNLI:
+
+  - premise: str
+
+  - hypothesis: str
+
+  - label: int (0=entailment, 1=neutral, 2=contradiction, -1=unlabeled)
+
+  - Splits: train, validation, test
+
+TID-8:
+
+  - premise: str
+
+  - hypothesis: str
+
+  - label: int (0=entailment, 1=neutral, 2=contradiction)
+
+  - Splits: train, validation, test
+
+IMDB:
+
+  - text: str
+
+  - label: int (0=negative, 1=positive)
+
+  - Splits: train, test (no validation - need to create)
+
+Yelp Review Full:
+
+  - text: str
+
+  - label: int (0-4 for 1-5 stars)
+
+  - Splits: train, test
+
+AG News:
+
+  - text: str
+
+  - label: int (0=World, 1=Sports, 2=Business, 3=Sci/Tech)
+
+  - Splits: train, test
 
 """
 
@@ -36,7 +148,7 @@ from collections import Counter
 import warnings
 
 # =============================================================================
-# DATASET REGISTRY
+# DATASET REGISTRY - Verified against HuggingFace
 # =============================================================================
 
 DATASET_INFO = {
@@ -45,27 +157,32 @@ DATASET_INFO = {
     # =========================================================================
     "cebab": {
         "hf_path": "CEBaB/CEBaB",
+        "hf_name": None,
         "train_split": "train_inclusive",
         "val_split": "validation",
         "test_split": "test",
         "text_field": "description",
         "label_field": "review_majority",
+        "concept_fields": [
+            "food_aspect_majority",
+            "service_aspect_majority",
+            "ambiance_aspect_majority",
+            "noise_aspect_majority"
+        ],
         "concept_names": ["food", "service", "ambiance", "noise"],
-        "concept_fields": ["food_aspect_majority", "service_aspect_majority",
-                          "ambiance_aspect_majority", "noise_aspect_majority"],
-        "num_classes_binary": 2,
-        "num_classes_ternary": 3,
-        "num_classes_5way": 5,
+        "num_classes": 3,  # Using ternary: negative/neutral/positive
         "has_concepts": True,
         "has_multi_annotator": True,
         "task": "sentiment",
+        "class_names": ["negative", "neutral", "positive"],
     },
+    
     "sst2": {
         "hf_path": "glue",
         "hf_name": "sst2",
         "train_split": "train",
         "val_split": "validation",
-        "test_split": "validation",
+        "test_split": "validation",  # SST-2 test has no labels
         "text_field": "sentence",
         "label_field": "label",
         "num_classes": 2,
@@ -74,8 +191,10 @@ DATASET_INFO = {
         "task": "sentiment",
         "class_names": ["negative", "positive"],
     },
+    
     "sst5": {
         "hf_path": "SetFit/sst5",
+        "hf_name": None,
         "train_split": "train",
         "val_split": "validation",
         "test_split": "test",
@@ -88,10 +207,12 @@ DATASET_INFO = {
         "class_names": ["very_negative", "negative", "neutral", "positive", "very_positive"],
         "is_ordinal": True,
     },
+    
     "imdb": {
         "hf_path": "imdb",
+        "hf_name": None,
         "train_split": "train",
-        "val_split": "test[:5000]",
+        "val_split": "test[:5000]",  # Create val from test
         "test_split": "test[5000:]",
         "text_field": "text",
         "label_field": "label",
@@ -101,9 +222,11 @@ DATASET_INFO = {
         "task": "sentiment",
         "class_names": ["negative", "positive"],
     },
+    
     "yelp": {
         "hf_path": "yelp_review_full",
-        "train_split": "train[:50000]",
+        "hf_name": None,
+        "train_split": "train[:50000]",  # Subsample for speed
         "val_split": "test[:5000]",
         "test_split": "test[5000:15000]",
         "text_field": "text",
@@ -115,51 +238,40 @@ DATASET_INFO = {
         "class_names": ["1_star", "2_star", "3_star", "4_star", "5_star"],
         "is_ordinal": True,
     },
-    "amazon": {
-        "hf_path": "amazon_polarity",
-        "train_split": "train[:50000]",
-        "val_split": "test[:5000]",
-        "test_split": "test[5000:15000]",
-        "text_field": "content",
-        "label_field": "label",
-        "num_classes": 2,
-        "has_concepts": False,
-        "has_multi_annotator": False,
-        "task": "sentiment",
-        "class_names": ["negative", "positive"],
-    },
     
     # =========================================================================
     # TOXICITY DETECTION
     # =========================================================================
     "hatexplain": {
         "hf_path": "hatexplain",
+        "hf_name": None,
         "train_split": "train",
         "val_split": "validation",
         "test_split": "test",
-        "text_field": "post_tokens",
-        "label_field": "annotators",
+        "text_field": "post_tokens",  # List of tokens, needs joining
+        "label_field": "annotators",  # Dict with 'label' key
         "num_classes": 3,
         "has_concepts": True,
-        "concept_names": ["has_target", "is_offensive"],  # Two ternary concepts
+        "concept_names": ["has_target", "is_offensive"],
         "has_multi_annotator": True,
         "num_annotators": 3,
         "task": "toxicity",
-        "class_names": ["normal", "offensive", "hatespeech"],
+        "class_names": ["hatespeech", "normal", "offensive"],
+        # Note: HF uses 0=hatespeech, 1=normal, 2=offensive
     },
+    
     "civil_comments": {
-        "hf_path": "civil_comments",
+        "hf_path": "google/civil_comments",
+        "hf_name": None,
         "train_split": "train[:50000]",
         "val_split": "validation[:5000]",
         "test_split": "test[:10000]",
         "text_field": "text",
-        "label_field": "toxicity",
+        "label_field": "toxicity",  # Float 0-1
         "num_classes": 2,
         "has_concepts": True,
-        "concept_names": ["male", "female", "christian", "muslim", "jewish",
-                         "black", "white", "psychiatric_or_mental_illness"],
-        "concept_fields": ["male", "female", "christian", "muslim", "jewish",
-                          "black", "white", "psychiatric_or_mental_illness"],
+        "concept_names": ["severe_toxicity", "obscene", "threat", "insult", "identity_attack", "sexual_explicit"],
+        "concept_fields": ["severe_toxicity", "obscene", "threat", "insult", "identity_attack", "sexual_explicit"],
         "has_multi_annotator": True,
         "task": "toxicity",
         "class_names": ["non_toxic", "toxic"],
@@ -169,13 +281,13 @@ DATASET_INFO = {
     # EMOTION DETECTION
     # =========================================================================
     "goemotions": {
-        "hf_path": "go_emotions",
+        "hf_path": "google-research-datasets/go_emotions",
         "hf_name": "simplified",
         "train_split": "train",
         "val_split": "validation",
         "test_split": "test",
         "text_field": "text",
-        "label_field": "labels",
+        "label_field": "labels",  # List of ints (multi-label)
         "num_classes": 28,
         "has_concepts": True,
         "concept_names": [
@@ -187,29 +299,15 @@ DATASET_INFO = {
             "sadness", "surprise", "neutral"
         ],
         "has_multi_annotator": True,
-        "num_annotators": 3,
         "task": "emotion",
     },
     
     # =========================================================================
     # NATURAL LANGUAGE INFERENCE
     # =========================================================================
-    "mnli": {
-        "hf_path": "glue",
-        "hf_name": "mnli",
-        "train_split": "train",
-        "val_split": "validation_matched",
-        "test_split": "validation_mismatched",
-        "text_field": ["premise", "hypothesis"],
-        "label_field": "label",
-        "num_classes": 3,
-        "has_concepts": False,
-        "has_multi_annotator": False,
-        "task": "nli",
-        "class_names": ["entailment", "neutral", "contradiction"],
-    },
-    "snli": {
-        "hf_path": "snli",
+    "chaosnli": {
+        "hf_path": "chaosnli",
+        "hf_name": None,
         "train_split": "train",
         "val_split": "validation",
         "test_split": "test",
@@ -217,7 +315,22 @@ DATASET_INFO = {
         "label_field": "label",
         "num_classes": 3,
         "has_concepts": False,
-        "has_multi_annotator": False,
+        "has_multi_annotator": True,
+        "task": "nli",
+        "class_names": ["entailment", "neutral", "contradiction"],
+    },
+    
+    "tid8": {
+        "hf_path": "MichiganNLP/TID-8",
+        "hf_name": None,
+        "train_split": "train",
+        "val_split": "validation",
+        "test_split": "test",
+        "text_field": ["premise", "hypothesis"],
+        "label_field": "label",
+        "num_classes": 3,
+        "has_concepts": False,
+        "has_multi_annotator": True,
         "task": "nli",
         "class_names": ["entailment", "neutral", "contradiction"],
     },
@@ -227,6 +340,7 @@ DATASET_INFO = {
     # =========================================================================
     "ag_news": {
         "hf_path": "ag_news",
+        "hf_name": None,
         "train_split": "train",
         "val_split": "test[:5000]",
         "test_split": "test[5000:]",
@@ -247,7 +361,7 @@ DATASET_INFO = {
 @dataclass
 class DatasetConfig:
     """Configuration for dataset loading."""
-    label_type: str = "ternary"  # "binary" | "ternary" | "5way" | "default"
+    label_type: str = "ternary"  # For CEBaB: "binary" | "ternary" | "5way"
     max_length: int = 128
     tokenizer_name: str = "distilbert-base-uncased"
     batch_size: int = 16
@@ -275,90 +389,116 @@ class CredenceDataset(Dataset):
         self.config = config
         self.info = DATASET_INFO[dataset_name]
         
-        # Load data
+        # Will be populated by loaders
         self.examples = []
         self._load_data(split)
         
-        # Get metadata
+        # Get metadata after loading
         self.num_classes = self._get_num_classes()
-        self.num_concepts = len(self.info.get("concept_names", []))
+        self.num_concepts = self._get_num_concepts()
         self.concept_names = self.info.get("concept_names", [])
         
-        print(f"Loaded {len(self.examples)} from {dataset_name}/{split}")
+        print(f"  Loaded {len(self.examples)} examples from {dataset_name}/{split}")
+    
+    def _get_num_concepts(self) -> int:
+        """Get number of concepts."""
+        if self.examples and len(self.examples[0]["concepts"]) > 0:
+            return len(self.examples[0]["concepts"])
+        return len(self.info.get("concept_names", []))
     
     def _load_data(self, split: str):
         """Load data from HuggingFace."""
         info = self.info
         
-        # Handle split name
-        split_name = info.get(f"{split}_split", split)
+        # Get split name
+        split_key = f"{split}_split"
+        split_name = info.get(split_key, split)
         
         # Load from HuggingFace
-        hf_name = info.get("hf_name", None)
-        if hf_name:
-            ds = hf_load_dataset(info["hf_path"], hf_name, split=split_name)
-        else:
-            ds = hf_load_dataset(info["hf_path"], split=split_name)
+        hf_name = info.get("hf_name")
+        try:
+            if hf_name:
+                ds = hf_load_dataset(info["hf_path"], hf_name, split=split_name, trust_remote_code=True)
+            else:
+                ds = hf_load_dataset(info["hf_path"], split=split_name, trust_remote_code=True)
+        except Exception as e:
+            print(f"  Error loading {self.dataset_name}/{split}: {e}")
+            return
         
-        # Process based on dataset
-        if self.dataset_name == "cebab":
-            self._load_cebab(ds)
-        elif self.dataset_name == "hatexplain":
-            self._load_hatexplain(ds)
-        elif self.dataset_name == "civil_comments":
-            self._load_civil_comments(ds)
-        elif self.dataset_name == "goemotions":
-            self._load_goemotions(ds)
-        elif self.dataset_name in ["mnli", "snli"]:
-            self._load_nli(ds)
-        else:
-            self._load_generic(ds)
+        # Route to appropriate loader
+        loader_map = {
+            "cebab": self._load_cebab,
+            "hatexplain": self._load_hatexplain,
+            "civil_comments": self._load_civil_comments,
+            "goemotions": self._load_goemotions,
+            "chaosnli": self._load_nli,
+            "tid8": self._load_nli,
+        }
+        
+        loader = loader_map.get(self.dataset_name, self._load_generic)
+        loader(ds)
     
     def _load_cebab(self, ds):
-        """Load CEBaB dataset with concepts."""
+        """
+        Load CEBaB dataset.
+        
+        Fields:
+          - description: str
+          - review_majority: str ("1"-"5", "no majority")
+          - *_aspect_majority: str ("Positive", "Negative", "unknown", "")
+        
+        Concept encoding (ternary):
+          - 0 = Negative
+          - 1 = Unknown (can't tell / empty)
+          - 2 = Positive
+        """
+        concept_fields = self.info["concept_fields"]
+        
         for sample in ds:
+            # Get label
             label = self._encode_cebab_label(sample)
             if label == -1:
                 continue
             
             text = sample["description"]
-            concepts = []
-            is_unknown = []
+            if not text or len(text.strip()) == 0:
+                continue
             
-            for col in self.info["concept_fields"]:
-                value = sample[col]
+            # Encode concepts (ternary)
+            concepts = []
+            for field in concept_fields:
+                value = sample.get(field, "")
                 if value == "Positive":
                     concepts.append(2)
-                    is_unknown.append(0.0)
                 elif value == "Negative":
                     concepts.append(0)
-                    is_unknown.append(0.0)
-                else:  # Unknown
+                else:  # "unknown" or ""
                     concepts.append(1)
-                    is_unknown.append(1.0)
+            
+            concepts = np.array(concepts, dtype=np.int64)
+            is_unknown = (concepts == 1).astype(np.float32)
             
             self.examples.append({
                 "text": text,
                 "label": label,
-                "concepts": np.array(concepts, dtype=np.int64),
-                "is_unknown": np.array(is_unknown, dtype=np.float32),
+                "concepts": concepts,
+                "is_unknown": is_unknown,
             })
     
     def _encode_cebab_label(self, sample) -> int:
-        """Encode CEBaB label based on config."""
-        value = sample.get('review_majority', '')
-        if not isinstance(value, str):
+        """Encode CEBaB review_majority to label."""
+        value = sample.get("review_majority", "")
+        
+        if not isinstance(value, str) or value == "no majority":
             return -1
-        value = value.lower().strip()
         
         # Extract star rating
-        star = None
-        for s in ["1", "2", "3", "4", "5"]:
-            if s in value:
-                star = int(s)
-                break
+        try:
+            star = int(value.strip())
+        except ValueError:
+            return -1
         
-        if star is None:
+        if star < 1 or star > 5:
             return -1
         
         if self.config.label_type == "binary":
@@ -375,65 +515,66 @@ class CredenceDataset(Dataset):
     
     def _load_hatexplain(self, ds):
         """
-        Load HateXplain with multi-annotator labels.
+        Load HateXplain dataset.
         
-        FIXED: Uses ternary concept encoding (like CEBaB):
-        - 0 = Negative (no target / normal)
-        - 1 = Unknown (annotators disagree)  
-        - 2 = Positive (has target / offensive)
+        Fields:
+          - post_tokens: list[str]
+          - annotators: dict
+              - label: list[int] (0=hatespeech, 1=normal, 2=offensive)
+              - target: list[list[str]]
         
-        Concepts: [has_target, is_offensive]
+        Concept encoding (ternary):
+          - Concept 1 (has_target): 0=No, 1=Disagree, 2=Yes
+          - Concept 2 (is_offensive): 0=Normal, 1=Disagree, 2=Offensive/Hate
         """
         for sample in ds:
-            # Get majority label from annotators
-            labels = sample["annotators"]["label"]
-            if len(labels) == 0:
+            # Get tokens and join to text
+            tokens = sample.get("post_tokens", [])
+            if not tokens:
                 continue
-            
-            label_counts = Counter(labels)
-            majority_label = label_counts.most_common(1)[0][0]
-            majority_count = label_counts.most_common(1)[0][1]
-            
-            # Tokens to text
-            text = " ".join(sample["post_tokens"])
+            text = " ".join(tokens)
             if len(text.strip()) == 0:
                 continue
             
-            # Compute annotator agreement
-            total_annotations = len(labels)
-            agreement_ratio = majority_count / total_annotations
+            # Get labels from annotators
+            annotators = sample.get("annotators", {})
+            labels = annotators.get("label", [])
+            targets = annotators.get("target", [])
             
-            # Determine if there's disagreement
-            has_disagreement = agreement_ratio < 1.0  # Not unanimous
+            if not labels:
+                continue
             
-            # Get target communities
-            targets = sample.get("annotators", {}).get("target", [])
-            all_targets = []
-            for t_list in targets:
-                if isinstance(t_list, list):
-                    all_targets.extend(t_list)
-            has_any_target = len(all_targets) > 0
+            # Majority vote for label
+            label_counts = Counter(labels)
+            majority_label, majority_count = label_counts.most_common(1)[0]
             
-            # Concept 1: Has target community (ternary)
+            # Check agreement
+            total = len(labels)
+            has_disagreement = (majority_count / total) < 1.0
+            
+            # Check if any annotator found a target
+            has_any_target = any(
+                len(t) > 0 for t in targets if isinstance(t, list)
+            )
+            
+            # Concept 1: Has target (ternary)
             if has_disagreement:
-                target_concept = 1  # Unknown - annotators disagree
+                target_concept = 1  # Disagreement
             elif has_any_target:
-                target_concept = 2  # Positive - clear target
+                target_concept = 2  # Yes
             else:
-                target_concept = 0  # Negative - no target
+                target_concept = 0  # No
             
-            # Concept 2: Is offensive (based on label, ternary)
+            # Concept 2: Is offensive (ternary)
+            # 0=hatespeech, 1=normal, 2=offensive in HF
             if has_disagreement:
-                offensive_concept = 1  # Unknown
-            elif majority_label in [1, 2]:  # offensive or hatespeech
-                offensive_concept = 2  # Positive
+                offensive_concept = 1  # Disagreement
+            elif majority_label in [0, 2]:  # hatespeech or offensive
+                offensive_concept = 2  # Offensive
             else:
-                offensive_concept = 0  # Negative (normal)
+                offensive_concept = 0  # Normal
             
-            # Build concepts array (ternary like CEBaB)
             concepts = np.array([target_concept, offensive_concept], dtype=np.int64)
-            
-            # is_unknown: 1.0 if concept==1 (unknown), 0.0 otherwise
             is_unknown = (concepts == 1).astype(np.float32)
             
             self.examples.append({
@@ -445,35 +586,45 @@ class CredenceDataset(Dataset):
     
     def _load_civil_comments(self, ds):
         """
-        Load Civil Comments with identity attributes.
+        Load Civil Comments dataset.
         
-        FIXED: Uses ternary encoding for identity mentions:
-        - 0 = Not mentioned
-        - 1 = Unclear/borderline  
-        - 2 = Clearly mentioned
+        Fields:
+          - text: str
+          - toxicity: float (0-1)
+          - severe_toxicity, obscene, threat, insult, identity_attack, sexual_explicit: float
+        
+        Concept encoding (ternary):
+          - 0 = Low (< 0.1)
+          - 1 = Medium (0.1 - 0.5) - borderline/unclear
+          - 2 = High (>= 0.5)
         """
-        concept_fields = self.info["concept_fields"]
+        concept_fields = self.info.get("concept_fields", [])
         
         for sample in ds:
-            text = sample["text"]
-            if len(text.strip()) == 0:
+            text = sample.get("text", "")
+            if not text or len(text.strip()) == 0:
                 continue
-                
-            toxicity = sample["toxicity"]
+            
+            toxicity = sample.get("toxicity", 0.0)
+            if toxicity is None:
+                toxicity = 0.0
             
             # Binary label
             label = 1 if toxicity >= 0.5 else 0
             
-            # Identity attributes as ternary concepts
+            # Concepts from toxicity subtypes
             concepts = []
             for field in concept_fields:
-                val = sample.get(field, 0) or 0
+                val = sample.get(field, 0.0)
+                if val is None:
+                    val = 0.0
+                
                 if val >= 0.5:
-                    concepts.append(2)  # Clearly mentioned
+                    concepts.append(2)  # High
                 elif val >= 0.1:
-                    concepts.append(1)  # Borderline/unclear
+                    concepts.append(1)  # Medium/borderline
                 else:
-                    concepts.append(0)  # Not mentioned
+                    concepts.append(0)  # Low
             
             concepts = np.array(concepts, dtype=np.int64)
             is_unknown = (concepts == 1).astype(np.float32)
@@ -487,30 +638,38 @@ class CredenceDataset(Dataset):
     
     def _load_goemotions(self, ds):
         """
-        Load GoEmotions (multi-label to single-label).
+        Load GoEmotions (simplified) dataset.
         
-        FIXED: Uses ternary encoding:
-        - 0 = Emotion not present
-        - 1 = Ambiguous (multiple emotions)
-        - 2 = Emotion present
+        Fields:
+          - text: str
+          - labels: list[int] (emotion indices 0-27)
+        
+        Multi-label to single-label: take first label.
+        Concepts: emotion presence (ternary per emotion).
         """
+        num_emotions = 28
+        
         for sample in ds:
-            text = sample["text"]
-            labels = sample["labels"]
+            text = sample.get("text", "")
+            labels = sample.get("labels", [])
             
-            if len(labels) == 0:
+            if not text or len(text.strip()) == 0:
+                continue
+            if not labels:
                 continue
             
-            # Take first label as primary
+            # Primary label is first
             label = labels[0]
+            if label >= num_emotions:
+                continue
             
             # Multi-label indicates ambiguity
             is_ambiguous = len(labels) > 1
             
-            # Emotions as ternary concepts
-            concepts = np.zeros(28, dtype=np.int64)
+            # Concepts: emotion presence (ternary)
+            concepts = np.zeros(num_emotions, dtype=np.int64)
             for l in labels:
-                if l < 28:
+                if l < num_emotions:
                     if is_ambiguous:
                         concepts[l] = 1  # Present but ambiguous
                     else:
@@ -526,14 +685,25 @@ class CredenceDataset(Dataset):
             })
     
     def _load_nli(self, ds):
-        """Load NLI dataset (premise + hypothesis)."""
+        """
+        Load NLI dataset (ChaosNLI/TID-8).
+        
+        Fields:
+          - premise: str
+          - hypothesis: str
+          - label: int (0=entailment, 1=neutral, 2=contradiction, -1=skip)
+        """
         for sample in ds:
-            label = sample["label"]
-            if label == -1:
+            label = sample.get("label", -1)
+            if label == -1:  # Skip unlabeled
                 continue
             
-            premise = sample["premise"]
-            hypothesis = sample["hypothesis"]
+            premise = sample.get("premise", "")
+            hypothesis = sample.get("hypothesis", "")
+            
+            if not premise or not hypothesis:
+                continue
+            
             text = f"{premise} [SEP] {hypothesis}"
             
             self.examples.append({
@@ -544,16 +714,37 @@ class CredenceDataset(Dataset):
             })
     
     def _load_generic(self, ds):
-        """Generic loader for simple text classification."""
+        """
+        Generic loader for simple classification datasets.
+        
+        Handles:
+          - SST-2: sentence, label
+          - SST-5: text, label
+          - IMDB: text, label
+          - Yelp: text, label
+          - AG News: text, label
+        """
         text_field = self.info["text_field"]
         label_field = self.info["label_field"]
         
         for sample in ds:
-            text = sample[text_field]
-            label = sample[label_field]
+            # Handle text field (could be list for NLI)
+            if isinstance(text_field, list):
+                parts = [sample.get(f, "") for f in text_field]
+                text = " [SEP] ".join(parts)
+            else:
+                text = sample.get(text_field, "")
             
+            if not text or len(text.strip()) == 0:
+                continue
+            
+            label = sample.get(label_field)
             if label is None or label == -1:
                 continue
+            
+            # Ensure int
+            if isinstance(label, float):
+                label = int(label)
             
             self.examples.append({
                 "text": text,
@@ -563,7 +754,7 @@ class CredenceDataset(Dataset):
             })
     
     def _get_num_classes(self) -> int:
-        """Get number of classes based on config."""
+        """Get number of classes."""
         if self.dataset_name == "cebab":
             if self.config.label_type == "binary":
                 return 2
@@ -572,10 +763,10 @@ class CredenceDataset(Dataset):
             else:
                 return 5
         return self.info.get("num_classes", 2)
-    
+
     def __len__(self):
         return len(self.examples)
-    
+
     def __getitem__(self, idx):
         ex = self.examples[idx]
         
@@ -613,13 +804,18 @@ def load_dataset_splits(
     config: Optional[DatasetConfig] = None,
 ) -> Tuple[DataLoader, DataLoader, DataLoader, Any, Dict]:
     """Load train/val/test splits for a dataset."""
+    
     if config is None:
         config = DatasetConfig()
     
     if dataset_name not in DATASET_INFO:
-        raise ValueError(f"Unknown dataset: {dataset_name}. Available: {list(DATASET_INFO.keys())}")
+        available = list(DATASET_INFO.keys())
+        raise ValueError(f"Unknown dataset: {dataset_name}. Available: {available}")
     
     info = DATASET_INFO[dataset_name]
+    
+    print(f"\nLoading dataset: {dataset_name}")
+    print(f"  HF path: {info['hf_path']}")
     
     # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_name)
@@ -632,11 +828,11 @@ def load_dataset_splits(
     test_ds = CredenceDataset(dataset_name, "test", tokenizer, config)
     
     # Apply sample limits
-    if config.max_train_samples:
+    if config.max_train_samples and len(train_ds.examples) > config.max_train_samples:
         train_ds.examples = train_ds.examples[:config.max_train_samples]
-    if config.max_val_samples:
+    if config.max_val_samples and len(val_ds.examples) > config.max_val_samples:
         val_ds.examples = val_ds.examples[:config.max_val_samples]
-    if config.max_test_samples:
+    if config.max_test_samples and len(test_ds.examples) > config.max_test_samples:
         test_ds.examples = test_ds.examples[:config.max_test_samples]
     
     # Metadata
@@ -646,6 +842,7 @@ def load_dataset_splits(
         "num_classes": train_ds.num_classes,
         "num_concepts": train_ds.num_concepts,
         "concept_names": train_ds.concept_names,
+        "class_names": info.get("class_names", []),
         "has_concepts": info.get("has_concepts", False),
         "has_multi_annotator": info.get("has_multi_annotator", False),
         "is_ordinal": info.get("is_ordinal", False),
@@ -654,22 +851,31 @@ def load_dataset_splits(
         "test_size": len(test_ds),
     }
     
-    # Compute stats
-    label_counts = Counter([ex["label"] for ex in train_ds.examples])
-    metadata["label_distribution"] = dict(label_counts)
+    # Label distribution
+    if train_ds.examples:
+        label_counts = Counter([ex["label"] for ex in train_ds.examples])
+        metadata["label_distribution"] = dict(label_counts)
     
-    if train_ds.num_concepts > 0:
-        unknown_rates = np.array([ex["is_unknown"] for ex in train_ds.examples]).mean(axis=0)
-        metadata["unknown_rates"] = {name: float(r) for name, r in zip(train_ds.concept_names, unknown_rates)}
+    # Unknown rates
+    if train_ds.num_concepts > 0 and train_ds.examples:
+        unknown_arrs = [ex["is_unknown"] for ex in train_ds.examples if len(ex["is_unknown"]) > 0]
+        if unknown_arrs:
+            unknown_rates = np.array(unknown_arrs).mean(axis=0)
+            metadata["unknown_rates"] = {
+                name: float(r) for name, r in zip(train_ds.concept_names[:len(unknown_rates)], unknown_rates)
+            }
     
-    print(f"\nDataset: {dataset_name}")
-    print(f"  Task: {metadata['task']}")
-    print(f"  Classes: {metadata['num_classes']} - {info.get('class_names', [])}")
-    print(f"  Concepts: {metadata['num_concepts']} ({metadata['concept_names']})")
-    print(f"  Train/Val/Test: {metadata['train_size']}/{metadata['val_size']}/{metadata['test_size']}")
-    print(f"  Label distribution: {metadata['label_distribution']}")
-    if 'unknown_rates' in metadata:
-        print(f"  Unknown rates: {metadata['unknown_rates']}")
+    # Print summary
+    print(f"\n  Summary:")
+    print(f"    Task: {metadata['task']}")
+    print(f"    Classes: {metadata['num_classes']} {metadata['class_names']}")
+    print(f"    Concepts: {metadata['num_concepts']} {metadata['concept_names'][:5]}{'...' if len(metadata['concept_names']) > 5 else ''}")
+    print(f"    Sizes: train={metadata['train_size']}, val={metadata['val_size']}, test={metadata['test_size']}")
+    if "label_distribution" in metadata:
+        print(f"    Labels: {metadata['label_distribution']}")
+    if "unknown_rates" in metadata:
+        rates_str = ", ".join(f"{k}:{v:.2f}" for k, v in list(metadata["unknown_rates"].items())[:4])
+        print(f"    Unknown rates: {rates_str}")
     
     # Create loaders
     train_loader = DataLoader(
@@ -685,7 +891,7 @@ def load_dataset_splits(
     return train_loader, val_loader, test_loader, tokenizer, metadata
 
 # =============================================================================
-# DATASET-SPECIFIC CONFIGS
+# RECOMMENDED CONFIGS
 # =============================================================================
 
 def get_recommended_config(dataset_name: str) -> Dict[str, Any]:
@@ -701,11 +907,27 @@ def get_recommended_config(dataset_name: str) -> Dict[str, Any]:
             "aleatoric_weight": 0.5,
         },
         "hatexplain": {
-            "epochs": 30,  # Smaller dataset
+            "epochs": 30,
             "lr": 1e-4,
             "batch_size": 16,
             "label_type": "default",
             "concept_weight": 1.0,
+            "aleatoric_weight": 0.5,
+        },
+        "civil_comments": {
+            "epochs": 15,
+            "lr": 1e-4,
+            "batch_size": 32,
+            "label_type": "default",
+            "concept_weight": 0.5,
+            "aleatoric_weight": 0.5,
+        },
+        "goemotions": {
+            "epochs": 20,
+            "lr": 5e-5,
+            "batch_size": 32,
+            "label_type": "default",
+            "concept_weight": 0.5,
             "aleatoric_weight": 0.5,
         },
         "sst2": {
@@ -713,7 +935,7 @@ def get_recommended_config(dataset_name: str) -> Dict[str, Any]:
             "lr": 1e-4,
             "batch_size": 32,
             "label_type": "binary",
-            "concept_weight": 0.0,  # No concepts
+            "concept_weight": 0.0,
             "aleatoric_weight": 0.0,
         },
         "sst5": {
@@ -724,21 +946,21 @@ def get_recommended_config(dataset_name: str) -> Dict[str, Any]:
             "concept_weight": 0.0,
             "aleatoric_weight": 0.0,
         },
-        "goemotions": {
-            "epochs": 20,
-            "lr": 5e-5,  # Lower LR for many classes
+        "chaosnli": {
+            "epochs": 10,
+            "lr": 2e-5,
             "batch_size": 32,
             "label_type": "default",
-            "concept_weight": 0.5,
-            "aleatoric_weight": 0.5,
+            "concept_weight": 0.0,
+            "aleatoric_weight": 0.0,
         },
-        "civil_comments": {
-            "epochs": 15,
-            "lr": 1e-4,
+        "tid8": {
+            "epochs": 10,
+            "lr": 2e-5,
             "batch_size": 32,
             "label_type": "default",
-            "concept_weight": 0.5,
-            "aleatoric_weight": 0.5,
+            "concept_weight": 0.0,
+            "aleatoric_weight": 0.0,
         },
     }
     
@@ -752,10 +974,13 @@ def get_recommended_config(dataset_name: str) -> Dict[str, Any]:
     })
 
 def list_datasets():
-    """List all available datasets."""
-    print("\nAvailable Datasets:")
-    print("=" * 80)
+    """List all available datasets with their properties."""
     
+    print("\n" + "="*80)
+    print("AVAILABLE DATASETS")
+    print("="*80)
+    
+    # Group by task
     by_task = {}
     for name, info in DATASET_INFO.items():
         task = info.get("task", "other")
@@ -763,14 +988,25 @@ def list_datasets():
             by_task[task] = []
         by_task[task].append(name)
     
-    for task, datasets in by_task.items():
+    for task in ["sentiment", "toxicity", "emotion", "nli", "topic"]:
+        if task not in by_task:
+            continue
+        
         print(f"\n{task.upper()}:")
-        for ds in datasets:
+        print("-" * 60)
+        
+        for ds in by_task[task]:
             info = DATASET_INFO[ds]
             concepts = "✓" if info.get("has_concepts") else "✗"
             multi_ann = "✓" if info.get("has_multi_annotator") else "✗"
-            n_cls = info.get("num_classes", info.get("num_classes_ternary", "?"))
-            print(f"  {ds:20} classes={n_cls:2}  concepts={concepts}  multi_ann={multi_ann}")
+            n_cls = info.get("num_classes", "?")
+            n_con = len(info.get("concept_names", []))
+            
+            print(f"  {ds:20} classes={n_cls:2}  concepts={n_con:2} ({concepts})  multi_ann={multi_ann}")
+
+# =============================================================================
+# MAIN
+# =============================================================================
 
 if __name__ == "__main__":
     list_datasets()
