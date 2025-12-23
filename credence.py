@@ -122,7 +122,7 @@ class ExperimentConfig:
     lora_dropout: float = 0.1
     
     # Training
-    epochs: int = 10
+    epochs: int = 50
     lr: float = 1e-4
     weight_decay: float = 0.01
     concept_weight: float = 1.0
@@ -1090,8 +1090,9 @@ def extract_qualitative_examples(model, encoder, test_loader, dataset, device, m
                     for ex in selected[qname]:
                         text_escaped = ex['text'].replace('&', '\\&').replace('%', '\\%').replace('_', '\\_')
                         text_escaped = text_escaped[:100] + "..." if len(text_escaped) > 100 else text_escaped
-                        
-                        f.write(f"``{text_escaped}'' & {ex['pred'][:3]} {ex['correct']} & {ex['epistemic']} & {ex['aleatoric']} & [interpretation] \\\\\n")
+                        pred_str = str(ex['pred'])
+                        pred_display = pred_str[:3] if len(pred_str) > 3 else pred_str
+                        f.write(f"``{text_escaped}'' & {pred_display} {ex['correct']} & {ex['epistemic']} & {ex['aleatoric']} & [interpretation] \\\\\n")
         
         print(f"Saved LaTeX format to: {latex_path}")
     
@@ -1120,8 +1121,9 @@ def print_latex_examples(selected):
             ex = selected[qname][0]  # First example
             text_escaped = ex['text'].replace('&', '\\&').replace('%', '\\%').replace('_', '\\_')
             text_escaped = text_escaped[:100] + "..." if len(text_escaped) > 100 else text_escaped
-            
-            print(f"``{text_escaped}'' & {ex['pred'][:3]} {ex['correct']} & {ex['epistemic']} & {ex['aleatoric']} & [interpretation] \\\\")
+            pred_str = str(ex['pred'])
+            pred_display = pred_str[:3] if len(pred_str) > 3 else pred_str
+            print(f"``{text_escaped}'' & {pred_display} {ex['correct']} & {ex['epistemic']} & {ex['aleatoric']} & [interpretation] \\\\")
 
 
 def format_examples_for_paper(selected):
@@ -1382,7 +1384,7 @@ def main():
     parser.add_argument("--lora_dropout", type=float, default=0.1)
     
     # Data
-    parser.add_argument("--dataset", type=str, default="cebab",
+    parser.add_argument("--dataset", type=str, default="hatexplain",
                        choices=list(DATASET_INFO.keys()))
     parser.add_argument("--label_type", type=str, default="ternary")
     parser.add_argument("--batch_size", type=int, default=16)
@@ -1390,7 +1392,7 @@ def main():
     parser.add_argument("--n_heads", type=int, default=5)
     
     # Training
-    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--lr", type=float, default=1e-4)
     
     # Output
