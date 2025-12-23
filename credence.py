@@ -113,7 +113,7 @@ class ExperimentConfig:
     encoder_name: str = "distilbert-base-uncased"
     n_heads: int = 5
     freeze_encoder: bool = True
-    aleatoric_mode: str = "supervised"  # "supervised" | "entropy" | "none"
+    aleatoric_mode: str = "auto"  # "supervised" | "entropy" | "none" | "auto"
     
     # LoRA (for LLMs)
     use_lora: bool = False
@@ -482,22 +482,28 @@ class CREDENCE(nn.Module):
         task_loss = F.cross_entropy(outputs["logits"], labels)
         
         # 2. Concept loss (BCE per head, averaged)
-        # Ternary -> binary: 0->0, 1->0.5, 2->1
+        # Ternary -> soft targets: 0->0.0, 1->0.5, 2->1.0
         concept_targets = concepts.float() / 2.0
         
         concept_loss = torch.tensor(0.0, device=device)
-        for logits in outputs["head_logits"]:
-            concept_loss = concept_loss + F.binary_cross_entropy_with_logits(
-                logits, concept_targets
-            )
-        concept_loss = concept_loss / self.n_heads
+        if len(outputs["head_logits"]) > 0:
+            for logits in outputs["head_logits"]:
+                concept_loss = concept_loss + F.binary_cross_entropy_with_logits(
+                    logits, concept_targets
+                )
+            concept_loss = concept_loss / self.n_heads
         
         # 3. Aleatoric loss: predict P(unknown) per concept
-        # is_unknown is binary (0 or 1) where 1 means concept=1 (unknown) in ternary encoding
         aleatoric_loss = torch.tensor(0.0, device=device)
-        if self.aleatoric_mode == "supervised" and is_unknown is not None:
-            # BCE because is_unknown is binary (0 or 1)
-            aleatoric_loss = F.binary_cross_entropy(outputs["ambiguity"], is_unknown)
+        if self.aleatoric_mode == "supervised" and is_unknown is not None and is_unknown.numel() > 0:
+            # Ensure shapes match
+            ambiguity = outputs["ambiguity"]
+            if ambiguity.shape == is_unknown.shape:
+                aleatoric_loss = F.binary_cross_entropy(
+                    ambiguity, 
+                    is_unknown.to(device),
+                    reduction='mean'
+                )
         
         # Total
         total_loss = (task_loss + 
@@ -538,9 +544,7 @@ def train_epoch(
         labels = batch['labels'].to(device)
         concepts = batch['concept_labels'].to(device)
         
-        # Compute is_unknown from concepts: concept=1 (unknown) in ternary encoding
-        # is_unknown is binary: 1.0 if concept==1 (unknown), 0.0 otherwise
-        is_unknown = (concepts == 1).float()  # [batch, num_concepts]
+        is_unknown = batch['is_unknown'].to(device)
         
         # Encode
         if model_type == "encoder":
@@ -614,9 +618,12 @@ def evaluate(
         labels = batch['labels'].to(device)
         concepts = batch['concept_labels']
         
-        # Compute is_unknown from concepts: concept=1 (unknown) in ternary encoding
-        is_unknown = (concepts == 1).float()  # [batch, num_concepts]
-        is_unknown_mean = is_unknown.mean(dim=-1).numpy()  # Mean unknown rate per sample
+        is_unknown = batch['is_unknown']
+        if is_unknown.numel() > 0:
+            is_unknown_mean = is_unknown.mean(dim=-1).numpy()  # Mean unknown rate per sample
+        else:
+            # Handle datasets without concepts (empty is_unknown)
+            is_unknown_mean = np.zeros(len(labels))
         
         hidden_states = get_hidden_states(encoder, input_ids, attention_mask, model_type)
         outputs = model(hidden_states, attention_mask)
@@ -672,8 +679,28 @@ def evaluate(
         "ambig_unknown_pval": float(ambig_unknown_pval),
         "mean_disagreement": float(all_disagreement.mean()),
         "mean_ambiguity": float(all_ambiguity.mean()),
+        "mean_unknown": float(all_annotator_var.mean()),  # Add mean unknown rate for debugging
         "mean_credal_width": float(all_credal_width.mean()),
     }
+
+
+# =============================================================================
+# HELPER: Auto-detect aleatoric mode
+# =============================================================================
+
+def get_aleatoric_mode(metadata: dict) -> str:
+    has_multi = metadata.get("has_multi_annotator", False)
+    has_concepts = metadata.get("has_concepts", False)
+    
+    if has_multi and has_concepts:
+        return "supervised"
+    elif has_multi and not has_concepts:
+        # Could add concept extraction for NLI datasets
+        print(f"  Note: {metadata['dataset_name']} has multi-annotator but no concepts.")
+        print(f"  Using entropy mode. Consider adding concept extraction.")
+        return "entropy"
+    else:
+        return "entropy"
 
 
 # =============================================================================
@@ -681,14 +708,6 @@ def evaluate(
 # =============================================================================
 
 def analyze_test_set(model, encoder, test_loader, device, model_type, output_dir="./analysis"):
-    """
-    Run after training to analyze uncertainty decomposition.
-    
-    Usage (add to end of training):
-        # After training loop completes and best model is loaded:
-        model.load_state_dict(best_state)  # Make sure best model is loaded!
-        results = analyze_test_set(model, encoder, test_loader, device)
-    """
     os.makedirs(output_dir, exist_ok=True)
     
     model.eval()
@@ -1178,10 +1197,14 @@ def run_experiment(config: ExperimentConfig):
         config=dataset_config
     )
     
-    # Set aleatoric mode based on dataset
-    if not metadata["has_multi_annotator"]:
-        print(f"Dataset {config.dataset} has no multi-annotator data.")
-        print("Switching aleatoric_mode from 'supervised' to 'entropy'")
+    # Auto-detect aleatoric mode if set to "auto" (v3 feature)
+    if config.aleatoric_mode == "auto":
+        config.aleatoric_mode = get_aleatoric_mode(metadata)
+        print(f"  Auto-detected aleatoric_mode: {config.aleatoric_mode}")
+    elif not metadata["has_multi_annotator"] and config.aleatoric_mode == "supervised":
+        # Validate mode: supervised requires multi-annotator data
+        print(f"  Warning: Dataset {config.dataset} has no multi-annotator data!")
+        print(f"  Switching aleatoric_mode from 'supervised' to 'entropy'")
         config.aleatoric_mode = "entropy"
 
     # Load model
