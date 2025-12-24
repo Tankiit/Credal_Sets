@@ -688,7 +688,16 @@ class CREDENCE(nn.Module):
             
             # Epistemic: variance of label probabilities across heads (mean over classes)
             # Store as label-level disagreement (for evaluation)
-            label_disagreement = label_probs_stack.var(dim=-1).mean(dim=1)  # [batch] - mean variance across classes
+            if label_probs_stack.shape[-1] == 1:
+                # Single head: no disagreement
+                label_disagreement = torch.zeros(batch_size, device=device)
+            else:
+                label_var = label_probs_stack.var(dim=-1)  # [batch, num_classes]
+                # Replace any NaN values with 0
+                label_var = torch.where(torch.isnan(label_var), 
+                                       torch.zeros_like(label_var), 
+                                       label_var)
+                label_disagreement = label_var.mean(dim=1)  # [batch] - mean variance across classes
             disagreement = torch.zeros(batch_size, 0, device=device)  # Empty concept-level for compatibility
             
             # Credal output (on labels, not concepts)
@@ -708,7 +717,16 @@ class CREDENCE(nn.Module):
             concept_probs = probs_stack.mean(dim=-1)
             
             # Epistemic: ensemble disagreement
-            disagreement = probs_stack.var(dim=-1)
+            # Compute variance across heads, handling edge cases
+            if probs_stack.shape[-1] == 1:
+                # Single head: no disagreement
+                disagreement = torch.zeros_like(probs_stack[..., 0])
+            else:
+                disagreement = probs_stack.var(dim=-1)
+                # Replace any NaN values with 0 (can happen due to numerical instability)
+                disagreement = torch.where(torch.isnan(disagreement), 
+                                          torch.zeros_like(disagreement), 
+                                          disagreement)
             
             # Classification
             logits = self.classifier(concept_probs)
@@ -728,6 +746,10 @@ class CREDENCE(nn.Module):
                 entropies = -(probs_stack * torch.log(probs_stack + eps) + 
                              (1 - probs_stack) * torch.log(1 - probs_stack + eps))
                 ambiguity = entropies.mean(dim=-1)  # Average entropy across heads
+                # Replace any NaN values with 0
+                ambiguity = torch.where(torch.isnan(ambiguity), 
+                                       torch.zeros_like(ambiguity), 
+                                       ambiguity)
             else:
                 ambiguity = torch.zeros(batch_size, 0, device=hidden_states.device)
         else:
@@ -871,8 +893,31 @@ def train_epoch(
         n_batches += 1
         
         # Handle disagreement/ambiguity display (may be empty for datasets without concepts)
-        disagree_val = outputs.get('label_disagreement', outputs['disagreement']).mean() if outputs.get('label_disagreement') is not None or outputs['disagreement'].numel() > 0 else 0.0
-        ambig_val = outputs['ambiguity'].mean() if outputs['ambiguity'].numel() > 0 else 0.0
+        # Get disagreement value, handling NaN cases
+        if outputs.get('label_disagreement') is not None:
+            disagree_tensor = outputs['label_disagreement']
+        elif outputs['disagreement'].numel() > 0:
+            disagree_tensor = outputs['disagreement']
+        else:
+            disagree_tensor = None
+        
+        if disagree_tensor is not None:
+            # Handle NaN values: replace with 0 and compute mean
+            disagree_clean = torch.where(torch.isnan(disagree_tensor), 
+                                        torch.zeros_like(disagree_tensor), 
+                                        disagree_tensor)
+            disagree_val = disagree_clean.mean().item()
+        else:
+            disagree_val = 0.0
+        
+        # Handle ambiguity similarly
+        if outputs['ambiguity'].numel() > 0:
+            ambig_clean = torch.where(torch.isnan(outputs['ambiguity']), 
+                                     torch.zeros_like(outputs['ambiguity']), 
+                                     outputs['ambiguity'])
+            ambig_val = ambig_clean.mean().item()
+        else:
+            ambig_val = 0.0
         
         pbar.set_postfix({
             "loss": f"{loss_dict['total']:.4f}",
