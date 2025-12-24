@@ -1,6 +1,59 @@
 #!/bin/bash
 
-set -e
+# =============================================================================
+# CREDENCE Multi-Dataset Runner
+# =============================================================================
+# Usage: ./run_all_datasets.sh [ENCODER]
+#
+# Available encoders (short names):
+#   - roberta, roberta-base          (RoBERTa base, 2019)
+#   - roberta-large                   (RoBERTa large, 2019)
+#   - deberta, deberta-v3, deberta-v3-base  (DeBERTa-v3 base, 2021)
+#   - deberta-v3-large                (DeBERTa-v3 large, 2021)
+#   - distilbert, distilbert-base     (DistilBERT, 2019)
+#   - modernbert, modernbert-base     (ModernBERT base, 2024 - SOTA)
+#   - modernbert-large                (ModernBERT large, 2024 - SOTA)
+#
+# You can also use full model names:
+#   - answerdotai/ModernBERT-base
+#   - microsoft/deberta-v3-base
+#   - etc.
+#
+# Examples:
+#   ./run_all_datasets.sh roberta-base
+#   ./run_all_datasets.sh modernbert
+#   ./run_all_datasets.sh answerdotai/ModernBERT-base
+# =============================================================================
+
+# Don't exit on error - we want to continue processing other datasets
+# set -e
+
+# Check for help flag
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "CREDENCE Multi-Dataset Runner"
+    echo ""
+    echo "Usage: ./run_all_datasets.sh [ENCODER]"
+    echo ""
+    echo "Available encoders (short names):"
+    echo "  roberta, roberta-base          - RoBERTa base (2019)"
+    echo "  roberta-large                   - RoBERTa large (2019)"
+    echo "  deberta, deberta-v3-base       - DeBERTa-v3 base (2021)"
+    echo "  deberta-v3-large               - DeBERTa-v3 large (2021)"
+    echo "  distilbert, distilbert-base    - DistilBERT (2019)"
+    echo "  modernbert, modernbert-base    - ModernBERT base (2024 - SOTA)"
+    echo "  modernbert-large               - ModernBERT large (2024 - SOTA)"
+    echo ""
+    echo "You can also use full model names from HuggingFace:"
+    echo "  answerdotai/ModernBERT-base"
+    echo "  microsoft/deberta-v3-base"
+    echo "  etc."
+    echo ""
+    echo "Examples:"
+    echo "  ./run_all_datasets.sh roberta-base"
+    echo "  ./run_all_datasets.sh modernbert"
+    echo "  ./run_all_datasets.sh answerdotai/ModernBERT-base"
+    exit 0
+fi
 
 ENCODER="${1:-roberta-base}"
 
@@ -8,13 +61,26 @@ case "$ENCODER" in
     "roberta"|"roberta-base")
         ENCODER_FULL="roberta-base"
         ;;
+    "roberta-large")
+        ENCODER_FULL="roberta-large"
+        ;;
     "deberta"|"deberta-v3"|"deberta-v3-base")
         ENCODER_FULL="microsoft/deberta-v3-base"
+        ;;
+    "deberta-v3-large")
+        ENCODER_FULL="microsoft/deberta-v3-large"
         ;;
     "distilbert"|"distilbert-base")
         ENCODER_FULL="distilbert-base-uncased"
         ;;
+    "modernbert"|"modernbert-base")
+        ENCODER_FULL="answerdotai/ModernBERT-base"
+        ;;
+    "modernbert-large")
+        ENCODER_FULL="answerdotai/ModernBERT-large"
+        ;;
     *)
+        # If not a known alias, use as-is (allows full model names)
         ENCODER_FULL="$ENCODER"
         ;;
 esac
@@ -23,6 +89,9 @@ DATASETS=(
     "cebab"
     "hatexplain"
     "goemotions"
+    "civil_comments"
+    "tid8"
+    "chaosnli"
 )
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -42,7 +111,8 @@ get_epochs() {
         "hatexplain")     echo 30 ;;
         "goemotions")     echo 25 ;;
         "civil_comments") echo 15 ;;
-        "sst5")           echo 30 ;;
+        "tid8")           echo 10 ;;
+        "chaosnli")       echo 10 ;;
         *)                echo $EPOCHS_DEFAULT ;;
     esac
 }
@@ -51,7 +121,8 @@ get_batch_size() {
     case "$1" in
         "goemotions")     echo 32 ;;
         "civil_comments") echo 32 ;;
-        "sst5")           echo 32 ;;
+        "tid8")           echo 32 ;;
+        "chaosnli")       echo 32 ;;
         *)                echo $BATCH_SIZE ;;
     esac
 }
@@ -59,7 +130,16 @@ get_batch_size() {
 get_label_type() {
     case "$1" in
         "cebab") echo "ternary" ;;
-        *)       echo "ternary" ;;
+        *)       echo "default" ;;
+    esac
+}
+
+get_lr() {
+    case "$1" in
+        "goemotions")     echo "5e-5" ;;
+        "chaosnli")       echo "2e-5" ;;
+        "tid8")           echo "2e-5" ;;
+        *)                echo "$LR" ;;
     esac
 }
 
@@ -93,9 +173,10 @@ for DATASET in "${DATASETS[@]}"; do
     EPOCHS=$(get_epochs "$DATASET")
     BS=$(get_batch_size "$DATASET")
     LABEL_TYPE=$(get_label_type "$DATASET")
+    DATASET_LR=$(get_lr "$DATASET")
     OUTPUT_DIR="$OUTPUT_BASE/$DATASET"
     
-    log "Running $DATASET (epochs=$EPOCHS, batch_size=$BS)"
+    log "Running $DATASET (epochs=$EPOCHS, batch_size=$BS, lr=$DATASET_LR)"
     
     START_TIME=$(date +%s)
     
@@ -105,12 +186,17 @@ for DATASET in "${DATASETS[@]}"; do
         --label_type "$LABEL_TYPE" \
         --epochs "$EPOCHS" \
         --batch_size "$BS" \
-        --lr "$LR" \
+        --lr "$DATASET_LR" \
         --n_heads "$N_HEADS" \
         --max_length "$MAX_LENGTH" \
         --output_dir "$OUTPUT_DIR" \
         --seed "$SEED" \
         2>&1 | tee "$OUTPUT_DIR.log"
+    
+    EXIT_CODE=${PIPESTATUS[0]}
+    if [ $EXIT_CODE -ne 0 ]; then
+        log "$DATASET: ERROR - Failed with exit code $EXIT_CODE"
+    fi
     
     END_TIME=$(date +%s)
     DURATION=$((END_TIME - START_TIME))
@@ -125,6 +211,9 @@ for DATASET in "${DATASETS[@]}"; do
         
         RESULTS_SUMMARY+=("$DATASET: Acc=$ACC%, ρ_epi=$RHO_EPI, ρ_ale=$RHO_ALE (${DURATION}s)")
         log "$DATASET: Acc=$ACC%, ρ_epi=$RHO_EPI, ρ_ale=$RHO_ALE"
+    elif [ $EXIT_CODE -ne 0 ]; then
+        RESULTS_SUMMARY+=("$DATASET: Failed (exit code $EXIT_CODE)")
+        log "$DATASET: ERROR - Failed to run (exit code $EXIT_CODE)"
     else
         RESULTS_SUMMARY+=("$DATASET: Results file not found")
         log "$DATASET: WARNING - Results file not found"

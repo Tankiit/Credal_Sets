@@ -35,70 +35,244 @@ from dataloader import (
     DATASET_INFO
 )
 
+# Head configuration for ablation studies
+from head_config import HeadConfig, generate_head_configs
+
 # =============================================================================
-# MODEL REGISTRY
+# UPDATED MODEL REGISTRY FOR CREDENCE
+# =============================================================================
+# Copy this to replace your MODEL_REGISTRY in credence_acl.py
+#
+# Includes:
+# - ModernBERT (December 2024) - Current SOTA encoder
+# - Llama 3.2 (September 2024)
+# - Qwen 2.5 (September 2024)
+# - Gemma 2 (June 2024)
+# - Phi-3.5 (August 2024)
 # =============================================================================
 
 MODEL_REGISTRY = {
-    # Encoder models (frozen encoder, train heads)
+    # ==========================================================================
+    # ENCODER MODELS (frozen encoder, train heads)
+    # ==========================================================================
+    
+    # Classic encoders (2019)
     "distilbert-base-uncased": {
         "type": "encoder",
         "hidden_size": 768,
         "max_length": 512,
+        "use_token_type_ids": True,
     },
     "roberta-base": {
         "type": "encoder", 
         "hidden_size": 768,
         "max_length": 512,
+        "use_token_type_ids": False,
     },
     "roberta-large": {
         "type": "encoder",
         "hidden_size": 1024,
         "max_length": 512,
+        "use_token_type_ids": False,
     },
+    
+    # DeBERTa-v3 (2021) - Previous SOTA
     "microsoft/deberta-v3-base": {
         "type": "encoder",
         "hidden_size": 768,
         "max_length": 512,
+        "use_token_type_ids": True,
     },
     "microsoft/deberta-v3-large": {
         "type": "encoder",
         "hidden_size": 1024,
         "max_length": 512,
+        "use_token_type_ids": True,
     },
-    # LLM models (LoRA fine-tuning)
+    
+    # =========================================================================
+    # ModernBERT (December 2024) - CURRENT SOTA ENCODER
+    # =========================================================================
+    # Paper: "Smarter, Better, Faster, Longer" (Warner et al., 2024)
+    # arXiv: 2412.13663
+    # 
+    # Key advantages:
+    # - First base model to beat DeBERTaV3 on GLUE
+    # - 2x faster than DeBERTa, up to 4x on mixed-length inputs
+    # - Uses 1/5th of DeBERTa's memory
+    # - 8192 token context (vs 512 for BERT/RoBERTa)
+    # - Trained on 2 trillion tokens
+    #
+    # Architecture innovations:
+    # - Rotary Positional Embeddings (RoPE)
+    # - Local-Global Alternating Attention
+    # - Flash Attention + Unpadding
+    # - GeGLU activation
+    #
+    # IMPORTANT: Does NOT use token_type_ids!
+    # =========================================================================
+    "answerdotai/ModernBERT-base": {
+        "type": "encoder",
+        "hidden_size": 768,
+        "max_length": 8192,  # Native long context!
+        "use_token_type_ids": False,  # Critical: ModernBERT doesn't use these
+    },
+    "answerdotai/ModernBERT-large": {
+        "type": "encoder",
+        "hidden_size": 1024,
+        "max_length": 8192,
+        "use_token_type_ids": False,
+    },
+    
+    # ==========================================================================
+    # LLM MODELS (LoRA fine-tuning)
+    # ==========================================================================
+    
+    # -------------------------------------------------------------------------
+    # Phi Series (Microsoft) - Efficient small LLMs
+    # -------------------------------------------------------------------------
     "microsoft/phi-3-mini-4k-instruct": {
         "type": "llm",
         "hidden_size": 3072,
         "max_length": 256,
         "target_modules": ["qkv_proj", "o_proj"],
     },
+    # Phi-3.5 (August 2024) - Improved reasoning
+    "microsoft/Phi-3.5-mini-instruct": {
+        "type": "llm",
+        "hidden_size": 3072,
+        "max_length": 256,
+        "target_modules": ["qkv_proj", "o_proj"],
+    },
+    
+    # -------------------------------------------------------------------------
+    # Mistral Series
+    # -------------------------------------------------------------------------
     "mistralai/Mistral-7B-v0.1": {
         "type": "llm",
         "hidden_size": 4096,
         "max_length": 256,
         "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
     },
+    "mistralai/Mistral-7B-Instruct-v0.3": {
+        "type": "llm",
+        "hidden_size": 4096,
+        "max_length": 256,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+    },
+    
+    # -------------------------------------------------------------------------
+    # Llama 3.1 (Meta, July 2024)
+    # -------------------------------------------------------------------------
     "meta-llama/Llama-3.1-8B": {
         "type": "llm",
         "hidden_size": 4096,
         "max_length": 256,
         "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
     },
+    "meta-llama/Llama-3.1-8B-Instruct": {
+        "type": "llm",
+        "hidden_size": 4096,
+        "max_length": 256,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+    },
+    
+    # -------------------------------------------------------------------------
+    # Llama 3.2 (Meta, September 2024) - LATEST
+    # -------------------------------------------------------------------------
+    # Smaller, more efficient models
+    "meta-llama/Llama-3.2-1B": {
+        "type": "llm",
+        "hidden_size": 2048,
+        "max_length": 256,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+    },
+    "meta-llama/Llama-3.2-3B": {
+        "type": "llm",
+        "hidden_size": 3072,
+        "max_length": 256,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+    },
+    "meta-llama/Llama-3.2-3B-Instruct": {
+        "type": "llm",
+        "hidden_size": 3072,
+        "max_length": 256,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+    },
+    
+    # -------------------------------------------------------------------------
+    # Qwen 2.5 (Alibaba, September 2024) - Strong multilingual
+    # -------------------------------------------------------------------------
+    "Qwen/Qwen2.5-0.5B": {
+        "type": "llm",
+        "hidden_size": 896,
+        "max_length": 256,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+    },
+    "Qwen/Qwen2.5-1.5B": {
+        "type": "llm",
+        "hidden_size": 1536,
+        "max_length": 256,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+    },
+    "Qwen/Qwen2.5-3B": {
+        "type": "llm",
+        "hidden_size": 2048,
+        "max_length": 256,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+    },
+    "Qwen/Qwen2.5-7B": {
+        "type": "llm",
+        "hidden_size": 3584,
+        "max_length": 256,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+    },
+    
+    # -------------------------------------------------------------------------
+    # Gemma 2 (Google, June 2024)
+    # -------------------------------------------------------------------------
+    "google/gemma-2-2b": {
+        "type": "llm",
+        "hidden_size": 2304,
+        "max_length": 256,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+    },
+    "google/gemma-2-9b": {
+        "type": "llm",
+        "hidden_size": 3584,
+        "max_length": 256,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+    },
 }
 
-@dataclass
-class HeadConfig:
-    """Configuration for a single ensemble head."""
-    head_id: int
-    name: str
-    hidden_dim: int = 256
-    dropout_rate: float = 0.1
-    pooling: str = "cls"  # "cls" | "mean"
-    
-    def __repr__(self):
-        return f"Head({self.name}, d={self.dropout_rate:.2f}, pool={self.pooling})"
+# =============================================================================
+# HELPER: Print available models
+# =============================================================================
 
+def print_available_models():
+    """Print all available models organized by type and release date."""
+    
+    print("\n" + "="*70)
+    print("AVAILABLE MODELS")
+    print("="*70)
+    
+    # Encoders
+    print("\n📦 ENCODER MODELS (frozen encoder, train heads)")
+    print("-" * 50)
+    encoders = [(k, v) for k, v in MODEL_REGISTRY.items() if v["type"] == "encoder"]
+    for name, info in encoders:
+        print(f"  {name}")
+        print(f"    hidden_size: {info['hidden_size']}, max_length: {info['max_length']}")
+    
+    # LLMs
+    print("\n🤖 LLM MODELS (LoRA fine-tuning)")
+    print("-" * 50)
+    llms = [(k, v) for k, v in MODEL_REGISTRY.items() if v["type"] == "llm"]
+    for name, info in llms:
+        print(f"  {name}")
+        print(f"    hidden_size: {info['hidden_size']}")
+    
+    print("\n" + "="*70)
 
 @dataclass 
 class ExperimentConfig:
@@ -112,6 +286,9 @@ class ExperimentConfig:
     # Model
     encoder_name: str = "distilbert-base-uncased"
     n_heads: int = 5
+    dropout_min: float = 0.05
+    dropout_max: float = 0.30
+    use_pooling_diversity: bool = True
     freeze_encoder: bool = True
     aleatoric_mode: str = "auto"  # "supervised" | "entropy" | "none" | "auto"
     
@@ -141,16 +318,14 @@ class ExperimentConfig:
 
 
     def get_head_configs(self) -> List[HeadConfig]:
-        """Generate diverse head configurations."""
-        # Diversity through dropout and pooling
-        configs = [
-            HeadConfig(0, "low_drop_cls", 256, 0.05, "cls"),
-            HeadConfig(1, "med_drop_cls", 256, 0.15, "cls"),
-            HeadConfig(2, "high_drop_cls", 256, 0.25, "cls"),
-            HeadConfig(3, "low_drop_mean", 256, 0.10, "mean"),
-            HeadConfig(4, "high_drop_mean", 256, 0.20, "mean"),
-        ]
-        return configs[:self.n_heads]
+        """Generate diverse head configurations with geometric dropout spacing."""
+        return generate_head_configs(
+            n_heads=self.n_heads,
+            d_min=self.dropout_min,
+            d_max=self.dropout_max,
+            hidden_dim=256,
+            use_pooling_diversity=self.use_pooling_diversity,
+        )
     
     def get_model_type(self) -> str:
         """Determine if model is encoder or LLM."""
@@ -161,15 +336,38 @@ class ExperimentConfig:
 # MODEL LOADING
 # =============================================================================
 
+# =============================================================================
+# UPDATED load_encoder_model FUNCTION
+# =============================================================================
+# Replace your existing load_encoder_model with this version
+# Handles ModernBERT's lack of token_type_ids
+
 def load_encoder_model(model_name: str, device: str, freeze: bool = True):
-    """Load encoder model (BERT-style)."""
+    """Load encoder model (BERT-style), with special handling for ModernBERT."""
     print(f"Loading encoder: {model_name}")
+    
+    # Check if it's ModernBERT (requires flash attention for best performance)
+    is_modernbert = "modernbert" in model_name.lower()
     
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
-    encoder = AutoModel.from_pretrained(model_name)
+    # Load model with appropriate settings
+    if is_modernbert:
+        try:
+            # Try loading with Flash Attention 2 for best performance
+            encoder = AutoModel.from_pretrained(
+                model_name,
+                attn_implementation="flash_attention_2",
+                torch_dtype=torch.float16,  # FA2 requires fp16/bf16
+            )
+            print("  ModernBERT loaded with Flash Attention 2")
+        except Exception as e:
+            print(f"  Flash Attention 2 not available ({e}), loading standard")
+            encoder = AutoModel.from_pretrained(model_name)
+    else:
+        encoder = AutoModel.from_pretrained(model_name)
     
     if freeze:
         for param in encoder.parameters():
@@ -181,10 +379,24 @@ def load_encoder_model(model_name: str, device: str, freeze: bool = True):
     # Get hidden size
     with torch.no_grad():
         dummy = tokenizer("test", return_tensors="pt", padding=True)
-        out = encoder(dummy['input_ids'].to(device), attention_mask=dummy['attention_mask'].to(device))
+        # ModernBERT doesn't use token_type_ids
+        model_info = MODEL_REGISTRY.get(model_name, {})
+        use_token_type_ids = model_info.get("use_token_type_ids", False)  # False for ModernBERT!
+        
+        inputs = {
+            "input_ids": dummy['input_ids'].to(device),
+            "attention_mask": dummy['attention_mask'].to(device),
+        }
+        # Only add token_type_ids if the model uses them
+        if use_token_type_ids and 'token_type_ids' in dummy:
+            inputs['token_type_ids'] = dummy['token_type_ids'].to(device)
+        
+        out = encoder(**inputs)
         hidden_size = out.last_hidden_state.shape[-1]
     
     print(f"  Hidden size: {hidden_size}")
+    print(f"  Uses token_type_ids: {use_token_type_ids}")
+    
     return encoder, tokenizer, hidden_size, "encoder"
 
 
@@ -402,8 +614,21 @@ class CREDENCE(nn.Module):
         else:
             self.aleatoric_head = None
         
-        # Classifier
-        self.classifier = CredalClassifier(num_concepts, num_classes)
+        # Classifier - use dummy concept if num_concepts = 0
+        # For datasets without concepts, we'll use a single dummy concept
+        effective_num_concepts = max(num_concepts, 1) if num_concepts == 0 else num_concepts
+        self.classifier = CredalClassifier(effective_num_concepts, num_classes)
+        
+        # Direct classifier for datasets without concepts
+        if num_concepts == 0:
+            self.direct_classifier = nn.Sequential(
+                nn.Linear(input_dim, 256),
+                nn.ReLU(),
+                nn.Dropout(0.1),
+                nn.Linear(256, num_classes),
+            )
+        else:
+            self.direct_classifier = None
         
         self._print_info()
     
@@ -426,33 +651,89 @@ class CREDENCE(nn.Module):
         # Stack: [batch, num_concepts, n_heads]
         probs_stack = torch.stack(all_probs, dim=-1)
         
-        # Credal aggregation
-        credal_lower = probs_stack.min(dim=-1).values
-        credal_upper = probs_stack.max(dim=-1).values
-        credal_width = credal_upper - credal_lower
-        concept_probs = probs_stack.mean(dim=-1)
+        # Handle case when num_concepts = 0 (datasets without concepts)
+        batch_size = hidden_states.shape[0]
+        device = hidden_states.device
         
-        # Epistemic: ensemble disagreement
-        disagreement = probs_stack.var(dim=-1)
+        if self.num_concepts == 0:
+            # No concepts: use direct classification with ensemble uncertainty
+            # Get pooled representations from each head
+            head_pooled = []
+            for head in self.heads:
+                pooled = head.pool(hidden_states, attention_mask)  # [batch, hidden_dim]
+                head_pooled.append(pooled)
+            
+            # Get label predictions from each head using direct classifier
+            head_label_logits = []
+            for pooled in head_pooled:
+                logit = self.direct_classifier(pooled)  # [batch, num_classes]
+                head_label_logits.append(logit)
+            
+            # Stack: [batch, num_classes, n_heads]
+            label_logits_stack = torch.stack(head_label_logits, dim=-1)
+            label_probs_stack = torch.softmax(label_logits_stack, dim=1)
+            
+            # Aggregate: mean across heads
+            logits = label_logits_stack.mean(dim=-1)  # [batch, num_classes]
+            
+            # Credal bounds on label probabilities
+            label_prob_lower = label_probs_stack.min(dim=-1).values  # [batch, num_classes]
+            label_prob_upper = label_probs_stack.max(dim=-1).values  # [batch, num_classes]
+            
+            # For compatibility, create empty concept tensors
+            concept_probs = torch.zeros(batch_size, 0, device=device)
+            credal_lower = torch.zeros(batch_size, 0, device=device)
+            credal_upper = torch.zeros(batch_size, 0, device=device)
+            credal_width = torch.zeros(batch_size, 0, device=device)
+            
+            # Epistemic: variance of label probabilities across heads (mean over classes)
+            # Store as label-level disagreement (for evaluation)
+            label_disagreement = label_probs_stack.var(dim=-1).mean(dim=1)  # [batch] - mean variance across classes
+            disagreement = torch.zeros(batch_size, 0, device=device)  # Empty concept-level for compatibility
+            
+            # Credal output (on labels, not concepts)
+            credal_out = {
+                "prob_lower": label_prob_lower,
+                "prob_upper": label_prob_upper,
+            }
+            
+            # Store label-level metrics for evaluation
+            self._label_disagreement = label_disagreement
+        else:
+            # Normal case: has concepts
+            # Credal aggregation
+            credal_lower = probs_stack.min(dim=-1).values
+            credal_upper = probs_stack.max(dim=-1).values
+            credal_width = credal_upper - credal_lower
+            concept_probs = probs_stack.mean(dim=-1)
+            
+            # Epistemic: ensemble disagreement
+            disagreement = probs_stack.var(dim=-1)
+            
+            # Classification
+            logits = self.classifier(concept_probs)
+            credal_out = self.classifier.forward_credal(credal_lower, credal_upper)
         
         # Aleatoric: predicted P(unknown) per concept
         if self.aleatoric_mode == "supervised":
             # Learned prediction of P(unknown) - true aleatoric signal
-            ambiguity = self.aleatoric_head(hidden_states, attention_mask)
+            if self.num_concepts > 0:
+                ambiguity = self.aleatoric_head(hidden_states, attention_mask)
+            else:
+                ambiguity = torch.zeros(batch_size, 0, device=hidden_states.device)
         elif self.aleatoric_mode == "entropy":
             # Proxy: mean entropy of individual head predictions
-            eps = 1e-8
-            entropies = -(probs_stack * torch.log(probs_stack + eps) + 
-                         (1 - probs_stack) * torch.log(1 - probs_stack + eps))
-            ambiguity = entropies.mean(dim=-1)  # Average entropy across heads
+            if self.num_concepts > 0:
+                eps = 1e-8
+                entropies = -(probs_stack * torch.log(probs_stack + eps) + 
+                             (1 - probs_stack) * torch.log(1 - probs_stack + eps))
+                ambiguity = entropies.mean(dim=-1)  # Average entropy across heads
+            else:
+                ambiguity = torch.zeros(batch_size, 0, device=hidden_states.device)
         else:
             ambiguity = torch.zeros_like(disagreement)
         
-        # Classification
-        logits = self.classifier(concept_probs)
-        credal_out = self.classifier.forward_credal(credal_lower, credal_upper)
-        
-        return {
+        result = {
             "logits": logits,
             "concept_probs": concept_probs,
             "credal_lower": credal_lower,
@@ -466,6 +747,12 @@ class CREDENCE(nn.Module):
             "head_logits": all_logits,
             "head_probs": all_probs,
         }
+        
+        # Add label-level disagreement for datasets without concepts
+        if self.num_concepts == 0 and hasattr(self, '_label_disagreement'):
+            result["label_disagreement"] = self._label_disagreement
+        
+        return result
     
     def compute_loss(
         self,
@@ -483,15 +770,17 @@ class CREDENCE(nn.Module):
         
         # 2. Concept loss (BCE per head, averaged)
         # Ternary -> soft targets: 0->0.0, 1->0.5, 2->1.0
-        concept_targets = concepts.float() / 2.0
-        
         concept_loss = torch.tensor(0.0, device=device)
-        if len(outputs["head_logits"]) > 0:
-            for logits in outputs["head_logits"]:
-                concept_loss = concept_loss + F.binary_cross_entropy_with_logits(
-                    logits, concept_targets
-                )
-            concept_loss = concept_loss / self.n_heads
+        if self.num_concepts > 0 and concepts.numel() > 0:
+            concept_targets = concepts.float() / 2.0
+            if len(outputs["head_logits"]) > 0:
+                for logits in outputs["head_logits"]:
+                    # Ensure shapes match
+                    if logits.shape == concept_targets.shape:
+                        concept_loss = concept_loss + F.binary_cross_entropy_with_logits(
+                            logits, concept_targets
+                        )
+                concept_loss = concept_loss / self.n_heads
         
         # 3. Aleatoric loss: predict P(unknown) per concept
         aleatoric_loss = torch.tensor(0.0, device=device)
@@ -581,10 +870,14 @@ def train_epoch(
             epoch_losses[k] += v
         n_batches += 1
         
+        # Handle disagreement/ambiguity display (may be empty for datasets without concepts)
+        disagree_val = outputs.get('label_disagreement', outputs['disagreement']).mean() if outputs.get('label_disagreement') is not None or outputs['disagreement'].numel() > 0 else 0.0
+        ambig_val = outputs['ambiguity'].mean() if outputs['ambiguity'].numel() > 0 else 0.0
+        
         pbar.set_postfix({
             "loss": f"{loss_dict['total']:.4f}",
-            "disagree": f"{outputs['disagreement'].mean():.4f}",
-            "ambig": f"{outputs['ambiguity'].mean():.4f}",
+            "disagree": f"{disagree_val:.4f}",
+            "ambig": f"{ambig_val:.4f}",
         })
     
     return {k: v / n_batches for k, v in epoch_losses.items()}
@@ -632,9 +925,27 @@ def evaluate(
         
         all_preds.extend(preds.cpu().numpy())
         all_labels.extend(labels.cpu().numpy())
-        all_disagreement.append(outputs["disagreement"].mean(dim=-1).cpu().numpy())
-        all_ambiguity.append(outputs["ambiguity"].mean(dim=-1).cpu().numpy())
-        all_credal_width.append(outputs["credal_width"].mean(dim=-1).cpu().numpy())
+        
+        # Handle disagreement: use label-level for datasets without concepts
+        if "label_disagreement" in outputs:
+            # Dataset without concepts: use label-level disagreement
+            all_disagreement.append(outputs["label_disagreement"].cpu().numpy())
+        else:
+            # Dataset with concepts: use concept-level disagreement
+            all_disagreement.append(outputs["disagreement"].mean(dim=-1).cpu().numpy())
+        
+        # Ambiguity: for datasets without concepts, it's empty, so use zeros
+        if outputs["ambiguity"].numel() > 0:
+            all_ambiguity.append(outputs["ambiguity"].mean(dim=-1).cpu().numpy())
+        else:
+            all_ambiguity.append(np.zeros(len(preds)))
+        
+        # Credal width: for datasets without concepts, it's empty, so use zeros
+        if outputs["credal_width"].numel() > 0:
+            all_credal_width.append(outputs["credal_width"].mean(dim=-1).cpu().numpy())
+        else:
+            all_credal_width.append(np.zeros(len(preds)))
+        
         all_annotator_var.extend(is_unknown_mean)
     
     # Convert
@@ -731,10 +1042,7 @@ def analyze_test_set(model, encoder, test_loader, device, model_type, output_dir
             attention_mask = batch['attention_mask'].to(device)
             labels = batch['labels'].to(device)
             
-            # Encode
-            hidden_states = encoder(input_ids, attention_mask=attention_mask).last_hidden_state
-            
-            # Forward
+            hidden_states = get_hidden_states(encoder, input_ids, attention_mask, model_type)
             outputs = model(hidden_states, attention_mask)
             
             # Store
@@ -1413,6 +1721,12 @@ def main():
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--max_length", type=int, default=128)
     parser.add_argument("--n_heads", type=int, default=5)
+    parser.add_argument("--dropout_min", type=float, default=0.05,
+                       help="Minimum dropout rate for head configuration")
+    parser.add_argument("--dropout_max", type=float, default=0.30,
+                       help="Maximum dropout rate for head configuration")
+    parser.add_argument("--no_pooling_diversity", action="store_true",
+                       help="Disable pooling diversity (use only CLS pooling)")
     
     # Training
     parser.add_argument("--epochs", type=int, default=50)
@@ -1447,6 +1761,9 @@ def main():
         batch_size=args.batch_size,
         max_length=args.max_length,
         n_heads=args.n_heads,
+        dropout_min=args.dropout_min,
+        dropout_max=args.dropout_max,
+        use_pooling_diversity=not args.no_pooling_diversity,
         epochs=args.epochs,
         lr=args.lr,
         output_dir=args.output_dir,

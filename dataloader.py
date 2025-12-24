@@ -127,14 +127,6 @@ Yelp Review Full:
 
   - Splits: train, test
 
-AG News:
-
-  - text: str
-
-  - label: int (0=World, 1=Sports, 2=Business, 3=Sci/Tech)
-
-  - Splits: train, test
-
 """
 
 import numpy as np
@@ -322,10 +314,10 @@ DATASET_INFO = {
     
     "tid8": {
         "hf_path": "MichiganNLP/TID-8",
-        "hf_name": None,
+        "hf_name": "commitmentbank-ann",  # TID-8 requires a config name
         "train_split": "train",
-        "val_split": "validation",
-        "test_split": "test",
+        "val_split": "test[:50%]",  # Split test: first 50% for validation
+        "test_split": "test[50%:]",  # Second 50% for test
         "text_field": ["premise", "hypothesis"],
         "label_field": "label",
         "num_classes": 3,
@@ -333,24 +325,6 @@ DATASET_INFO = {
         "has_multi_annotator": True,
         "task": "nli",
         "class_names": ["entailment", "neutral", "contradiction"],
-    },
-    
-    # =========================================================================
-    # TOPIC CLASSIFICATION
-    # =========================================================================
-    "ag_news": {
-        "hf_path": "ag_news",
-        "hf_name": None,
-        "train_split": "train",
-        "val_split": "test[:5000]",
-        "test_split": "test[5000:]",
-        "text_field": "text",
-        "label_field": "label",
-        "num_classes": 4,
-        "has_concepts": False,
-        "has_multi_annotator": False,
-        "task": "topic",
-        "class_names": ["world", "sports", "business", "sci_tech"],
     },
 }
 
@@ -418,7 +392,8 @@ class CredenceDataset(Dataset):
         hf_name = info.get("hf_name")
         try:
             if hf_name:
-                ds = hf_load_dataset(info["hf_path"], hf_name, split=split_name, trust_remote_code=True)
+                # When hf_name is provided, pass it as the 'name' parameter
+                ds = hf_load_dataset(info["hf_path"], name=hf_name, split=split_name, trust_remote_code=True)
             else:
                 ds = hf_load_dataset(info["hf_path"], split=split_name, trust_remote_code=True)
         except Exception as e:
@@ -432,7 +407,7 @@ class CredenceDataset(Dataset):
             "civil_comments": self._load_civil_comments,
             "goemotions": self._load_goemotions,
             "chaosnli": self._load_nli,
-            "tid8": self._load_nli,
+            "tid8": self._load_tid8,
         }
         
         loader = loader_map.get(self.dataset_name, self._load_generic)
@@ -686,7 +661,7 @@ class CredenceDataset(Dataset):
     
     def _load_nli(self, ds):
         """
-        Load NLI dataset (ChaosNLI/TID-8).
+        Load NLI dataset (ChaosNLI).
         
         Fields:
           - premise: str
@@ -713,6 +688,52 @@ class CredenceDataset(Dataset):
                 "is_unknown": np.array([], dtype=np.float32),
             })
     
+    def _load_tid8(self, ds):
+        """
+        Load TID-8 dataset (MichiganNLP/TID-8).
+        
+        Fields:
+          - Context: str (premise)
+          - Target: str (hypothesis)
+          - answer_label: int (0, 1, 2, 3, -3, -1, -2)
+          - question: str (Context</s>Target</s>Prompt format)
+        """
+        for sample in ds:
+            # TID-8 uses Context and Target instead of premise/hypothesis
+            premise = sample.get("Context", "")
+            hypothesis = sample.get("Target", "")
+            
+            # If Context/Target not available, try parsing from question field
+            if not premise or not hypothesis:
+                question = sample.get("question", "")
+                if question and "</s>" in question:
+                    parts = question.split("</s>")
+                    if len(parts) >= 2:
+                        premise = parts[0].strip()
+                        hypothesis = parts[1].strip()
+            
+            if not premise or not hypothesis:
+                continue
+            
+            # Get label - TID-8 uses answer_label
+            label = sample.get("answer_label", -1)
+            
+            # TID-8 labels: 0, 1, 2, 3, -3, -1, -2
+            # Map to standard NLI labels: 0=entailment, 1=neutral, 2=contradiction
+            # Based on TID-8 documentation: 0=entailment, 1=neutral, 2=contradiction, 3=unknown
+            # Negative values might be invalid/unknown, skip them
+            if label < 0 or label > 2:
+                continue  # Skip invalid labels (3, -3, -1, -2)
+            
+            text = f"{premise} [SEP] {hypothesis}"
+            
+            self.examples.append({
+                "text": text,
+                "label": int(label),  # Already in correct format (0, 1, 2)
+                "concepts": np.array([], dtype=np.int64),
+                "is_unknown": np.array([], dtype=np.float32),
+            })
+    
     def _load_generic(self, ds):
         """
         Generic loader for simple classification datasets.
@@ -722,7 +743,6 @@ class CredenceDataset(Dataset):
           - SST-5: text, label
           - IMDB: text, label
           - Yelp: text, label
-          - AG News: text, label
         """
         text_field = self.info["text_field"]
         label_field = self.info["label_field"]
@@ -876,6 +896,18 @@ def load_dataset_splits(
     if "unknown_rates" in metadata:
         rates_str = ", ".join(f"{k}:{v:.2f}" for k, v in list(metadata["unknown_rates"].items())[:4])
         print(f"    Unknown rates: {rates_str}")
+    
+    # Check for empty datasets
+    if len(train_ds) == 0 and len(val_ds) == 0 and len(test_ds) == 0:
+        raise ValueError(
+            f"Dataset '{dataset_name}' failed to load: all splits are empty. "
+            f"This usually means the dataset doesn't exist on HuggingFace Hub or cannot be accessed. "
+            f"Please check if the dataset name '{info.get('hf_path', dataset_name)}' is correct."
+        )
+    if len(train_ds) == 0:
+        raise ValueError(
+            f"Dataset '{dataset_name}' has no training examples. Cannot proceed with training."
+        )
     
     # Create loaders
     train_loader = DataLoader(
