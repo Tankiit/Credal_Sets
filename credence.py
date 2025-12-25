@@ -8,7 +8,6 @@ from collections import defaultdict
 import sys
 import logging
 
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -24,9 +23,16 @@ import matplotlib.pyplot as plt
 try:
     from peft import LoraConfig, get_peft_model, TaskType, prepare_model_for_kbit_training
     PEFT_AVAILABLE = True
-except ImportError:
+except (ImportError, ModuleNotFoundError) as e:
     PEFT_AVAILABLE = False
-    print("Note: peft not installed. LLM training requires: pip install peft bitsandbytes")
+    error_msg = str(e)
+    if "modeling_layers" in error_msg or "transformers" in error_msg.lower():
+        print(f"Note: peft import failed due to version compatibility issue: {e}")
+        print("This is likely a version mismatch between peft and transformers.")
+        print("Try: pip install --upgrade peft transformers")
+    else:
+        print(f"Note: peft import failed: {e}")
+        print("LLM training requires: pip install peft bitsandbytes")
 
 # Your dataloader
 from dataloader import (
@@ -249,6 +255,77 @@ MODEL_REGISTRY = {
 # HELPER: Print available models
 # =============================================================================
 
+def expand_encoder_name(encoder_name: str) -> str:
+    """Expand short encoder names to full HuggingFace model names.
+    
+    Maps short names like 'mistral', 'phi-3', 'roberta' to full model identifiers.
+    If the name is already a full model name or not recognized, returns as-is.
+    """
+    # Mapping of short names to full model names (matches run_all_datasets.sh logic)
+    name_mapping = {
+        # Encoder models
+        "roberta": "roberta-base",
+        "roberta-base": "roberta-base",
+        "roberta-large": "roberta-large",
+        "deberta": "microsoft/deberta-v3-base",
+        "deberta-v3": "microsoft/deberta-v3-base",
+        "deberta-v3-base": "microsoft/deberta-v3-base",
+        "deberta-v3-large": "microsoft/deberta-v3-large",
+        "distilbert": "distilbert-base-uncased",
+        "distilbert-base": "distilbert-base-uncased",
+        "modernbert": "answerdotai/ModernBERT-base",
+        "modernbert-base": "answerdotai/ModernBERT-base",
+        "modernbert-large": "answerdotai/ModernBERT-large",
+        
+        # LLM models
+        "phi-3": "microsoft/phi-3-mini-4k-instruct",
+        "phi-3-mini": "microsoft/phi-3-mini-4k-instruct",
+        "phi-3.5": "microsoft/Phi-3.5-mini-instruct",
+        "phi-3.5-mini": "microsoft/Phi-3.5-mini-instruct",
+        "mistral": "mistralai/Mistral-7B-v0.1",
+        "mistral-7b": "mistralai/Mistral-7B-v0.1",
+        "mistral-instruct": "mistralai/Mistral-7B-Instruct-v0.3",
+        "llama-3.1": "meta-llama/Llama-3.1-8B",
+        "llama-3.1-8b": "meta-llama/Llama-3.1-8B",
+        "llama-3.1-instruct": "meta-llama/Llama-3.1-8B-Instruct",
+        "llama-3.2-1b": "meta-llama/Llama-3.2-1B",
+        "llama-3.2-3b": "meta-llama/Llama-3.2-3B",
+        "llama-3.2-3b-instruct": "meta-llama/Llama-3.2-3B-Instruct",
+        "qwen-0.5b": "Qwen/Qwen2.5-0.5B",
+        "qwen2.5-0.5b": "Qwen/Qwen2.5-0.5B",
+        "qwen-1.5b": "Qwen/Qwen2.5-1.5B",
+        "qwen2.5-1.5b": "Qwen/Qwen2.5-1.5B",
+        "qwen-3b": "Qwen/Qwen2.5-3B",
+        "qwen2.5-3b": "Qwen/Qwen2.5-3B",
+        "qwen-7b": "Qwen/Qwen2.5-7B",
+        "qwen2.5-7b": "Qwen/Qwen2.5-7B",
+        "gemma-2b": "google/gemma-2-2b",
+        "gemma-2-2b": "google/gemma-2-2b",
+        "gemma-9b": "google/gemma-2-9b",
+        "gemma-2-9b": "google/gemma-2-9b",
+    }
+    
+    # Check if it's a short name we recognize
+    if encoder_name.lower() in name_mapping:
+        return name_mapping[encoder_name.lower()]
+    
+    # If it's already in MODEL_REGISTRY, return as-is
+    if encoder_name in MODEL_REGISTRY:
+        return encoder_name
+    
+    # Auto-detect LLM models by checking if name contains LLM indicators
+    encoder_lower = encoder_name.lower()
+    if any(indicator in encoder_lower for indicator in [
+        "phi", "mistral", "llama", "qwen", "gemma", 
+        "meta-llama", "microsoft/phi", "mistralai", "qwen", "google/gemma"
+    ]):
+        # Assume it's an LLM model name, return as-is (might be a full name)
+        return encoder_name
+    
+    # For unrecognized names, return as-is (might be a valid full model name)
+    return encoder_name
+
+
 def print_available_models():
     """Print all available models organized by type and release date."""
     
@@ -297,6 +374,7 @@ class ExperimentConfig:
     lora_r: int = 16
     lora_alpha: int = 32
     lora_dropout: float = 0.1
+    freeze_llm: bool = True  # If True, don't use LoRA, just frozen features (default True for speed)
     
     # Training
     epochs: int = 50
@@ -360,7 +438,7 @@ def load_encoder_model(model_name: str, device: str, freeze: bool = True):
             encoder = AutoModel.from_pretrained(
                 model_name,
                 attn_implementation="flash_attention_2",
-                torch_dtype=torch.float16,  # FA2 requires fp16/bf16
+                dtype=torch.float16,  # FA2 requires fp16/bf16
             )
             print("  ModernBERT loaded with Flash Attention 2")
         except Exception as e:
@@ -401,12 +479,22 @@ def load_encoder_model(model_name: str, device: str, freeze: bool = True):
 
 
 def load_llm_model(model_name: str, device: str, config: ExperimentConfig):
-    """Load LLM with LoRA for parameter-efficient fine-tuning."""
+    """Load LLM with LoRA for parameter-efficient fine-tuning using standard HuggingFace/PEFT."""
     print(f"Loading LLM: {model_name}")
     
     if not PEFT_AVAILABLE:
-        raise ImportError("peft is required for LLM training. Install with: pip install peft bitsandbytes")
+        raise ImportError(
+            "peft is required for LLM training but could not be imported. "
+            "This may be due to a version compatibility issue with transformers. "
+            "Try: pip install --upgrade peft transformers bitsandbytes"
+        )
     
+    # Get target modules from registry
+    model_info = MODEL_REGISTRY.get(model_name, {})
+    target_modules = model_info.get("target_modules", ["q_proj", "v_proj"])
+    
+    # Standard PEFT implementation
+    print("Using standard HuggingFace/PEFT implementation...")
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -416,7 +504,7 @@ def load_llm_model(model_name: str, device: str, config: ExperimentConfig):
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_compute_dtype=torch.bfloat16,
         bnb_4bit_use_double_quant=True,
     )
     
@@ -425,15 +513,11 @@ def load_llm_model(model_name: str, device: str, config: ExperimentConfig):
         quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
-        torch_dtype=torch.float16,
+        dtype=torch.float16,
     )
     
     # Prepare for k-bit training
     model = prepare_model_for_kbit_training(model)
-    
-    # Get target modules from registry
-    model_info = MODEL_REGISTRY.get(model_name, {})
-    target_modules = model_info.get("target_modules", ["q_proj", "v_proj"])
     
     # Apply LoRA
     lora_config = LoraConfig(
@@ -454,24 +538,62 @@ def load_llm_model(model_name: str, device: str, config: ExperimentConfig):
     return model, tokenizer, hidden_size, "llm"
 
 
+def load_llm_model_frozen(model_name: str, device: str, config: ExperimentConfig):
+    """Load LLM as frozen feature extractor - no LoRA, no backprop through LLM."""
+    print(f"Loading LLM (frozen): {model_name}")
+    
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"
+    
+    # 4-bit quantization for memory efficiency
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_use_double_quant=True,
+    )
+    
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        quantization_config=bnb_config,
+        device_map="auto",
+        trust_remote_code=True,
+        dtype=torch.bfloat16,
+    )
+    
+    # FREEZE - no gradients needed
+    model.requires_grad_(False)
+    model.eval()
+    
+    print(f"  LLM frozen - 0 trainable params in encoder")
+    print(f"  Hidden size: {model.config.hidden_size}")
+    
+    return model, tokenizer, model.config.hidden_size, "llm_frozen"
+
+
 def load_model(config: ExperimentConfig, device: str):
     """Load model based on type (encoder or LLM)."""
     model_type = config.get_model_type()
     
-    if model_type == "llm" or config.use_lora:
-        return load_llm_model(config.encoder_name, device, config)
+    if model_type == "llm":
+        if config.use_lora and not config.freeze_llm:
+            return load_llm_model(config.encoder_name, device, config)  # LoRA (slow)
+        else:
+            return load_llm_model_frozen(config.encoder_name, device, config)  # Frozen (fast)
     else:
         return load_encoder_model(config.encoder_name, device, config.freeze_encoder)
 
 
 def get_hidden_states(encoder, input_ids, attention_mask, model_type: str):
-    """Get hidden states from encoder or LLM."""
+    """Get hidden states - keep in native dtype."""
     if model_type == "encoder":
         outputs = encoder(input_ids, attention_mask=attention_mask)
         return outputs.last_hidden_state
-    else:  # LLM
+    else:  # LLM or llm_frozen
         outputs = encoder(input_ids, attention_mask=attention_mask, output_hidden_states=True)
-        return outputs.hidden_states[-1]  # Last layer
+        return outputs.hidden_states[-1]  # Keep in bfloat16/float16!
 
 class ConceptHead(nn.Module):
     """A single concept prediction head."""
@@ -481,13 +603,6 @@ class ConceptHead(nn.Module):
         self.dropout = nn.Dropout(config.dropout_rate)
         self.fc1 = nn.Linear(input_dim, config.hidden_dim)
         self.fc2 = nn.Linear(config.hidden_dim, n_concepts)
-
-        self.net=nn.Sequential(
-            self.dropout,
-            self.fc1,
-            nn.ReLU(),
-            self.fc2
-        )
     def pool(self, hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         if self.config.pooling == "cls":
             return hidden_states[:, 0, :]
@@ -503,8 +618,15 @@ class ConceptHead(nn.Module):
     
     def forward(self, hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         x = self.pool(hidden_states, attention_mask)
-        logits = self.net(x)
-        probs = torch.sigmoid(logits)
+        x = self.dropout(x)
+        x = F.relu(self.fc1(x))
+        logits = self.fc2(x)
+        
+        # Clamp logits to prevent extreme values in fp16
+        logits = torch.clamp(logits, min=-15.0, max=15.0)
+        
+        # Only convert to float32 for sigmoid (numerical stability), then convert back
+        probs = torch.sigmoid(logits.float()).to(logits.dtype)
         return logits, probs
 
     
@@ -539,7 +661,12 @@ class AleatoricHead(nn.Module):
     def forward(self, hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         pooled = self.pool(hidden_states, attention_mask)
         logits = self.net(pooled)
-        return torch.sigmoid(logits)  # P(unknown) in [0, 1]   
+        
+        # Clamp logits to prevent extreme values in fp16
+        logits = torch.clamp(logits, min=-15.0, max=15.0)
+        
+        # Only convert to float32 for sigmoid (numerical stability), then convert back
+        return torch.sigmoid(logits.float()).to(logits.dtype)  # P(unknown) in [0, 1]   
 
 
 class CredalClassifier(nn.Module):
@@ -548,11 +675,17 @@ class CredalClassifier(nn.Module):
     """
     def __init__(self, num_concepts: int, num_classes: int):
         super().__init__()
-        self.W = nn.Parameter(torch.randn(num_classes, num_concepts) * 0.1)
+        # Use smaller initialization for fp16 stability
+        self.W = nn.Parameter(torch.randn(num_classes, num_concepts) * 0.05)
         self.b = nn.Parameter(torch.zeros(num_classes))
     
     def forward(self, concept_probs: torch.Tensor) -> torch.Tensor:
-        return F.linear(concept_probs, self.W, self.b)
+        # Clamp concept_probs to prevent extreme values in fp16
+        concept_probs = torch.clamp(concept_probs, min=0.0, max=1.0)
+        logits = F.linear(concept_probs, self.W, self.b)
+        # Clamp logits to prevent overflow
+        logits = torch.clamp(logits, min=-15.0, max=15.0)
+        return logits
     
     def forward_credal(self, p_lower: torch.Tensor, p_upper: torch.Tensor):
         W_pos = torch.clamp(self.W, min=0)
@@ -585,7 +718,7 @@ class CREDENCE(nn.Module):
         num_classes: int,
         head_configs: List[HeadConfig],
         aleatoric_mode: str = "supervised",  # "supervised" | "entropy" | "none"
-        model_type: str = "encoder",  # "encoder" | "llm"
+        model_type: str = "encoder",  # "encoder" | "llm" | "llm_frozen"
     ):
         super().__init__()
         
@@ -597,7 +730,7 @@ class CREDENCE(nn.Module):
         self.model_type = model_type
         
         # Adjust pooling for LLMs (use last token instead of CLS)
-        if model_type == "llm":
+        if model_type in ["llm", "llm_frozen"]:
             for cfg in head_configs:
                 cfg.pooling = "last"
         
@@ -608,7 +741,7 @@ class CREDENCE(nn.Module):
         ])
         
         # Aleatoric head (only if supervised mode)
-        pooling = "last" if model_type == "llm" else "cls"
+        pooling = "last" if model_type in ["llm", "llm_frozen"] else "cls"
         if aleatoric_mode == "supervised":
             self.aleatoric_head = AleatoricHead(input_dim, num_concepts, pooling=pooling)
         else:
@@ -639,17 +772,49 @@ class CREDENCE(nn.Module):
               f"model_type={self.model_type}, {total:,} params")
     
     def forward(self, hidden_states: torch.Tensor, attention_mask: torch.Tensor):
+        # Convert hidden_states to match head dtype (for frozen LLMs with FP32 heads)
+        # This handles the case where encoder outputs FP16 but heads are FP32
+        if len(self.heads) > 0:
+            head_dtype = next(self.heads[0].parameters()).dtype
+            if hidden_states.dtype != head_dtype:
+                hidden_states = hidden_states.to(dtype=head_dtype)
+        elif self.aleatoric_head is not None:
+            # If no heads but aleatoric_head exists, use its dtype
+            head_dtype = next(self.aleatoric_head.parameters()).dtype
+            if hidden_states.dtype != head_dtype:
+                hidden_states = hidden_states.to(dtype=head_dtype)
+        
         # Get predictions from all heads
         all_logits = []
         all_probs = []
         
         for head in self.heads:
             logits, probs = head(hidden_states, attention_mask)
+            
+            # Check for NaN/Inf in head outputs and replace
+            if torch.any(torch.isnan(logits)) or torch.any(torch.isinf(logits)):
+                logits = torch.where(torch.isnan(logits) | torch.isinf(logits),
+                                    torch.zeros_like(logits),
+                                    logits)
+            if torch.any(torch.isnan(probs)) or torch.any(torch.isinf(probs)):
+                probs = torch.where(torch.isnan(probs) | torch.isinf(probs),
+                                   torch.zeros_like(probs),
+                                   probs)
+            
+            # Clamp probs to valid range
+            probs = torch.clamp(probs, min=0.0, max=1.0)
+            
             all_logits.append(logits)
             all_probs.append(probs)
         
         # Stack: [batch, num_concepts, n_heads]
         probs_stack = torch.stack(all_probs, dim=-1)
+        
+        # Final check for NaN/Inf in stacked probs
+        if torch.any(torch.isnan(probs_stack)) or torch.any(torch.isinf(probs_stack)):
+            probs_stack = torch.where(torch.isnan(probs_stack) | torch.isinf(probs_stack),
+                                     torch.zeros_like(probs_stack),
+                                     probs_stack)
         
         # Handle case when num_concepts = 0 (datasets without concepts)
         batch_size = hidden_states.shape[0]
@@ -667,14 +832,36 @@ class CREDENCE(nn.Module):
             head_label_logits = []
             for pooled in head_pooled:
                 logit = self.direct_classifier(pooled)  # [batch, num_classes]
+                
+                # Check for NaN/Inf and clamp to prevent overflow
+                if torch.any(torch.isnan(logit)) or torch.any(torch.isinf(logit)):
+                    logit = torch.where(torch.isnan(logit) | torch.isinf(logit),
+                                       torch.zeros_like(logit),
+                                       logit)
+                # Clamp logits to prevent overflow in softmax with fp16
+                logit = torch.clamp(logit, min=-15.0, max=15.0)
                 head_label_logits.append(logit)
             
             # Stack: [batch, num_classes, n_heads]
             label_logits_stack = torch.stack(head_label_logits, dim=-1)
             label_probs_stack = torch.softmax(label_logits_stack, dim=1)
             
+            # Check for NaN/Inf in softmax output
+            if torch.any(torch.isnan(label_probs_stack)) or torch.any(torch.isinf(label_probs_stack)):
+                # Replace with uniform distribution
+                uniform_probs = torch.ones_like(label_probs_stack) / label_probs_stack.shape[1]
+                label_probs_stack = torch.where(torch.isnan(label_probs_stack) | torch.isinf(label_probs_stack),
+                                               uniform_probs,
+                                               label_probs_stack)
+            
             # Aggregate: mean across heads
             logits = label_logits_stack.mean(dim=-1)  # [batch, num_classes]
+            
+            # Final check for NaN/Inf in logits
+            if torch.any(torch.isnan(logits)) or torch.any(torch.isinf(logits)):
+                logits = torch.where(torch.isnan(logits) | torch.isinf(logits),
+                                    torch.zeros_like(logits),
+                                    logits)
             
             # Credal bounds on label probabilities
             label_prob_lower = label_probs_stack.min(dim=-1).values  # [batch, num_classes]
@@ -729,7 +916,20 @@ class CREDENCE(nn.Module):
                                           disagreement)
             
             # Classification
+            # Check for NaN/Inf in concept_probs before classification
+            if torch.any(torch.isnan(concept_probs)) or torch.any(torch.isinf(concept_probs)):
+                concept_probs = torch.where(torch.isnan(concept_probs) | torch.isinf(concept_probs),
+                                          torch.zeros_like(concept_probs),
+                                          concept_probs)
+            
             logits = self.classifier(concept_probs)
+            
+            # Check for NaN/Inf in logits
+            if torch.any(torch.isnan(logits)) or torch.any(torch.isinf(logits)):
+                logits = torch.where(torch.isnan(logits) | torch.isinf(logits),
+                                    torch.zeros_like(logits),
+                                    logits)
+            
             credal_out = self.classifier.forward_credal(credal_lower, credal_upper)
         
         # Aleatoric: predicted P(unknown) per concept
@@ -737,6 +937,10 @@ class CREDENCE(nn.Module):
             # Learned prediction of P(unknown) - true aleatoric signal
             if self.num_concepts > 0:
                 ambiguity = self.aleatoric_head(hidden_states, attention_mask)
+                # Clamp to [eps, 1-eps] to handle float16 numerical issues
+                # Use small epsilon to avoid exact boundaries that might cause issues
+                eps = 1e-6
+                ambiguity = torch.clamp(ambiguity, min=eps, max=1.0 - eps)
             else:
                 ambiguity = torch.zeros(batch_size, 0, device=hidden_states.device)
         elif self.aleatoric_mode == "entropy":
@@ -750,6 +954,8 @@ class CREDENCE(nn.Module):
                 ambiguity = torch.where(torch.isnan(ambiguity), 
                                        torch.zeros_like(ambiguity), 
                                        ambiguity)
+                # Clamp to [0, 1] (entropy should already be normalized, but be safe)
+                ambiguity = torch.clamp(ambiguity, min=0.0, max=1.0)
             else:
                 ambiguity = torch.zeros(batch_size, 0, device=hidden_states.device)
         else:
@@ -787,45 +993,86 @@ class CREDENCE(nn.Module):
     ):
         device = labels.device
         
+        # Get output dtype to match targets (important for float16 models)
+        output_dtype = outputs["logits"].dtype
+        
         # 1. Task loss
-        task_loss = F.cross_entropy(outputs["logits"], labels)
+        # Check for NaN/Inf in logits before computing loss
+        logits = outputs["logits"]
+        if torch.any(torch.isnan(logits)) or torch.any(torch.isinf(logits)):
+            print(f"Warning: NaN/Inf detected in logits, replacing with zeros")
+            logits = torch.where(torch.isnan(logits) | torch.isinf(logits),
+                                torch.zeros_like(logits),
+                                logits)
+        task_loss = F.cross_entropy(logits, labels)
         
         # 2. Concept loss (BCE per head, averaged)
         # Ternary -> soft targets: 0->0.0, 1->0.5, 2->1.0
-        concept_loss = torch.tensor(0.0, device=device)
+        concept_loss = torch.tensor(0.0, device=device, dtype=output_dtype)
         if self.num_concepts > 0 and concepts.numel() > 0:
-            concept_targets = concepts.float() / 2.0
+            concept_targets = (concepts.float() / 2.0).to(dtype=output_dtype)
+            # Clamp to [0, 1] for safety (should already be in range, but float16 can have numerical issues)
+            concept_targets = torch.clamp(concept_targets, min=0.0, max=1.0)
             if len(outputs["head_logits"]) > 0:
-                for logits in outputs["head_logits"]:
+                valid_heads = 0
+                for head_logits in outputs["head_logits"]:
                     # Ensure shapes match
-                    if logits.shape == concept_targets.shape:
+                    if head_logits.shape == concept_targets.shape:
+                        # Check for NaN/Inf in head_logits
+                        if torch.any(torch.isnan(head_logits)) or torch.any(torch.isinf(head_logits)):
+                            continue  # Skip this head if it has NaN/Inf
                         concept_loss = concept_loss + F.binary_cross_entropy_with_logits(
-                            logits, concept_targets
+                            head_logits, concept_targets
                         )
-                concept_loss = concept_loss / self.n_heads
+                        valid_heads += 1
+                if valid_heads > 0:
+                    concept_loss = concept_loss / valid_heads
+                else:
+                    concept_loss = torch.tensor(0.0, device=device, dtype=output_dtype)
         
         # 3. Aleatoric loss: predict P(unknown) per concept
-        aleatoric_loss = torch.tensor(0.0, device=device)
+        aleatoric_loss = torch.tensor(0.0, device=device, dtype=output_dtype)
         if self.aleatoric_mode == "supervised" and is_unknown is not None and is_unknown.numel() > 0:
             # Ensure shapes match
             ambiguity = outputs["ambiguity"]
             if ambiguity.shape == is_unknown.shape:
+                # Handle NaN/Inf and clamp to [eps, 1-eps] to avoid float16 numerical issues
+                eps = 1e-6
+                ambiguity = torch.where(torch.isnan(ambiguity) | torch.isinf(ambiguity),
+                                       torch.full_like(ambiguity, 0.5),
+                                       ambiguity)
+                ambiguity = torch.clamp(ambiguity, min=eps, max=1.0 - eps)
+                is_unknown_target = is_unknown.to(device=device, dtype=output_dtype)
+                is_unknown_target = torch.clamp(is_unknown_target, min=0.0, max=1.0)
                 aleatoric_loss = F.binary_cross_entropy(
                     ambiguity, 
-                    is_unknown.to(device),
+                    is_unknown_target,
                     reduction='mean'
                 )
+        
+        # Check for NaN/Inf in losses and replace with finite values
+        if torch.isnan(task_loss) or torch.isinf(task_loss):
+            task_loss = torch.tensor(0.0, device=device, dtype=output_dtype)
+        if torch.isnan(concept_loss) or torch.isinf(concept_loss):
+            concept_loss = torch.tensor(0.0, device=device, dtype=output_dtype)
+        if torch.isnan(aleatoric_loss) or torch.isinf(aleatoric_loss):
+            aleatoric_loss = torch.tensor(0.0, device=device, dtype=output_dtype)
         
         # Total
         total_loss = (task_loss + 
                      concept_weight * concept_loss + 
                      aleatoric_weight * aleatoric_loss)
         
+        # Final check for NaN/Inf in total loss
+        if torch.isnan(total_loss) or torch.isinf(total_loss):
+            print(f"Warning: NaN/Inf detected in total_loss. task={task_loss}, concept={concept_loss}, aleatoric={aleatoric_loss}")
+            total_loss = torch.tensor(0.0, device=device, dtype=output_dtype)
+        
         return total_loss, {
-            "total": total_loss.item(),
-            "task": task_loss.item(),
-            "concept": concept_loss.item(),
-            "aleatoric": aleatoric_loss.item(),
+            "total": total_loss.item() if torch.isfinite(total_loss) else 0.0,
+            "task": task_loss.item() if torch.isfinite(task_loss) else 0.0,
+            "concept": concept_loss.item() if torch.isfinite(concept_loss) else 0.0,
+            "aleatoric": aleatoric_loss.item() if torch.isfinite(aleatoric_loss) else 0.0,
         }
 
 
@@ -838,15 +1085,22 @@ def train_epoch(
     device: str,
     model_type: str,
     profiler: Optional[torch.profiler.profiler] = None,
+    scaler: Optional[torch.cuda.amp.GradScaler] = None,
 ):
     model.train()
-    if model_type == "encoder":
+    
+    # Frozen LLM never trains
+    if model_type in ["encoder", "llm_frozen"]:
         encoder.eval()
     else:
-        encoder.train()  # LoRA is trainable
+        encoder.train()
     
     epoch_losses = defaultdict(float)
     n_batches = 0
+    
+    # Determine if we should use mixed precision
+    # AMP is fine for LLMs (encoder is bfloat16/float16, heads are FP32 for frozen)
+    use_amp = (device == "cuda" and model_type in ["llm", "llm_frozen"])
     
     pbar = tqdm(train_loader, desc="Training")
     for batch_idx, batch in enumerate(pbar):
@@ -854,45 +1108,62 @@ def train_epoch(
         attention_mask = batch['attention_mask'].to(device)
         labels = batch['labels'].to(device)
         concepts = batch['concept_labels'].to(device)
-        
         is_unknown = batch['is_unknown'].to(device)
         
-        # Encode
-        if model_type == "encoder":
-            with torch.no_grad():
+        optimizer.zero_grad()
+        
+        # === MIXED PRECISION FORWARD PASS ===
+        with torch.amp.autocast('cuda', enabled=use_amp, dtype=torch.float16):
+            # Always no_grad for frozen models
+            if model_type in ["encoder", "llm_frozen"]:
+                with torch.no_grad():
+                    hidden_states = get_hidden_states(encoder, input_ids, attention_mask, model_type)
+            else:
                 hidden_states = get_hidden_states(encoder, input_ids, attention_mask, model_type)
-        else:
-            hidden_states = get_hidden_states(encoder, input_ids, attention_mask, model_type)
+            
+            # Forward pass through CREDENCE (fp16)
+            outputs = model(hidden_states, attention_mask)
         
-        # Forward pass
-        outputs = model(hidden_states, attention_mask)
+        # === LOSS IN FP32 (outside autocast) ===
+        # Convert outputs to fp32 for stable loss computation
+        outputs_fp32 = {k: v.float() if torch.is_tensor(v) and v.is_floating_point() else v 
+                        for k, v in outputs.items()}
         
-        # Loss
         loss, loss_dict = model.compute_loss(
-            outputs, labels, concepts, is_unknown,
+            outputs_fp32, labels, concepts, is_unknown,
             concept_weight=config.concept_weight,
             aleatoric_weight=config.aleatoric_weight,
         )
         
-        # Backward pass
-        optimizer.zero_grad()
-        loss.backward()
+        # === BACKWARD WITH GRADIENT SCALING ===
+        if scaler is not None:
+            scaler.scale(loss).backward()
+            
+            # Unscale before clipping
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            if model_type == "llm":  # Only clip for LoRA training, not frozen
+                torch.nn.utils.clip_grad_norm_(encoder.parameters(), max_norm=1.0)
+            
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            if model_type == "llm":  # Only clip for LoRA training, not frozen
+                torch.nn.utils.clip_grad_norm_(encoder.parameters(), max_norm=1.0)
+            optimizer.step()
         
         # Advance profiler step (handles schedule automatically)
         if profiler is not None:
             profiler.step()
         
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        if model_type == "llm":
-            torch.nn.utils.clip_grad_norm_(encoder.parameters(), max_norm=1.0)
-        optimizer.step()
-        
-        # Track
+        # Track losses
         for k, v in loss_dict.items():
             epoch_losses[k] += v
         n_batches += 1
         
-        # Handle disagreement/ambiguity display (may be empty for datasets without concepts)
+        # Display (handle empty tensors)
         # Get disagreement value, handling NaN cases
         if outputs.get('label_disagreement') is not None:
             disagree_tensor = outputs['label_disagreement']
@@ -1535,6 +1806,12 @@ def run_experiment(config: ExperimentConfig):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
     
+    # Expand short encoder names to full model names (e.g., "mistral" -> "mistralai/Mistral-7B-v0.1")
+    original_name = config.encoder_name
+    config.encoder_name = expand_encoder_name(config.encoder_name)
+    if original_name != config.encoder_name:
+        print(f"Expanded encoder name: {original_name} -> {config.encoder_name}")
+    
     os.makedirs(config.output_dir, exist_ok=True)
     
     # Create DatasetConfig from ExperimentConfig
@@ -1565,7 +1842,7 @@ def run_experiment(config: ExperimentConfig):
     
     # Adjust max_length for LLMs
     model_info = MODEL_REGISTRY.get(config.encoder_name, {})
-    if model_type == "llm":
+    if model_type in ["llm", "llm_frozen"]:
         config.max_length = min(config.max_length, model_info.get("max_length", 256))
         print(f"Using max_length={config.max_length} for LLM")
 
@@ -1578,16 +1855,51 @@ def run_experiment(config: ExperimentConfig):
         model_type=model_type,
     )
     model = model.to(device)
+    
+    # For LLMs with bfloat16/float16, convert heads to float16 only if using LoRA
+    # For frozen LLMs, keep heads in FP32 to avoid gradient scaling issues
+    if model_type in ["llm", "llm_frozen"]:
+        encoder_dtype = next(encoder.parameters()).dtype
+        if model_type == "llm":  # LoRA training
+            if encoder_dtype != torch.float32:
+                model = model.half()  # Convert heads to fp16 for LoRA training
+                print(f"  Encoder dtype: {encoder_dtype}, CREDENCE heads converted to fp16")
+        else:  # llm_frozen
+            print(f"  Encoder dtype: {encoder_dtype}, CREDENCE heads kept in fp32 (frozen LLM)")
 
-    # Optimizer
+    # === ADD: Create GradScaler for LLMs with LoRA ===
+    # Note: Don't use scaler for frozen LLMs - GradScaler doesn't support FP16 gradients
+    # For frozen LLMs, we train only the heads (small), so no need for gradient scaling
+    scaler = None
+    if model_type == "llm" and device == "cuda":
+        scaler = torch.amp.GradScaler('cuda')
+        print("GradScaler enabled for mixed precision training (LoRA)")
+    elif model_type == "llm_frozen":
+        print("GradScaler disabled for frozen LLM (training heads only)")
+    
+    # Optimizer (use fused AdamW for speed)
+    optimizer_kwargs = {
+        "lr": config.lr,
+        "weight_decay": config.weight_decay,
+    }
+    if device == "cuda":
+        try:
+            # Try fused optimizer for speed (available in PyTorch 1.13+)
+            optimizer_kwargs["fused"] = True
+        except TypeError:
+            # Fused not available, use standard
+            pass
+    
     if model_type == "encoder":
-        optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
+        optimizer = torch.optim.AdamW(model.parameters(), **optimizer_kwargs)
+    elif model_type == "llm_frozen":
+        # Frozen LLM: only train CREDENCE heads
+        optimizer = torch.optim.AdamW(model.parameters(), **optimizer_kwargs)
     else:
-        # Include LoRA parameters
+        # LoRA training: include LoRA parameters
         optimizer = torch.optim.AdamW(
             list(model.parameters()) + list(encoder.parameters()),
-            lr=config.lr,
-            weight_decay=config.weight_decay
+            **optimizer_kwargs
         )
     best_val_acc = 0.0
     best_state = None
@@ -1636,7 +1948,10 @@ def run_experiment(config: ExperimentConfig):
         
         # Only profile first epoch if profiler is enabled
         current_profiler = profiler if (config.enable_profiler and epoch == 0) else None
-        train_losses = train_epoch(model, encoder, train_loader, optimizer, config, device, model_type, current_profiler)
+        train_losses = train_epoch(
+            model, encoder, train_loader, optimizer, config, 
+            device, model_type, current_profiler, scaler=scaler
+        )
         val_results = evaluate(model, encoder, val_loader, device, model_type)
         
         # Stop profiler after first epoch
@@ -1755,6 +2070,8 @@ def main():
                        help="Model name (e.g., roberta-base, microsoft/deberta-v3-base)")
     parser.add_argument("--use_lora", action="store_true",
                        help="Use LoRA for LLM fine-tuning")
+    parser.add_argument("--freeze_llm", action="store_true",
+                       help="Freeze LLM (no LoRA), use only for feature extraction")
     parser.add_argument("--lora_r", type=int, default=16)
     parser.add_argument("--lora_alpha", type=int, default=32)
     parser.add_argument("--lora_dropout", type=float, default=0.1)
@@ -1798,6 +2115,7 @@ def main():
     config = ExperimentConfig(
         encoder_name=args.encoder_name,
         use_lora=args.use_lora,
+        freeze_llm=args.freeze_llm,
         lora_r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
