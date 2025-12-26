@@ -14,6 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from scipy import stats
+from scipy.optimize import minimize_scalar
 from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from datasets import load_dataset as hf_load_dataset
@@ -2139,6 +2140,576 @@ def main():
     )
     
     run_experiment(config)
+
+
+# =============================================================================
+# CREDENCE Critical Fixes for ACL 2026
+# =============================================================================
+"""
+This module provides DROP-IN fixes for the identified issues:
+
+1. Calibration (ECE 0.164 → <0.05)
+2. Ensemble averaging (single head beats ensemble)
+3. Error distance analysis for ordinal tasks
+
+Author: Tanmoy
+"""
+
+
+# ============================================================================
+# FIX 1: TEMPERATURE SCALING FOR CALIBRATION
+# ============================================================================
+
+def find_optimal_temperature(
+    logits: np.ndarray,
+    labels: np.ndarray,
+    init_temp: float = 1.0
+) -> Tuple[float, float]:
+    """
+    Find optimal temperature for calibration via grid search + refinement
+    
+    Your ECE: 0.164 → Expected after fix: ~0.03-0.05
+    
+    Args:
+        logits: [N, C] raw logits before softmax
+        labels: [N] ground truth labels
+        
+    Returns:
+        (optimal_temperature, resulting_ece)
+    """
+    
+    def compute_ece_at_temp(temp: float) -> float:
+        scaled_logits = logits / temp
+        probs = softmax_fix(scaled_logits, axis=1)
+        confidences = probs.max(axis=1)
+        predictions = probs.argmax(axis=1)
+        return compute_ece_fix(predictions, confidences, labels)
+    
+    # Grid search
+    temps = np.linspace(0.5, 5.0, 50)
+    eces = [compute_ece_at_temp(t) for t in temps]
+    best_idx = np.argmin(eces)
+    
+    # Refine with scipy
+    result = minimize_scalar(
+        compute_ece_at_temp,
+        bounds=(temps[max(0, best_idx-2)], temps[min(len(temps)-1, best_idx+2)]),
+        method='bounded'
+    )
+    
+    optimal_temp = result.x
+    optimal_ece = compute_ece_at_temp(optimal_temp)
+    
+    return optimal_temp, optimal_ece
+
+
+def softmax_fix(x: np.ndarray, axis: int = -1) -> np.ndarray:
+    """Numerically stable softmax"""
+    x_max = x.max(axis=axis, keepdims=True)
+    exp_x = np.exp(x - x_max)
+    return exp_x / exp_x.sum(axis=axis, keepdims=True)
+
+
+def compute_ece_fix(
+    predictions: np.ndarray,
+    confidences: np.ndarray,
+    labels: np.ndarray,
+    n_bins: int = 15
+) -> float:
+    """Expected Calibration Error"""
+    bin_boundaries = np.linspace(0, 1, n_bins + 1)
+    ece = 0.0
+    
+    for i in range(n_bins):
+        mask = (confidences > bin_boundaries[i]) & (confidences <= bin_boundaries[i + 1])
+        if mask.sum() > 0:
+            bin_acc = (predictions[mask] == labels[mask]).mean()
+            bin_conf = confidences[mask].mean()
+            ece += (mask.sum() / len(labels)) * abs(bin_acc - bin_conf)
+    
+    return ece
+
+
+class TemperatureScaledModel:
+    """
+    Wrapper to apply temperature scaling to your model
+    
+    Usage:
+        # After training
+        ts_model = TemperatureScaledModel(your_model, temperature=2.3)
+        calibrated_probs = ts_model.predict_proba(inputs)
+    """
+    
+    def __init__(self, base_model, temperature: float = 1.0):
+        self.base_model = base_model
+        self.temperature = temperature
+    
+    def calibrate(self, val_logits: np.ndarray, val_labels: np.ndarray):
+        """Find optimal temperature on validation set"""
+        self.temperature, ece = find_optimal_temperature(val_logits, val_labels)
+        print(f"Optimal temperature: {self.temperature:.3f}")
+        print(f"Calibrated ECE: {ece:.4f}")
+        return self.temperature
+    
+    def predict_proba(self, logits: np.ndarray) -> np.ndarray:
+        """Apply temperature scaling"""
+        return softmax_fix(logits / self.temperature, axis=-1)
+
+
+# ============================================================================
+# FIX 2: WEIGHTED ENSEMBLE (FIXES DESTRUCTIVE AVERAGING)
+# ============================================================================
+
+def compute_optimal_weights(
+    head_predictions: np.ndarray,
+    labels: np.ndarray,
+    head_probs: Optional[np.ndarray] = None
+) -> np.ndarray:
+    """
+    Compute optimal ensemble weights based on validation performance
+    
+    Your issue: Single head (68.7%) beats 5-head ensemble (56.9%)
+    This fix should recover most of the single-head performance while
+    keeping uncertainty decomposition.
+    
+    Args:
+        head_predictions: [H, N] predictions from each head
+        labels: [N] ground truth
+        head_probs: [H, N, C] optional probabilities for soft weighting
+        
+    Returns:
+        weights: [H] optimal weights (sum to 1)
+    """
+    n_heads = head_predictions.shape[0]
+    
+    # Option 1: Accuracy-based weights
+    accuracies = np.array([
+        (head_predictions[h] == labels).mean() 
+        for h in range(n_heads)
+    ])
+    
+    # Softmax with temperature to control sharpness
+    # Higher temp = more uniform, lower temp = winner-take-all
+    temp = 0.1  # Sharp weighting
+    weights = softmax_fix(accuracies / temp)
+    
+    return weights
+
+
+def weighted_ensemble_predict(
+    head_probs: np.ndarray,
+    weights: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Weighted ensemble prediction
+    
+    Args:
+        head_probs: [H, N, C] probabilities from each head
+        weights: [H] ensemble weights
+        
+    Returns:
+        predictions: [N] class predictions
+        confidences: [N] prediction confidences
+    """
+    # Weighted average of probabilities
+    weighted_probs = np.einsum('h,hnc->nc', weights, head_probs)
+    
+    predictions = weighted_probs.argmax(axis=-1)
+    confidences = weighted_probs.max(axis=-1)
+    
+    return predictions, confidences
+
+
+def weighted_ensemble_uncertainty(
+    head_probs: np.ndarray,
+    weights: np.ndarray
+) -> Dict[str, np.ndarray]:
+    """
+    Compute uncertainty with weighted ensemble
+    
+    Epistemic = weighted variance across heads
+    This preserves uncertainty decomposition while fixing accuracy
+    """
+    H, N, C = head_probs.shape
+    
+    # Weighted mean
+    weighted_mean = np.einsum('h,hnc->nc', weights, head_probs)
+    
+    # Weighted variance (epistemic)
+    # Var = E[X^2] - E[X]^2 with weights
+    weighted_sq = np.einsum('h,hnc->nc', weights, head_probs ** 2)
+    epistemic = weighted_sq - weighted_mean ** 2
+    
+    return {
+        'mean_probs': weighted_mean,
+        'epistemic': epistemic,
+        'predictions': weighted_mean.argmax(axis=-1),
+        'confidences': weighted_mean.max(axis=-1)
+    }
+
+
+@dataclass
+class EnsembleFix:
+    """
+    Complete fix for your ensemble problem
+    
+    Usage:
+        fix = EnsembleFix()
+        fix.fit(head_predictions, head_probs, val_labels)
+        results = fix.predict(test_head_probs)
+    """
+    weights: np.ndarray = None
+    drop_heads: List[int] = None
+    
+    def fit(
+        self,
+        head_predictions: np.ndarray,
+        head_probs: np.ndarray,
+        labels: np.ndarray,
+        drop_threshold: float = 0.5
+    ):
+        """
+        Fit ensemble weights and identify heads to drop
+        
+        Args:
+            drop_threshold: Drop heads with accuracy below this
+        """
+        n_heads = head_predictions.shape[0]
+        
+        # Compute per-head accuracy
+        accuracies = np.array([
+            (head_predictions[h] == labels).mean() 
+            for h in range(n_heads)
+        ])
+        
+        print("Head accuracies:", [f"{a:.1%}" for a in accuracies])
+        
+        # Identify heads to potentially drop
+        self.drop_heads = [h for h in range(n_heads) if accuracies[h] < drop_threshold]
+        if self.drop_heads:
+            print(f"Heads below {drop_threshold:.0%} threshold: {self.drop_heads}")
+        
+        # Compute weights (set dropped heads to 0)
+        masked_accs = accuracies.copy()
+        masked_accs[self.drop_heads] = 0
+        
+        self.weights = softmax_fix(masked_accs / 0.1)
+        print("Optimal weights:", [f"{w:.3f}" for w in self.weights])
+        
+        # Evaluate improvement
+        baseline_preds = head_probs.mean(axis=0).argmax(axis=-1)
+        baseline_acc = (baseline_preds == labels).mean()
+        
+        weighted_preds = np.einsum('h,hnc->nc', self.weights, head_probs).argmax(axis=-1)
+        weighted_acc = (weighted_preds == labels).mean()
+        
+        best_single = accuracies.max()
+        
+        print(f"\nResults:")
+        print(f"  Uniform ensemble: {baseline_acc:.1%}")
+        print(f"  Weighted ensemble: {weighted_acc:.1%}")
+        print(f"  Best single head: {best_single:.1%}")
+        print(f"  Improvement: +{(weighted_acc - baseline_acc)*100:.1f}%")
+    
+    def predict(self, head_probs: np.ndarray) -> Dict:
+        """Apply weighted ensemble"""
+        return weighted_ensemble_uncertainty(head_probs, self.weights)
+
+
+# ============================================================================
+# FIX 3: ERROR DISTANCE ANALYSIS FOR ORDINAL TASKS
+# ============================================================================
+
+def error_distance_analysis(
+    predictions: np.ndarray,
+    labels: np.ndarray,
+    epistemic: np.ndarray,
+    aleatoric: np.ndarray,
+    num_classes: int = 5
+) -> Dict:
+    """
+    Analyze uncertainty by error distance for ordinal classification
+    
+    Key validation for ACL:
+    - Adjacent errors (|pred - label| = 1): Should have HIGH aleatoric
+    - Distant errors (|pred - label| >= 2): Should have HIGH epistemic
+    
+    Args:
+        predictions: [N] predicted classes (ordinal: 0, 1, 2, 3, 4)
+        labels: [N] true classes
+        epistemic: [N] or [N, K] epistemic uncertainty
+        aleatoric: [N] or [N, K] aleatoric uncertainty
+        num_classes: Number of ordinal classes
+        
+    Returns:
+        Analysis results with correlations and validation status
+    """
+    
+    # Aggregate uncertainties if multi-dimensional
+    if epistemic.ndim > 1:
+        epistemic = epistemic.mean(axis=1)
+    if aleatoric.ndim > 1:
+        aleatoric = aleatoric.mean(axis=1)
+    
+    # Compute error distances
+    error_distances = np.abs(predictions - labels)
+    is_error = predictions != labels
+    
+    results = {
+        'by_distance': {},
+        'correlations': {},
+        'validation': {}
+    }
+    
+    # Analyze by error distance
+    print("\n" + "=" * 60)
+    print("ERROR DISTANCE ANALYSIS (Ordinal Validation)")
+    print("=" * 60)
+    print(f"\n{'Distance':<10} {'Count':<8} {'Epistemic':<12} {'Aleatoric':<12}")
+    print("-" * 42)
+    
+    distances_list = []
+    epistemic_means = []
+    aleatoric_means = []
+    
+    for dist in range(num_classes):
+        if dist == 0:
+            mask = ~is_error
+            label = "Correct"
+        else:
+            mask = is_error & (error_distances == dist)
+            label = f"Dist={dist}"
+        
+        if mask.sum() >= 5:
+            epi_mean = epistemic[mask].mean()
+            ale_mean = aleatoric[mask].mean()
+            
+            results['by_distance'][f'distance_{dist}'] = {
+                'count': int(mask.sum()),
+                'epistemic_mean': float(epi_mean),
+                'epistemic_std': float(epistemic[mask].std()),
+                'aleatoric_mean': float(ale_mean),
+                'aleatoric_std': float(aleatoric[mask].std()),
+            }
+            
+            print(f"{label:<10} {mask.sum():<8} {epi_mean:<12.4f} {ale_mean:<12.4f}")
+            
+            if dist > 0:
+                distances_list.append(dist)
+                epistemic_means.append(epi_mean)
+                aleatoric_means.append(ale_mean)
+    
+    print()
+    
+    # Compute correlations
+    if len(distances_list) >= 3:
+        corr_epi, p_epi = stats.spearmanr(distances_list, epistemic_means)
+        corr_ale, p_ale = stats.spearmanr(distances_list, aleatoric_means)
+        
+        results['correlations'] = {
+            'epistemic_vs_distance': {
+                'spearman_rho': corr_epi,
+                'p_value': p_epi,
+                'expected': 'positive (distant errors = model failure)'
+            },
+            'aleatoric_vs_distance': {
+                'spearman_rho': corr_ale,
+                'p_value': p_ale,
+                'expected': 'negative (adjacent errors = inherent ambiguity)'
+            }
+        }
+        
+        print("Correlation Analysis:")
+        print(f"  Epistemic vs Distance: ρ={corr_epi:.3f} (p={p_epi:.3f})")
+        print(f"    Expected: positive (distant errors = epistemic)")
+        print(f"    Status: {'✅ VALIDATES' if corr_epi > 0.3 else '⚠️ WEAK' if corr_epi > 0 else '❌ WRONG SIGN'}")
+        print()
+        print(f"  Aleatoric vs Distance: ρ={corr_ale:.3f} (p={p_ale:.3f})")
+        print(f"    Expected: negative (adjacent errors = aleatoric)")
+        print(f"    Status: {'✅ VALIDATES' if corr_ale < -0.2 else '⚠️ WEAK' if corr_ale < 0 else '❌ WRONG SIGN'}")
+        
+        # Overall validation
+        epi_validates = corr_epi > 0.2
+        ale_validates = corr_ale < 0
+        
+        results['validation'] = {
+            'epistemic_validates': epi_validates,
+            'aleatoric_validates': ale_validates,
+            'both_validate': epi_validates and ale_validates,
+        }
+        
+        print()
+        if epi_validates and ale_validates:
+            print("✅ STRONG VALIDATION: Error distance patterns support meaningful decomposition!")
+            print("   This is strong evidence for ACL that epistemic ≠ aleatoric.")
+        elif epi_validates:
+            print("⚠️ PARTIAL: Epistemic validates, aleatoric unclear")
+        elif ale_validates:
+            print("⚠️ PARTIAL: Aleatoric validates, epistemic unclear")
+        else:
+            print("❌ WEAK: Neither pattern validates - check calibration first")
+    
+    return results
+
+
+# ============================================================================
+# FIX 4: MULTI-ANNOTATOR VALIDATION
+# ============================================================================
+
+def multi_annotator_validation(
+    aleatoric: np.ndarray,
+    annotator_labels: np.ndarray,
+    method: str = 'entropy'
+) -> Dict:
+    """
+    Validate aleatoric uncertainty against human annotator disagreement
+    
+    Critical validation for ACL: Aleatoric should correlate with
+    inherent human disagreement, not model confusion.
+    
+    Args:
+        aleatoric: [N] or [N, K] aleatoric uncertainty
+        annotator_labels: [N, A] labels from A annotators
+        method: 'entropy' or 'agreement' for computing disagreement
+        
+    Returns:
+        Correlation analysis
+    """
+    
+    if aleatoric.ndim > 1:
+        aleatoric = aleatoric.mean(axis=1)
+    
+    N, A = annotator_labels.shape
+    
+    # Compute human disagreement
+    if method == 'entropy':
+        # Entropy of label distribution
+        disagreement = np.zeros(N)
+        for i in range(N):
+            labels_i = annotator_labels[i]
+            unique, counts = np.unique(labels_i[labels_i >= 0], return_counts=True)
+            if len(counts) > 0:
+                probs = counts / counts.sum()
+                disagreement[i] = -np.sum(probs * np.log(probs + 1e-10))
+    else:
+        # Agreement rate (lower = more disagreement)
+        disagreement = np.zeros(N)
+        for i in range(N):
+            labels_i = annotator_labels[i]
+            valid = labels_i[labels_i >= 0]
+            if len(valid) > 1:
+                mode = stats.mode(valid, keepdims=True).mode[0]
+                disagreement[i] = 1 - (valid == mode).mean()
+    
+    # Correlation
+    corr, p_value = stats.spearmanr(aleatoric, disagreement)
+    
+    print("\n" + "=" * 60)
+    print("MULTI-ANNOTATOR VALIDATION")
+    print("=" * 60)
+    print(f"\nAleatoric vs Human Disagreement:")
+    print(f"  Spearman ρ: {corr:.3f}")
+    print(f"  p-value: {p_value:.2e}")
+    print()
+    
+    if corr > 0.3 and p_value < 0.01:
+        print("✅ STRONG VALIDATION: Aleatoric captures human ambiguity!")
+        print("   This is the key evidence that aleatoric ≠ epistemic.")
+    elif corr > 0.15 and p_value < 0.05:
+        print("⚠️ MODERATE: Aleatoric somewhat tracks human disagreement")
+    else:
+        print("❌ WEAK: Aleatoric doesn't correlate with human disagreement")
+        print("   Check: Is aleatoric network learning input-dependent uncertainty?")
+    
+    return {
+        'correlation': corr,
+        'p_value': p_value,
+        'validates': corr > 0.25 and p_value < 0.05,
+        'mean_disagreement': disagreement.mean(),
+        'mean_aleatoric': aleatoric.mean()
+    }
+
+
+# ============================================================================
+# MAIN: APPLY ALL FIXES
+# ============================================================================
+
+def apply_all_fixes(
+    # Model outputs
+    logits: np.ndarray,
+    head_probs: np.ndarray,
+    head_predictions: np.ndarray,
+    epistemic: np.ndarray,
+    aleatoric: np.ndarray,
+    # Labels
+    labels: np.ndarray,
+    # Optional for extended validation
+    annotator_labels: Optional[np.ndarray] = None,
+    is_ordinal: bool = False,
+    num_classes: int = 5
+) -> Dict:
+    """
+    Apply all fixes and generate comprehensive analysis
+    
+    Returns dict with:
+    - calibration: Temperature scaling results
+    - ensemble: Weighted ensemble results  
+    - error_distance: Ordinal validation (if applicable)
+    - multi_annotator: Human agreement validation (if available)
+    """
+    
+    results = {}
+    
+    print("\n" + "=" * 80)
+    print("APPLYING CREDENCE FIXES FOR ACL 2026")
+    print("=" * 80)
+    
+    # 1. Calibration
+    print("\n### FIX 1: CALIBRATION ###")
+    temp, ece = find_optimal_temperature(logits, labels)
+    original_probs = softmax_fix(logits, axis=-1)
+    original_ece = compute_ece_fix(
+        original_probs.argmax(axis=-1),
+        original_probs.max(axis=-1),
+        labels
+    )
+    
+    print(f"Original ECE: {original_ece:.4f}")
+    print(f"Optimal temperature: {temp:.3f}")
+    print(f"Calibrated ECE: {ece:.4f}")
+    print(f"Improvement: {(original_ece - ece) / original_ece * 100:.1f}%")
+    
+    results['calibration'] = {
+        'original_ece': original_ece,
+        'optimal_temperature': temp,
+        'calibrated_ece': ece
+    }
+    
+    # 2. Ensemble
+    print("\n### FIX 2: ENSEMBLE WEIGHTING ###")
+    ensemble_fix = EnsembleFix()
+    ensemble_fix.fit(head_predictions, head_probs, labels)
+    results['ensemble'] = {
+        'weights': ensemble_fix.weights.tolist(),
+        'dropped_heads': ensemble_fix.drop_heads
+    }
+    
+    # 3. Error distance (if ordinal)
+    if is_ordinal:
+        print("\n### FIX 3: ERROR DISTANCE VALIDATION ###")
+        predictions = head_probs.mean(axis=0).argmax(axis=-1)
+        results['error_distance'] = error_distance_analysis(
+            predictions, labels, epistemic, aleatoric, num_classes
+        )
+    
+    # 4. Multi-annotator (if available)
+    if annotator_labels is not None:
+        print("\n### FIX 4: MULTI-ANNOTATOR VALIDATION ###")
+        results['multi_annotator'] = multi_annotator_validation(
+            aleatoric, annotator_labels
+        )
+    
+    return results
 
 
 if __name__ == "__main__":
