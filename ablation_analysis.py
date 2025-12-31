@@ -46,6 +46,14 @@ from credence import (
 )
 from dataloader import load_dataset_splits, DatasetConfig
 
+# Import unknown-aware analysis
+try:
+    from unknown_aware_analysis import add_unknown_analysis_to_ablation
+    HAS_UNKNOWN_ANALYSIS = True
+except ImportError:
+    HAS_UNKNOWN_ANALYSIS = False
+    print("Warning: unknown_aware_analysis module not found. Skipping unknown-aware analysis.")
+
 # =============================================================================
 # 1. LOAD CHECKPOINT
 # =============================================================================
@@ -1219,6 +1227,15 @@ def run_all_ablations(checkpoint_path: str, dataset: str, output_dir: str, devic
     
     # 4. Head ablation
     all_results['head_ablation'] = analyze_head_ablation(model, data, device, output_dir)
+    
+    # 5. Unknown-aware intervention analysis (for datasets with unknown concepts like CEBaB)
+    if HAS_UNKNOWN_ANALYSIS and 'is_unknown' in data:
+        try:
+            classifier_weights = model.classifier.W.detach().cpu().numpy()
+            all_results['unknown_aware'] = add_unknown_analysis_to_ablation(data, classifier_weights)
+        except Exception as e:
+            print(f"\nWarning: Unknown-aware analysis failed: {e}")
+            all_results['unknown_aware'] = {'error': str(e)}
     
     # Save all results
     results_path = f"{output_dir}/ablation_results.json"

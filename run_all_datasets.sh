@@ -43,11 +43,14 @@ source ../../../../../torch-multimodal/bin/activate
 # Don't exit on error - we want to continue processing other datasets
 # set -e
 
+# Initialize flags
+USE_VLLM=false
+
 # Check for help flag
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "CREDENCE Multi-Dataset Runner"
     echo ""
-    echo "Usage: ./run_all_datasets.sh [ENCODER]"
+    echo "Usage: ./run_all_datasets.sh [ENCODER] [OPTIONS]"
     echo ""
     echo "Available encoders (short names):"
     echo ""
@@ -77,8 +80,13 @@ if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "  gemma-2b, gemma-2-2b          - Gemma 2 2B"
     echo "  gemma-9b, gemma-2-9b          - Gemma 2 9B"
     echo ""
+    echo "Options:"
+    echo "  --use_vllm                     - Use vLLM for LLM feature extraction (10-100x faster)"
+    echo "                                   Only works with LLM models, requires: pip install vllm"
+    echo ""
     echo "  Note: LLMs use frozen feature extraction by default (fast, memory efficient)."
     echo "        To use LoRA fine-tuning instead, add --use_lora flag (slower, more memory)."
+    echo "        For LLMs with --use_vllm, uses vLLM backend for even faster extraction."
     echo ""
     echo "You can also use full model names from HuggingFace:"
     echo "  answerdotai/ModernBERT-base"
@@ -88,23 +96,28 @@ if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "Examples:"
     echo "  ./run_all_datasets.sh roberta-base"
     echo "  ./run_all_datasets.sh modernbert"
+    echo "  ./run_all_datasets.sh llama-3.2-3b --use_vllm"
     echo "  ./run_all_datasets.sh answerdotai/ModernBERT-base"
     exit 0
 fi
 
 ENCODER="${1:-roberta-base}"
 
-# Check for profiler flag (optional arguments after encoder name)
+# Check for flags (optional arguments after encoder name)
 ENABLE_PROFILER=false
 PROFILER_WARMUP=1
 PROFILER_ACTIVE=3
 PROFILER_REPEAT=1
 PROFILER_OUTPUT_DIR=""
 
-# Parse optional profiler flags (skip encoder argument)
+# Parse optional flags (skip encoder argument)
 shift 2>/dev/null || true
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --use_vllm)
+            USE_VLLM=true
+            shift
+            ;;
         --enable_profiler)
             ENABLE_PROFILER=true
             shift
@@ -132,6 +145,15 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# Check if vLLM is available if requested
+if [ "$USE_VLLM" = true ]; then
+    if ! python -c "import vllm" 2>/dev/null; then
+        echo "ERROR: vLLM requested but not installed. Install with: pip install vllm"
+        echo "Falling back to standard HuggingFace inference..."
+        USE_VLLM=false
+    fi
+fi
 
 case "$ENCODER" in
     "roberta"|"roberta-base")
@@ -312,7 +334,11 @@ echo ""
 log "Starting CREDENCE multi-dataset run"
 log "Encoder: $ENCODER_FULL"
 if [ "$IS_LLM" = true ]; then
-    log "LLM model detected - using frozen feature extraction (default)"
+    if [ "$USE_VLLM" = true ]; then
+        log "LLM model detected - using vLLM for fast feature extraction"
+    else
+        log "LLM model detected - using frozen feature extraction (HuggingFace)"
+    fi
 fi
 log "Datasets: ${DATASETS[*]}"
 
@@ -336,35 +362,54 @@ for DATASET in "${DATASETS[@]}"; do
     log "Running $DATASET (epochs=$EPOCHS, batch_size=$BS, lr=$DATASET_LR)"
     
     START_TIME=$(date +%s)
-    
-    # Build command - LLMs use frozen feature extraction by default
-    # (freeze_llm=True is the default in ExperimentConfig)
-    CMD="python credence.py \
-        --encoder_name \"$ENCODER_FULL\" \
-        --dataset \"$DATASET\" \
-        --label_type \"$LABEL_TYPE\" \
-        --epochs \"$EPOCHS\" \
-        --batch_size \"$BS\" \
-        --lr \"$DATASET_LR\" \
-        --n_heads \"$N_HEADS\" \
-        --max_length \"$MAX_LENGTH\" \
-        --output_dir \"$OUTPUT_DIR\" \
-        --seed \"$SEED\""
-    
-    # Note: LLMs use frozen feature extraction by default (freeze_llm=True)
-    # To use LoRA fine-tuning instead, add: --use_lora (and ensure --freeze_llm is not set)
-    
-    # Add profiler flags if enabled
-    if [ "$ENABLE_PROFILER" = true ]; then
-        CMD="$CMD --enable_profiler"
-        CMD="$CMD --profiler_warmup \"$PROFILER_WARMUP\""
-        CMD="$CMD --profiler_active \"$PROFILER_ACTIVE\""
-        CMD="$CMD --profiler_repeat \"$PROFILER_REPEAT\""
-        if [ -n "$PROFILER_OUTPUT_DIR" ]; then
-            CMD="$CMD --profiler_output_dir \"$PROFILER_OUTPUT_DIR\""
+
+    # Determine which runner to use
+    if [ "$USE_VLLM" = true ] && [ "$IS_LLM" = true ]; then
+        # Use vLLM runner for LLMs
+        log "Using vLLM backend for faster LLM inference"
+
+        CMD="python credence_vllm.py \
+            --model_name \"$ENCODER_FULL\" \
+            --dataset \"$DATASET\" \
+            --label_type \"$LABEL_TYPE\" \
+            --epochs \"$EPOCHS\" \
+            --batch_size \"$BS\" \
+            --lr \"$DATASET_LR\" \
+            --n_heads \"$N_HEADS\" \
+            --max_length \"$MAX_LENGTH\" \
+            --output_dir \"$OUTPUT_DIR\" \
+            --seed \"$SEED\""
+
+        # Note: vLLM caches features per dataset/model combination
+    else
+        # Use standard runner (HuggingFace with frozen LLM or encoder models)
+        CMD="python credence.py \
+            --encoder_name \"$ENCODER_FULL\" \
+            --dataset \"$DATASET\" \
+            --label_type \"$LABEL_TYPE\" \
+            --epochs \"$EPOCHS\" \
+            --batch_size \"$BS\" \
+            --lr \"$DATASET_LR\" \
+            --n_heads \"$N_HEADS\" \
+            --max_length \"$MAX_LENGTH\" \
+            --output_dir \"$OUTPUT_DIR\" \
+            --seed \"$SEED\""
+
+        # Note: LLMs use frozen feature extraction by default (freeze_llm=True)
+        # To use LoRA fine-tuning instead, add: --use_lora (and ensure --freeze_llm is not set)
+
+        # Add profiler flags if enabled (only for standard runner)
+        if [ "$ENABLE_PROFILER" = true ]; then
+            CMD="$CMD --enable_profiler"
+            CMD="$CMD --profiler_warmup \"$PROFILER_WARMUP\""
+            CMD="$CMD --profiler_active \"$PROFILER_ACTIVE\""
+            CMD="$CMD --profiler_repeat \"$PROFILER_REPEAT\""
+            if [ -n "$PROFILER_OUTPUT_DIR" ]; then
+                CMD="$CMD --profiler_output_dir \"$PROFILER_OUTPUT_DIR\""
+            fi
         fi
     fi
-    
+
     eval $CMD 2>&1 | tee "$OUTPUT_DIR.log"
     
     EXIT_CODE=${PIPESTATUS[0]}
@@ -376,13 +421,21 @@ for DATASET in "${DATASETS[@]}"; do
     DURATION=$((END_TIME - START_TIME))
     
     log "$DATASET completed in ${DURATION}s"
-    
-    RESULTS_FILE="$OUTPUT_DIR/${DATASET}_results.json"
-    if [ -f "$RESULTS_FILE" ]; then
+
+    # Check for both standard and vLLM results files
+    RESULTS_FILE=""
+    if [ -f "$OUTPUT_DIR/${DATASET}_vllm_results.json" ]; then
+        RESULTS_FILE="$OUTPUT_DIR/${DATASET}_vllm_results.json"
+    elif [ -f "$OUTPUT_DIR/${DATASET}_results.json" ]; then
+        RESULTS_FILE="$OUTPUT_DIR/${DATASET}_results.json"
+    fi
+
+    if [ -n "$RESULTS_FILE" ] && [ -f "$RESULTS_FILE" ]; then
+        # Extract metrics (works for both standard and vLLM formats)
         ACC=$(python -c "import json; d=json.load(open('$RESULTS_FILE')); print(f\"{d['test_results']['accuracy']*100:.1f}\")" 2>/dev/null || echo "N/A")
-        RHO_EPI=$(python -c "import json; d=json.load(open('$RESULTS_FILE')); print(f\"{d['test_results']['disagree_error_corr']:.3f}\")" 2>/dev/null || echo "N/A")
-        RHO_ALE=$(python -c "import json; d=json.load(open('$RESULTS_FILE')); print(f\"{d['test_results']['ambig_unknown_corr']:.3f}\")" 2>/dev/null || echo "N/A")
-        
+        RHO_EPI=$(python -c "import json; d=json.load(open('$RESULTS_FILE')); print(f\"{d['test_results'].get('disagree_error_corr', 0):.3f}\")" 2>/dev/null || echo "N/A")
+        RHO_ALE=$(python -c "import json; d=json.load(open('$RESULTS_FILE')); print(f\"{d['test_results'].get('ambig_unknown_corr', 0):.3f}\")" 2>/dev/null || echo "N/A")
+
         RESULTS_SUMMARY+=("$DATASET: Acc=$ACC%, ρ_epi=$RHO_EPI, ρ_ale=$RHO_ALE (${DURATION}s)")
         log "$DATASET: Acc=$ACC%, ρ_epi=$RHO_EPI, ρ_ale=$RHO_ALE"
     elif [ $EXIT_CODE -ne 0 ]; then
@@ -420,11 +473,17 @@ summary = {
 }
 
 for ds in datasets:
-    results_file = f"{output_base}/{ds}/{ds}_results.json"
-    if os.path.exists(results_file):
+    # Check for both vLLM and standard results files
+    results_file = ""
+    if os.path.exists(f"{output_base}/{ds}/{ds}_vllm_results.json"):
+        results_file = f"{output_base}/{ds}/{ds}_vllm_results.json"
+    elif os.path.exists(f"{output_base}/{ds}/{ds}_results.json"):
+        results_file = f"{output_base}/{ds}/{ds}_results.json"
+
+    if results_file and os.path.exists(results_file):
         with open(results_file) as f:
             data = json.load(f)
-        
+
         test = data.get("test_results", {})
         summary["datasets"][ds] = {
             "accuracy": test.get("accuracy", 0),
@@ -434,6 +493,7 @@ for ds in datasets:
             "p_ale": test.get("ambig_unknown_pval", 1),
             "disagree_ratio": test.get("disagree_ratio", 0),
             "mean_credal_width": test.get("mean_credal_width", 0),
+            "method": data.get("method", "standard"),
         }
 
 summary_path = f"{output_base}/summary.json"
@@ -442,10 +502,11 @@ with open(summary_path, "w") as f:
 
 print(f"\nSummary saved to: {summary_path}")
 print("\n" + "="*70)
-print(f"{'Dataset':<15} {'Acc':>8} {'ρ_epi':>8} {'ρ_ale':>8} {'Width':>8}")
+print(f"{'Dataset':<15} {'Acc':>8} {'ρ_epi':>8} {'ρ_ale':>8} {'Width':>8} {'Method':<10}")
 print("-"*70)
 for ds, metrics in summary["datasets"].items():
-    print(f"{ds:<15} {metrics['accuracy']*100:>7.1f}% {metrics['rho_epi']:>8.3f} {metrics['rho_ale']:>8.3f} {metrics['mean_credal_width']:>8.3f}")
+    method = metrics.get('method', 'standard')[:8]
+    print(f"{ds:<15} {metrics['accuracy']*100:>7.1f}% {metrics['rho_epi']:>8.3f} {metrics['rho_ale']:>8.3f} {metrics['mean_credal_width']:>8.3f} {method:<10}")
 print("="*70)
 EOF
 

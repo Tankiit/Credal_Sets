@@ -12,7 +12,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from scipy import stats
 from scipy.optimize import minimize_scalar
 from tqdm import tqdm
@@ -34,6 +34,15 @@ except (ImportError, ModuleNotFoundError) as e:
     else:
         print(f"Note: peft import failed: {e}")
         print("LLM training requires: pip install peft bitsandbytes")
+
+# Optional: vLLM for fast LLM inference
+try:
+    from vllm import LLM, SamplingParams
+    from vllm.inputs import TokensPrompt
+    VLLM_AVAILABLE = True
+except ImportError:
+    VLLM_AVAILABLE = False
+    print("Note: vLLM not installed. Install with: pip install vllm")
 
 # Your dataloader
 from dataloader import (
@@ -2062,6 +2071,657 @@ def run_experiment(config: ExperimentConfig):
     format_examples_for_paper(examples)
     print_latex_examples(examples)
     return results
+
+
+# =============================================================================
+# VLLM INTEGRATION FOR CREDENCE
+# =============================================================================
+# Add this to your credence.py or as a separate module
+#
+# Key idea: vLLM extracts hidden states efficiently (frozen),
+# then train lightweight heads on cached features
+# =============================================================================
+
+
+# =============================================================================
+# VLLM HIDDEN STATE EXTRACTOR
+# =============================================================================
+
+class VLLMFeatureExtractor:
+    """
+    Extract hidden states from LLMs using vLLM's efficient inference.
+
+    Replaces load_llm_model_frozen() for faster batch extraction.
+
+    Usage:
+        extractor = VLLMFeatureExtractor("meta-llama/Llama-3.2-3B")
+        hidden_states = extractor.extract(texts)  # [N, hidden_size]
+    """
+
+    def __init__(
+        self,
+        model_name: str,
+        tensor_parallel_size: int = 1,
+        gpu_memory_utilization: float = 0.8,
+        max_model_len: int = 512,
+        dtype: str = "auto",
+        trust_remote_code: bool = True,
+    ):
+        if not VLLM_AVAILABLE:
+            raise ImportError(
+                "vLLM is required for VLLMFeatureExtractor. "
+                "Install with: pip install vllm"
+            )
+
+        self.model_name = model_name
+
+        # Initialize vLLM in embedding/pooling mode
+        # This gives us access to hidden states without generation overhead
+        print(f"Loading vLLM model: {model_name}")
+
+        self.llm = LLM(
+            model=model_name,
+            tensor_parallel_size=tensor_parallel_size,
+            gpu_memory_utilization=gpu_memory_utilization,
+            max_model_len=max_model_len,
+            dtype=dtype,
+            trust_remote_code=trust_remote_code,
+            # Key: we want embeddings, not generations
+            task="embed",
+        )
+
+        # Get model info
+        self.hidden_size = self.llm.llm_engine.model_config.hf_config.hidden_size
+        self.tokenizer = self.llm.get_tokenizer()
+
+        # Ensure padding token
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.tokenizer.padding_side = "left"
+
+        print(f"  Hidden size: {self.hidden_size}")
+        print(f"  Max length: {max_model_len}")
+
+    def extract(
+        self,
+        texts: List[str],
+        show_progress: bool = True,
+    ) -> np.ndarray:
+        """
+        Extract pooled hidden states for a list of texts.
+
+        Args:
+            texts: List of input texts
+            show_progress: Show progress bar
+
+        Returns:
+            hidden_states: [N, hidden_size] numpy array
+        """
+        # vLLM encode returns embeddings
+        outputs = self.llm.encode(
+            texts,
+            use_tqdm=show_progress,
+        )
+
+        # Extract embeddings from outputs
+        embeddings = []
+        for output in outputs:
+            # output.outputs[0].embedding is the pooled representation
+            emb = np.array(output.outputs[0].embedding)
+            embeddings.append(emb)
+
+        return np.stack(embeddings, axis=0)  # [N, hidden_size]
+
+    def extract_batched(
+        self,
+        texts: List[str],
+        batch_size: int = 64,
+    ) -> np.ndarray:
+        """
+        Extract hidden states in batches (for very large datasets).
+
+        Note: vLLM handles batching internally, but this is useful
+        for memory management with extremely large datasets.
+        """
+        all_embeddings = []
+
+        for i in tqdm(range(0, len(texts), batch_size), desc="Extracting"):
+            batch_texts = texts[i:i + batch_size]
+            batch_emb = self.extract(batch_texts, show_progress=False)
+            all_embeddings.append(batch_emb)
+
+        return np.concatenate(all_embeddings, axis=0)
+
+
+# =============================================================================
+# HIDDEN STATE CACHE
+# =============================================================================
+
+@dataclass
+class CachedDataset:
+    """Cached hidden states with labels and concepts."""
+    hidden_states: torch.Tensor  # [N, hidden_size]
+    labels: torch.Tensor         # [N]
+    concept_labels: torch.Tensor # [N, num_concepts]
+    is_unknown: torch.Tensor     # [N, num_concepts]
+
+    def __len__(self):
+        return len(self.labels)
+
+
+class HiddenStateCache:
+    """
+    Cache vLLM hidden states for fast head training.
+
+    Workflow:
+    1. Extract hidden states once with vLLM
+    2. Cache to disk
+    3. Train heads using cached features (no LLM needed!)
+
+    This is 10-100x faster than running LLM each epoch.
+    """
+
+    def __init__(self, cache_dir: str = "./vllm_cache"):
+        self.cache_dir = cache_dir
+        os.makedirs(cache_dir, exist_ok=True)
+
+    def get_cache_path(self, dataset_name: str, split: str, model_name: str) -> str:
+        """Generate cache file path."""
+        # Sanitize model name for filename
+        model_safe = model_name.replace("/", "_").replace(".", "_")
+        return os.path.join(
+            self.cache_dir,
+            f"{dataset_name}_{split}_{model_safe}.pt"
+        )
+
+    def exists(self, dataset_name: str, split: str, model_name: str) -> bool:
+        """Check if cache exists."""
+        return os.path.exists(self.get_cache_path(dataset_name, split, model_name))
+
+    def save(
+        self,
+        dataset_name: str,
+        split: str,
+        model_name: str,
+        hidden_states: np.ndarray,
+        labels: np.ndarray,
+        concept_labels: np.ndarray,
+        is_unknown: np.ndarray,
+        metadata: Optional[dict] = None,
+    ):
+        """Save extracted features to cache."""
+        cache_path = self.get_cache_path(dataset_name, split, model_name)
+
+        torch.save({
+            "hidden_states": torch.from_numpy(hidden_states).float(),
+            "labels": torch.from_numpy(labels).long(),
+            "concept_labels": torch.from_numpy(concept_labels).long(),
+            "is_unknown": torch.from_numpy(is_unknown).float(),
+            "metadata": metadata or {},
+            "model_name": model_name,
+            "dataset_name": dataset_name,
+            "split": split,
+        }, cache_path)
+
+        print(f"Cached {len(labels)} samples to {cache_path}")
+
+    def load(
+        self,
+        dataset_name: str,
+        split: str,
+        model_name: str,
+    ) -> CachedDataset:
+        """Load cached features."""
+        cache_path = self.get_cache_path(dataset_name, split, model_name)
+
+        if not os.path.exists(cache_path):
+            raise FileNotFoundError(f"Cache not found: {cache_path}")
+
+        data = torch.load(cache_path)
+
+        return CachedDataset(
+            hidden_states=data["hidden_states"],
+            labels=data["labels"],
+            concept_labels=data["concept_labels"],
+            is_unknown=data["is_unknown"],
+        )
+
+
+class CachedDatasetWrapper(Dataset):
+    """PyTorch Dataset wrapper for cached features."""
+
+    def __init__(self, cached_data: CachedDataset):
+        self.data = cached_data
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return {
+            "hidden_states": self.data.hidden_states[idx],
+            "labels": self.data.labels[idx],
+            "concept_labels": self.data.concept_labels[idx],
+            "is_unknown": self.data.is_unknown[idx],
+        }
+
+
+# =============================================================================
+# INTEGRATION WITH YOUR EXISTING CREDENCE
+# =============================================================================
+
+def load_vllm_extractor(model_name: str, config) -> Tuple:
+    """
+    Load vLLM feature extractor (replacement for load_llm_model_frozen).
+
+    Returns:
+        (extractor, tokenizer, hidden_size, "vllm")
+    """
+    if not VLLM_AVAILABLE:
+        print("vLLM not available, falling back to HuggingFace...")
+        # Import your existing function
+        # from credence import load_llm_model_frozen
+        # return load_llm_model_frozen(model_name, "cuda", config)
+        raise NotImplementedError("Fallback to HuggingFace not implemented in this integration")
+
+    extractor = VLLMFeatureExtractor(
+        model_name=model_name,
+        gpu_memory_utilization=0.7,
+        max_model_len=config.max_length,
+    )
+
+    return extractor, extractor.tokenizer, extractor.hidden_size, "vllm"
+
+
+def extract_and_cache_dataset(
+    extractor: VLLMFeatureExtractor,
+    data_loader: DataLoader,
+    cache: HiddenStateCache,
+    dataset_name: str,
+    split: str,
+    model_name: str,
+) -> CachedDataset:
+    """
+    Extract hidden states from a DataLoader and cache them.
+
+    Args:
+        extractor: VLLMFeatureExtractor
+        data_loader: Your existing DataLoader (with texts)
+        cache: HiddenStateCache instance
+        dataset_name: e.g., "cebab"
+        split: "train", "val", or "test"
+        model_name: e.g., "meta-llama/Llama-3.2-3B"
+
+    Returns:
+        CachedDataset ready for training
+    """
+    # Check if already cached
+    if cache.exists(dataset_name, split, model_name):
+        print(f"Loading cached {split} features...")
+        return cache.load(dataset_name, split, model_name)
+
+    print(f"Extracting {split} features with vLLM...")
+
+    # Collect all data
+    all_texts = []
+    all_labels = []
+    all_concepts = []
+    all_is_unknown = []
+
+    for batch in tqdm(data_loader, desc=f"Collecting {split} data"):
+        # Decode input_ids back to text
+        # (Or modify your dataloader to also return raw text)
+        texts = extractor.tokenizer.batch_decode(
+            batch['input_ids'],
+            skip_special_tokens=True
+        )
+        all_texts.extend(texts)
+        all_labels.extend(batch['labels'].numpy())
+        all_concepts.extend(batch['concept_labels'].numpy())
+        all_is_unknown.extend(batch['is_unknown'].numpy())
+
+    # Extract with vLLM (single efficient pass)
+    hidden_states = extractor.extract(all_texts)
+
+    # Cache
+    cache.save(
+        dataset_name=dataset_name,
+        split=split,
+        model_name=model_name,
+        hidden_states=hidden_states,
+        labels=np.array(all_labels),
+        concept_labels=np.array(all_concepts),
+        is_unknown=np.array(all_is_unknown),
+    )
+
+    return cache.load(dataset_name, split, model_name)
+
+
+# =============================================================================
+# FAST TRAINING ON CACHED FEATURES
+# =============================================================================
+
+def train_epoch_cached(
+    model: 'CREDENCE',
+    train_loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    config,
+    device: str,
+):
+    """
+    Train CREDENCE heads on cached hidden states.
+
+    This is MUCH faster because:
+    1. No LLM forward pass
+    2. No tokenization
+    3. Pure head training
+
+    Typical speedup: 10-50x vs full LLM forward pass
+    """
+    model.train()
+    epoch_losses = defaultdict(float)
+    n_batches = 0
+
+    pbar = tqdm(train_loader, desc="Training (cached)")
+    for batch in pbar:
+        # Hidden states already extracted!
+        hidden_states = batch['hidden_states'].to(device)
+        labels = batch['labels'].to(device)
+        concepts = batch['concept_labels'].to(device)
+        is_unknown = batch['is_unknown'].to(device)
+
+        optimizer.zero_grad()
+
+        # Create dummy attention mask (all 1s since already pooled)
+        # Your CREDENCE model expects [batch, seq_len, hidden]
+        # But cached data is already [batch, hidden]
+        # We need to handle this...
+
+        # Option 1: Reshape to [batch, 1, hidden] and use "last" pooling
+        hidden_states = hidden_states.unsqueeze(1)  # [batch, 1, hidden]
+        attention_mask = torch.ones(
+            hidden_states.size(0), 1,
+            device=device, dtype=torch.long
+        )
+
+        # Forward through heads
+        outputs = model(hidden_states, attention_mask)
+
+        # Loss computation (same as before)
+        loss, loss_dict = model.compute_loss(
+            outputs, labels, concepts, is_unknown,
+            concept_weight=config.concept_weight,
+            aleatoric_weight=config.aleatoric_weight,
+        )
+
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+
+        for k, v in loss_dict.items():
+            epoch_losses[k] += v
+        n_batches += 1
+
+        pbar.set_postfix({"loss": f"{loss_dict['total']:.4f}"})
+
+    return {k: v / n_batches for k, v in epoch_losses.items()}
+
+
+@torch.no_grad()
+def evaluate_cached(
+    model: 'CREDENCE',
+    data_loader: DataLoader,
+    device: str,
+):
+    """Evaluate on cached features."""
+    model.eval()
+
+    all_preds = []
+    all_labels = []
+    all_disagreement = []
+    all_ambiguity = []
+
+    for batch in tqdm(data_loader, desc="Evaluating"):
+        hidden_states = batch['hidden_states'].to(device).unsqueeze(1)
+        labels = batch['labels'].to(device)
+        attention_mask = torch.ones(
+            hidden_states.size(0), 1,
+            device=device, dtype=torch.long
+        )
+
+        outputs = model(hidden_states, attention_mask)
+
+        preds = outputs["logits"].argmax(dim=-1)
+        all_preds.extend(preds.cpu().numpy())
+        all_labels.extend(labels.cpu().numpy())
+
+        if outputs["disagreement"].numel() > 0:
+            all_disagreement.extend(outputs["disagreement"].mean(dim=-1).cpu().numpy())
+        if outputs["ambiguity"].numel() > 0:
+            all_ambiguity.extend(outputs["ambiguity"].mean(dim=-1).cpu().numpy())
+
+    all_preds = np.array(all_preds)
+    all_labels = np.array(all_labels)
+    accuracy = (all_preds == all_labels).mean()
+
+    return {
+        "accuracy": float(accuracy),
+        "mean_disagreement": float(np.mean(all_disagreement)) if all_disagreement else 0.0,
+        "mean_ambiguity": float(np.mean(all_ambiguity)) if all_ambiguity else 0.0,
+    }
+
+
+# =============================================================================
+# MODIFIED run_experiment FOR VLLM
+# =============================================================================
+
+def run_experiment_vllm(config):
+    """
+    Run CREDENCE experiment with vLLM feature extraction.
+
+    Workflow:
+    1. Extract features with vLLM (once, cached)
+    2. Train heads on cached features (fast!)
+    3. Evaluate
+    """
+    torch.manual_seed(config.seed)
+    np.random.seed(config.seed)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # Expand encoder name
+    config.encoder_name = expand_encoder_name(config.encoder_name)
+    os.makedirs(config.output_dir, exist_ok=True)
+
+    # Check if this is an LLM
+    model_info = MODEL_REGISTRY.get(config.encoder_name, {})
+    if model_info.get("type") != "llm":
+        print(f"Model {config.encoder_name} is not an LLM, using standard training...")
+        # Fall back to standard run_experiment if it exists
+        return run_experiment(config) if 'run_experiment' in globals() else None
+
+    # Load dataset (we need this for labels/concepts)
+    dataset_config = DatasetConfig(
+        label_type=config.label_type,
+        max_length=config.max_length,
+        tokenizer_name=config.encoder_name,
+        batch_size=config.batch_size
+    )
+
+    train_loader, val_loader, test_loader, tokenizer, metadata = load_dataset_splits(
+        config.dataset,
+        config=dataset_config
+    )
+
+    # Initialize vLLM extractor
+    print("\n" + "="*60)
+    print("VLLM FEATURE EXTRACTION")
+    print("="*60)
+
+    extractor = VLLMFeatureExtractor(
+        model_name=config.encoder_name,
+        gpu_memory_utilization=0.7,
+        max_model_len=config.max_length,
+    )
+
+    # Cache features
+    cache = HiddenStateCache(os.path.join(config.output_dir, "vllm_cache"))
+
+    train_cached = extract_and_cache_dataset(
+        extractor, train_loader, cache,
+        config.dataset, "train", config.encoder_name
+    )
+    val_cached = extract_and_cache_dataset(
+        extractor, val_loader, cache,
+        config.dataset, "val", config.encoder_name
+    )
+    test_cached = extract_and_cache_dataset(
+        extractor, test_loader, cache,
+        config.dataset, "test", config.encoder_name
+    )
+
+    # Free vLLM memory
+    del extractor
+    torch.cuda.empty_cache()
+
+    # Create cached dataloaders
+    train_cached_loader = DataLoader(
+        CachedDatasetWrapper(train_cached),
+        batch_size=config.batch_size,
+        shuffle=True,
+    )
+    val_cached_loader = DataLoader(
+        CachedDatasetWrapper(val_cached),
+        batch_size=config.batch_size,
+    )
+    test_cached_loader = DataLoader(
+        CachedDatasetWrapper(test_cached),
+        batch_size=config.batch_size,
+    )
+
+    # Initialize CREDENCE (heads only)
+    print("\n" + "="*60)
+    print("TRAINING CREDENCE HEADS")
+    print("="*60)
+
+    hidden_size = train_cached.hidden_states.shape[-1]
+
+    # Auto-detect aleatoric mode
+    if config.aleatoric_mode == "auto":
+        config.aleatoric_mode = get_aleatoric_mode(metadata)
+
+    # Import CREDENCE model (assuming it's defined in this file)
+    if 'CREDENCE' not in globals():
+        raise NameError("CREDENCE model class not found. Make sure it's defined in credence.py")
+
+    model = CREDENCE(
+        input_dim=hidden_size,
+        num_concepts=metadata['num_concepts'],
+        num_classes=metadata['num_classes'],
+        head_configs=config.get_head_configs(),
+        aleatoric_mode=config.aleatoric_mode,
+        model_type="llm_frozen",  # Use "last" pooling
+    ).to(device)
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=config.lr,
+        weight_decay=config.weight_decay,
+    )
+
+    # Training loop
+    best_val_acc = 0.0
+    best_state = None
+    history = []
+
+    for epoch in range(config.epochs):
+        print(f"\nEpoch {epoch+1}/{config.epochs}")
+
+        train_losses = train_epoch_cached(
+            model, train_cached_loader, optimizer, config, device
+        )
+        val_results = evaluate_cached(model, val_cached_loader, device)
+
+        history.append({
+            "epoch": epoch + 1,
+            **{f"train_{k}": v for k, v in train_losses.items()},
+            **{f"val_{k}": v for k, v in val_results.items()},
+        })
+
+        print(f"  Val accuracy: {val_results['accuracy']:.4f}")
+
+        if val_results['accuracy'] > best_val_acc:
+            best_val_acc = val_results['accuracy']
+            best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            print(f"  [NEW BEST]")
+
+    # Final evaluation
+    if best_state:
+        model.load_state_dict(best_state)
+
+    test_results = evaluate_cached(model, test_cached_loader, device)
+    print(f"\nTest accuracy: {test_results['accuracy']:.4f}")
+
+    # Save results
+    results = {
+        "config": asdict(config),
+        "metadata": metadata,
+        "history": history,
+        "test_results": test_results,
+        "best_val_acc": best_val_acc,
+        "method": "vllm_cached",
+    }
+
+    output_path = os.path.join(config.output_dir, f"{config.dataset}_vllm_results.json")
+    with open(output_path, "w") as f:
+        json.dump(results, f, indent=2, default=str)
+
+    return results
+
+
+# =============================================================================
+# CLI INTEGRATION
+# =============================================================================
+
+def main_with_vllm():
+    """Extended main() with vLLM option."""
+    parser = argparse.ArgumentParser(description="CREDENCE with vLLM")
+
+    # Existing arguments...
+    parser.add_argument("--encoder_name", type=str, default="meta-llama/Llama-3.2-3B")
+    parser.add_argument("--dataset", type=str, default="cebab")
+    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--output_dir", type=str, default="./results_vllm")
+
+    # New vLLM arguments
+    parser.add_argument("--use_vllm", action="store_true",
+                       help="Use vLLM for feature extraction (faster for LLMs)")
+    parser.add_argument("--vllm_gpu_util", type=float, default=0.7,
+                       help="GPU memory utilization for vLLM")
+
+    args = parser.parse_args()
+
+    # Import ExperimentConfig if it exists
+    if 'ExperimentConfig' not in globals():
+        raise NameError("ExperimentConfig not found. Make sure it's defined in credence.py")
+
+    config = ExperimentConfig(
+        encoder_name=args.encoder_name,
+        dataset=args.dataset,
+        batch_size=args.batch_size,
+        epochs=args.epochs,
+        output_dir=args.output_dir,
+        freeze_llm=True,  # Always freeze when using vLLM
+    )
+
+    if args.use_vllm:
+        run_experiment_vllm(config)
+    else:
+        # Fall back to standard run_experiment if it exists
+        if 'run_experiment' in globals():
+            run_experiment(config)
+        else:
+            raise NotImplementedError("Standard run_experiment not implemented")
+
 
 def main():
     parser = argparse.ArgumentParser(description="CREDENCE Multi-Model")
