@@ -665,9 +665,7 @@ def main():
         num_classes=5,
         covariance_family=CovarianceFamily.MEAN_FIELD,
 
-        # BALANCED: Lower KL weight since we have free bits
-        kl_weight=1e-3,  # Was 0.1 - way too high with free bits
-
+        kl_weight=1e-5,  # Very small - let model learn first
         concept_weight=0.0,
         aleatoric_weight=0.2,
         supervision_weight=1.0,

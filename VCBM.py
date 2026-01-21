@@ -291,10 +291,6 @@ class VariationalLinearZC(nn.Module):
                 + 2 * log_prior_std
             )
 
-            # FREE BITS: Reduced to work with kl_weight=1e-3
-            free_bits = 0.01  # nats per dimension (was 0.1 - too high)
-            kl_per_dim = torch.clamp(kl_per_dim, min=free_bits)
-
             kl = kl_per_dim.sum()
         else:
             # MC estimation for structured posteriors
@@ -887,14 +883,9 @@ class VariationalCredalCBM(nn.Module):
         reg_factor: float = 1.0
     ) -> Dict[str, torch.Tensor]:
         """
-        Enhanced loss computation with separation regularization and warmup.
-
-        Args:
-            result: Model outputs
-            labels: Task labels
-            concept_labels: Concept labels
-            kl_loss: KL divergence loss
-            reg_factor: Regularization warmup factor (0.0 to 1.0)
+        Simplified loss computation with only core terms.
+        Removed: free_bits, corr_penalty, eu_error_align for now.
+        Kept: orth_penalty with very light weight.
         """
         losses = {}
         device = result['predictions'].device
@@ -959,40 +950,21 @@ class VariationalCredalCBM(nn.Module):
             losses['aleatoric_prior_kl'] = self.aleatoric_head.prior_kl()
 
         # =====================================================================
-        # NEW: SEPARATION REGULARIZATION
+        # SEPARATION: Orthogonality only (very light weight)
         # =====================================================================
-        eu = result['epistemic']
-        au = result['aleatoric']
-
-        # 1. Correlation penalty (encourage low correlation)
-        eu_c = eu - eu.mean(dim=0, keepdim=True)
-        au_c = au - au.mean(dim=0, keepdim=True)
-        corr = (eu_c * au_c).sum(dim=0) / (eu_c.norm(dim=0) * au_c.norm(dim=0) + 1e-8)
-        losses['corr_penalty'] = corr.abs().mean()
-
-        # 2. Orthogonality maintenance
         if self.feature_projection is not None:
             cross = self.feature_projection.W_epi.weight @ self.feature_projection.W_ale.weight.T
             losses['orth_penalty'] = torch.norm(cross, p='fro') ** 2
 
-        # 3. EU-Error alignment (soft - encourage positive correlation)
-        if labels is not None:
-            errors = (result['predictions'] != labels).float()
-            eu_agg = eu.mean(dim=-1)
-            # Encourage positive correlation
-            eu_norm = (eu_agg - eu_agg.mean()) / (eu_agg.std() + 1e-8)
-            err_norm = (errors - errors.mean()) / (errors.std() + 1e-8)
-            losses['eu_error_align'] = -0.1 * (eu_norm * err_norm).mean()  # Negative = encourage positive corr
-
         # =====================================================================
-        # COMBINE
+        # COMBINE - Core losses only
         # =====================================================================
         total = torch.tensor(0.0, device=device)
 
         if 'task_recon' in losses:
             total = total + losses['task_recon']
 
-        total = total + self.config.kl_weight * losses['kl']
+        total = total + self.config.kl_weight * losses['kl']  # Very small weight
 
         if 'concept_bce' in losses:
             total = total + self.config.supervision_weight * losses['concept_bce']
@@ -1009,10 +981,9 @@ class VariationalCredalCBM(nn.Module):
         if 'aleatoric_prior_kl' in losses:
             total = total + losses['aleatoric_prior_kl']
 
-        # Separation regularization terms (with warmup)
-        total = total + reg_factor * 0.1 * losses.get('corr_penalty', 0)
-        total = total + reg_factor * 0.01 * losses.get('orth_penalty', 0)
-        total = total + reg_factor * losses.get('eu_error_align', 0)
+        # Orthogonality only (light weight)
+        if 'orth_penalty' in losses:
+            total = total + 0.001 * losses['orth_penalty']
 
         losses['loss'] = total
         return losses
