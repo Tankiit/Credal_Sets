@@ -93,31 +93,44 @@ class UncertaintyMetrics:
 
     def to_dict(self):
         """Convert to dictionary for JSON serialization."""
+        def convert_value(v):
+            """Convert numpy/python types to JSON-serializable types."""
+            if hasattr(v, 'item'):  # numpy scalar
+                return v.item()
+            elif isinstance(v, (np.floating, float)):
+                return float(v)
+            elif isinstance(v, (np.integer, int)):
+                return int(v)
+            elif isinstance(v, dict):
+                return {k: convert_value(val) for k, val in v.items()}
+            else:
+                return v
+
         return {
-            'accuracy': self.accuracy,
-            'loss': self.loss,
-            'concept_accs': self.concept_accs,
-            'mean_epistemic': self.mean_epistemic,
-            'std_epistemic': self.std_epistemic,
-            'mean_aleatoric': self.mean_aleatoric,
-            'std_aleatoric': self.std_aleatoric,
-            'rho_eu_au': self.rho_eu_au,
-            'p_eu_au': self.p_eu_au,
-            'rho_eu_error': self.rho_eu_error,
-            'p_eu_error': self.p_eu_error,
-            'ece': self.ece,
-            'brier': self.brier,
-            'nll': self.nll,
-            'aurc': self.aurc,
-            'augrc': self.augrc,
-            'trust_accuracy': self.trust_accuracy,
-            'trust_coverage': self.trust_coverage,
-            'data_accuracy': self.data_accuracy,
-            'data_coverage': self.data_coverage,
-            'review_accuracy': self.review_accuracy,
-            'review_coverage': self.review_coverage,
-            'abstain_accuracy': self.abstain_accuracy,
-            'abstain_coverage': self.abstain_coverage,
+            'accuracy': convert_value(self.accuracy),
+            'loss': convert_value(self.loss),
+            'concept_accs': convert_value(self.concept_accs),
+            'mean_epistemic': convert_value(self.mean_epistemic),
+            'std_epistemic': convert_value(self.std_epistemic),
+            'mean_aleatoric': convert_value(self.mean_aleatoric),
+            'std_aleatoric': convert_value(self.std_aleatoric),
+            'rho_eu_au': convert_value(self.rho_eu_au),
+            'p_eu_au': convert_value(self.p_eu_au),
+            'rho_eu_error': convert_value(self.rho_eu_error),
+            'p_eu_error': convert_value(self.p_eu_error),
+            'ece': convert_value(self.ece),
+            'brier': convert_value(self.brier),
+            'nll': convert_value(self.nll),
+            'aurc': convert_value(self.aurc),
+            'augrc': convert_value(self.augrc),
+            'trust_accuracy': convert_value(self.trust_accuracy),
+            'trust_coverage': convert_value(self.trust_coverage),
+            'data_accuracy': convert_value(self.data_accuracy),
+            'data_coverage': convert_value(self.data_coverage),
+            'review_accuracy': convert_value(self.review_accuracy),
+            'review_coverage': convert_value(self.review_coverage),
+            'abstain_accuracy': convert_value(self.abstain_accuracy),
+            'abstain_coverage': convert_value(self.abstain_coverage),
         }
 
 
@@ -643,17 +656,17 @@ def main():
         num_classes=5,
         covariance_family=CovarianceFamily.MEAN_FIELD,
 
-        # CHANGED: Higher KL weight to prevent collapse
-        kl_weight=0.1,  # Was 1e-5
+        # BALANCED: Lower KL weight since we have free bits
+        kl_weight=1e-3,  # Was 0.1 - way too high with free bits
 
-        concept_weight=0.0,  # CHANGED: Disable K-class loss (redundant)
+        concept_weight=0.0,
         aleatoric_weight=0.2,
         supervision_weight=1.0,
         use_orthogonal_projection=True,
         use_temperature_scaling=True,
         use_aleatoric_prior=True,
         pooling_strategy="cls",
-        num_mc_samples=10  # Increased for better uncertainty estimates
+        num_mc_samples=10
     )
 
     print(f"  Config: MC samples={config.num_mc_samples}, KL weight={config.kl_weight}")

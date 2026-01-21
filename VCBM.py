@@ -291,8 +291,8 @@ class VariationalLinearZC(nn.Module):
                 + 2 * log_prior_std
             )
 
-            # FREE BITS: Minimum KL per dimension (prevents collapse)
-            free_bits = 0.1  # nats per dimension
+            # FREE BITS: Reduced to work with kl_weight=1e-3
+            free_bits = 0.01  # nats per dimension (was 0.1 - too high)
             kl_per_dim = torch.clamp(kl_per_dim, min=free_bits)
 
             kl = kl_per_dim.sum()
@@ -884,7 +884,7 @@ class VariationalCredalCBM(nn.Module):
         kl_loss: torch.Tensor
     ) -> Dict[str, torch.Tensor]:
         """
-        Simplified loss computation without redundant K-class classifier.
+        Enhanced loss computation with separation regularization.
         """
         losses = {}
         device = result['predictions'].device
@@ -913,20 +913,17 @@ class VariationalCredalCBM(nn.Module):
                 preds = result['concept_probs'][known_mask]
 
                 # BCE supervision (gradients flow to variational layer)
-                eps = 1e-7
-                preds_clamped = torch.clamp(preds, min=eps, max=1.0 - eps)
+                preds_clamped = torch.clamp(preds, min=1e-7, max=1.0 - 1e-7)
                 losses['concept_bce'] = F.binary_cross_entropy(
-                    preds_clamped, targets, reduction='mean'
+                    preds_clamped, targets
                 )
 
                 # =========================================================
                 # TERM 4: Aleatoric NLL (with DETACHED predictions)
                 # =========================================================
-                preds_detached = preds.detach()
-                ale_var = torch.clamp(result['aleatoric'][known_mask], min=1e-4, max=10.0)
-
-                nll = 0.5 * torch.log(2 * np.pi * ale_var)
-                nll = nll + 0.5 * (preds_detached - targets)**2 / ale_var
+                preds_det = preds.detach()
+                ale = torch.clamp(result['aleatoric'][known_mask], min=1e-4, max=10.0)
+                nll = 0.5 * torch.log(2 * np.pi * ale) + 0.5 * (preds_det - targets)**2 / ale
                 losses['aleatoric_nll'] = nll.mean()
 
             # Unknown concepts should have high aleatoric
@@ -952,6 +949,32 @@ class VariationalCredalCBM(nn.Module):
             losses['aleatoric_prior_kl'] = self.aleatoric_head.prior_kl()
 
         # =====================================================================
+        # NEW: SEPARATION REGULARIZATION
+        # =====================================================================
+        eu = result['epistemic']
+        au = result['aleatoric']
+
+        # 1. Correlation penalty (encourage low correlation)
+        eu_c = eu - eu.mean(dim=0, keepdim=True)
+        au_c = au - au.mean(dim=0, keepdim=True)
+        corr = (eu_c * au_c).sum(dim=0) / (eu_c.norm(dim=0) * au_c.norm(dim=0) + 1e-8)
+        losses['corr_penalty'] = corr.abs().mean()
+
+        # 2. Orthogonality maintenance
+        if self.feature_projection is not None:
+            cross = self.feature_projection.W_epi.weight @ self.feature_projection.W_ale.weight.T
+            losses['orth_penalty'] = torch.norm(cross, p='fro') ** 2
+
+        # 3. EU-Error alignment (soft - encourage positive correlation)
+        if labels is not None:
+            errors = (result['predictions'] != labels).float()
+            eu_agg = eu.mean(dim=-1)
+            # Encourage positive correlation
+            eu_norm = (eu_agg - eu_agg.mean()) / (eu_agg.std() + 1e-8)
+            err_norm = (errors - errors.mean()) / (errors.std() + 1e-8)
+            losses['eu_error_align'] = -0.1 * (eu_norm * err_norm).mean()  # Negative = encourage positive corr
+
+        # =====================================================================
         # COMBINE
         # =====================================================================
         total = torch.tensor(0.0, device=device)
@@ -975,6 +998,11 @@ class VariationalCredalCBM(nn.Module):
 
         if 'aleatoric_prior_kl' in losses:
             total = total + losses['aleatoric_prior_kl']
+
+        # Separation regularization terms
+        total = total + 0.1 * losses.get('corr_penalty', 0)
+        total = total + 0.01 * losses.get('orth_penalty', 0)
+        total = total + losses.get('eu_error_align', 0)
 
         losses['loss'] = total
         return losses
