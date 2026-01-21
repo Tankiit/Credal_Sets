@@ -24,6 +24,42 @@ from tqdm import tqdm
 import json
 
 
+# ============================================================================
+# ANNOTATOR ENTROPY COMPUTATION
+# ============================================================================
+
+def compute_annotator_entropy(distribution: dict, eps: float = 1e-8) -> float:
+    """
+    Compute normalized entropy from annotator distribution.
+
+    Args:
+        distribution: Dict mapping labels to counts (e.g., {'Negative': 3, 'Positive': 5})
+        eps: Small constant for numerical stability
+
+    Returns:
+        Normalized entropy in [0, 1] where:
+        - 0.0 = No disagreement (all annotators agree)
+        - 1.0 = Maximum disagreement (uniform distribution)
+        - 0.5 = Default for missing/unknown data
+    """
+    if not distribution:
+        return 0.5  # Default for missing
+
+    counts = np.array(list(distribution.values()), dtype=np.float32)
+    total = counts.sum()
+
+    if total == 0:
+        return 0.5
+
+    probs = counts / total
+    probs = np.clip(probs, eps, 1.0)
+
+    entropy = -np.sum(probs * np.log(probs))
+    max_entropy = np.log(len(distribution)) if len(distribution) > 1 else 1.0
+
+    return float(entropy / max_entropy) if max_entropy > 0 else 0.0
+
+
 def load_cebab(
     split_ids_path: Optional[str] = None,
     include_edits: bool = True,
@@ -245,8 +281,9 @@ def process_cebab_raw(raw_data: List[Dict]) -> List[Dict]:
             'concepts': concepts,  # [4] - food, service, ambiance, noise
             'is_unknown': is_unknown,  # [4] - which concepts are unknown
 
-            # For analysis
+            # For analysis and aleatoric supervision
             '_concept_entropies': concept_entropies.astype(np.float32),
+            '_concept_distributions': concept_distributions,  # Raw distributions for on-the-fly entropy computation
             '_rating_entropy': float(normalized_rating_entropy),
             '_overall_disagreement': float(concept_entropies.mean()),
 
@@ -354,8 +391,29 @@ class CEBaBDataset:
         }
 
         # Add concept entropies as annotator_entropy (for concept-supervised model)
+        # Use pre-computed entropies if available
         if '_concept_entropies' in item:
             result['annotator_entropy'] = torch.tensor(item["_concept_entropies"], dtype=torch.float)
+        elif '_concept_distributions' in item:
+            # Compute entropies on-the-fly from raw distributions
+            concept_names = ['food', 'service', 'ambiance', 'noise']
+            entropies = []
+            for i, dist in enumerate(item['_concept_distributions']):
+                if isinstance(dist, list) and len(dist) == 3:
+                    # Convert probability distribution to count distribution
+                    # dist = [prob_neg, prob_unk, prob_pos]
+                    # Scale to fake counts (e.g., out of 10 annotators)
+                    counts = {
+                        'Negative': max(1, int(dist[0] * 10)),
+                        'unknown': max(1, int(dist[1] * 10)),
+                        'Positive': max(1, int(dist[2] * 10))
+                    }
+                    entropy = compute_annotator_entropy(counts)
+                    entropies.append(entropy)
+                else:
+                    entropies.append(0.5)  # Default for missing data
+
+            result['annotator_entropy'] = torch.tensor(entropies, dtype=torch.float)
 
         # Add optional metadata
         for key in ['_rating_entropy', '_overall_disagreement']:
