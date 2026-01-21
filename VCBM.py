@@ -42,6 +42,7 @@ class GradSeparatedConfig:
 
     # Concepts
     num_concepts: int = 4
+    concept_names: list = None  # Optional list of concept names
     concept_classes: int = 3  # neg/unk/pos
 
     # Task
@@ -435,10 +436,25 @@ class GradSeparatedCredalCBM(nn.Module):
         # Track training state
         self.current_epoch = 0
 
-        # self._print_config()
+        self._print_config()
 
     def _print_config(self):
-        pass
+        print("\n" + "=" * 70)
+        print("GRADIENT-SEPARATED CREDAL CBM")
+        print("=" * 70)
+        print(f"Encoder: {self.config.encoder_name}")
+        print(f"Concepts: {self.config.num_concepts}")
+        if self.config.concept_names:
+            print(f"  {self.config.concept_names}")
+        print(f"Orthogonal projection: {self.config.use_orthogonal_projection}")
+        print(f"\nGradient separation:")
+        print(f"  • μ ← task_loss + concept_bce")
+        print(f"  • σ_var ← kl_loss + alignment (DETACHED from task)")
+        print(f"  • σ_err ← error_pred_loss (warmup: {self.config.error_warmup_epochs} epochs)")
+        print(f"  • σ_ale ← aleatoric_nll")
+        print(f"\nEpistemic combination: α·σ_var + (1-α)·σ_err")
+        print(f"  • α: {self.config.alpha_start} → {self.config.alpha_end} over {self.config.alpha_warmup_epochs} epochs")
+        print("=" * 70 + "\n")
 
     def set_epoch(self, epoch: int):
         """Set current epoch for scheduling."""
