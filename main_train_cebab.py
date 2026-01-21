@@ -347,7 +347,7 @@ class CredalCBMTrainer:
         # Concatenate
         all_preds = np.array(all_preds)
         all_labels = np.array(all_labels)
-        all_concept_probs = np.array(all_concept_probs).numpy()
+        all_concept_probs = np.array(all_concept_probs)
         if all_concept_labels:
             all_concept_labels = np.array(all_concept_labels)
         else:
