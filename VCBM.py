@@ -1,12 +1,17 @@
 """
-Variational Credal CBM - Gradient Separated Version
-====================================================
+Concept-Supervised Credal CBM
+=============================
 
-Key changes from original:
-1. σ_var detached from task loss (only KL + alignment trains it)
-2. Error prediction head for epistemic supervision
-3. Scheduled combination: epistemic = α·σ_var + (1-α)·σ_err
-4. Warmup period before error head activates
+Key design:
+1. σ_epi: Trained to predict concept-level errors |pred - target|
+2. σ_ale: Trained to predict annotator disagreement entropy
+3. Both have per-concept supervision from CEBaB
+4. Orthogonal projections ensure structural separation
+5. NO variational sampling - deterministic heads (simpler, avoids collapse)
+
+The VAE-style tension:
+- σ_epi: KL regularization ↔ concept error prediction
+- σ_ale: Prior regularization ↔ annotator entropy prediction
 
 Author: Tanmoy
 Target: ICML 2026
@@ -15,25 +20,29 @@ Target: ICML 2026
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 from dataclasses import dataclass, field
 from enum import Enum
 import numpy as np
 
 
 # ============================================================================
-# CONFIGURATION
+# COVARIANCE FAMILY ENUM
 # ============================================================================
 
 class CovarianceFamily(Enum):
-    MEAN_FIELD = "mean_field"
-    LOW_RANK = "low_rank"
-    FULL = "full"
+    """Covariance structure for credal sets"""
+    MEAN_FIELD = "mean_field"  # Independent concepts
+    FULL = "full"  # Full covariance matrix
 
+
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
 
 @dataclass
-class GradSeparatedConfig:
-    """Configuration for Gradient-Separated Variational Credal CBM"""
+class ConceptSupervisedConfig:
+    """Configuration for Concept-Supervised Credal CBM"""
 
     # Encoder
     encoder_name: str = "distilbert-base-uncased"
@@ -42,39 +51,95 @@ class GradSeparatedConfig:
 
     # Concepts
     num_concepts: int = 4
-    concept_names: list = None  # Optional list of concept names
+    concept_names: List[str] = field(default_factory=lambda: ['food', 'service', 'ambiance', 'noise'])
     concept_classes: int = 3  # neg/unk/pos
+    covariance_family: CovarianceFamily = CovarianceFamily.MEAN_FIELD
 
     # Task
     num_classes: int = 2
 
-    # Variational
-    covariance_family: CovarianceFamily = CovarianceFamily.MEAN_FIELD
-    prior_std: float = 1.0
-    num_mc_samples: int = 20
-    min_std: float = 0.05  # Floor to prevent collapse
-
     # Loss weights
-    kl_weight: float = 1e-3
     concept_weight: float = 2.0
-    aleatoric_weight: float = 0.2
-    error_pred_weight: float = 1.0
-    alignment_weight: float = 0.5  # σ_var aligns with σ_err
+    epistemic_weight: float = 1.0
+    aleatoric_weight: float = 1.0
+    kl_weight: float = 0.01  # Regularization for epistemic
+    orth_weight: float = 0.001
 
-    # Error head
-    error_warmup_epochs: int = 3  # Train concepts first
-
-    # Epistemic combination schedule
-    alpha_start: float = 1.0   # Start with pure variational
-    alpha_end: float = 0.3     # End with more error-based
-    alpha_warmup_epochs: int = 10  # Epochs to anneal α
+    # Priors (for VAE-style tension)
+    epistemic_prior: float = 0.1  # Expected baseline error rate
+    aleatoric_prior: float = 0.3  # Expected baseline disagreement
 
     # Orthogonal projection
     use_orthogonal_projection: bool = True
 
+    # Hidden dimensions
+    uncertainty_hidden_dim: int = 128
+
 
 # ============================================================================
-# ORTHOGONAL PROJECTION (2-way: epistemic vs aleatoric)
+# ANNOTATOR ENTROPY COMPUTATION
+# ============================================================================
+
+def compute_annotator_entropy(distributions: Dict[str, int], eps: float = 1e-8) -> float:
+    """
+    Compute entropy from annotator distribution.
+
+    Args:
+        distributions: Dict like {"Positive": 3, "Negative": 1, "unknown": 1}
+        eps: Small value for numerical stability
+
+    Returns:
+        Entropy in [0, log(n_classes)] normalized to [0, 1]
+    """
+    counts = np.array(list(distributions.values()), dtype=np.float32)
+    total = counts.sum()
+
+    if total == 0:
+        return 0.0
+
+    probs = counts / total
+    probs = np.clip(probs, eps, 1.0)
+
+    entropy = -np.sum(probs * np.log(probs))
+
+    # Normalize to [0, 1] by dividing by max entropy (log(n_classes))
+    max_entropy = np.log(len(distributions))
+    if max_entropy > 0:
+        entropy = entropy / max_entropy
+
+    return float(entropy)
+
+
+def compute_concept_entropies_batch(
+    concept_distributions: List[List[Dict[str, int]]]
+) -> torch.Tensor:
+    """
+    Compute per-concept annotator entropy for a batch.
+
+    Args:
+        concept_distributions: [batch_size, num_concepts] list of dicts
+            Each dict is like {"Positive": 3, "Negative": 1, "unknown": 1}
+
+    Returns:
+        [batch_size, num_concepts] tensor of entropies in [0, 1]
+    """
+    batch_size = len(concept_distributions)
+    num_concepts = len(concept_distributions[0]) if batch_size > 0 else 0
+
+    entropies = torch.zeros(batch_size, num_concepts)
+
+    for i, concepts in enumerate(concept_distributions):
+        for j, dist in enumerate(concepts):
+            if dist is not None:
+                entropies[i, j] = compute_annotator_entropy(dist)
+            else:
+                entropies[i, j] = 0.5  # Default if missing
+
+    return entropies
+
+
+# ============================================================================
+# ORTHOGONAL PROJECTION
 # ============================================================================
 
 class OrthogonalProjection(nn.Module):
@@ -95,146 +160,20 @@ class OrthogonalProjection(nn.Module):
         return self.W_epi(hidden), self.W_ale(hidden)
 
     def orthogonality_loss(self) -> torch.Tensor:
-        """Penalize non-orthogonality."""
+        """Penalize non-orthogonality: ||W_epi^T @ W_ale||_F^2"""
         cross = self.W_epi.weight @ self.W_ale.weight.T
         return torch.norm(cross, p='fro') ** 2
 
 
 # ============================================================================
-# GRADIENT-SEPARATED VARIATIONAL LAYER
+# CONCEPT PREDICTION HEAD
 # ============================================================================
 
-class VariationalLinearGradSeparated(nn.Module):
+class ConceptHead(nn.Module):
     """
-    Variational linear layer with proper gradient separation.
+    Deterministic concept prediction head.
 
-    Key insight: σ_var is DETACHED from task loss.
-    It only receives gradients from:
-      1. KL divergence (regularization toward prior)
-      2. Alignment with error prediction (meaningful signal)
-
-    This prevents the collapse where task loss drives σ → 0.
-    """
-
-    def __init__(
-        self,
-        in_features: int,
-        out_features: int,
-        prior_std: float = 1.0,
-        min_std: float = 0.05
-    ):
-        super().__init__()
-        self.in_features = in_features
-        self.out_features = out_features
-        self.min_std = min_std
-
-        # Mean parameters (receive task + concept gradients)
-        self.weight_mu = nn.Parameter(torch.randn(out_features, in_features) * 0.02)
-        self.bias_mu = nn.Parameter(torch.zeros(out_features))
-
-        # Std parameters (receive KL + alignment gradients ONLY)
-        self.weight_rho = nn.Parameter(torch.ones(out_features, in_features) * -2.0)
-        self.bias_rho = nn.Parameter(torch.ones(out_features) * -2.0)
-
-        # Prior
-        self.register_buffer('prior_std', torch.tensor(prior_std))
-
-    def _softplus(self, x: torch.Tensor) -> torch.Tensor:
-        return F.softplus(x) + 1e-6
-
-    def get_weight_std(self) -> torch.Tensor:
-        """Get weight std with minimum floor."""
-        std = self._softplus(self.weight_rho)
-        return torch.clamp(std, min=self.min_std)
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        n_samples: int = 10
-    ) -> Dict[str, torch.Tensor]:
-        """
-        Forward pass with DETACHED std for task gradient path.
-
-        Args:
-            x: [batch, in_features]
-            n_samples: MC samples
-
-        Returns:
-            mean, epistemic_var, logits_mean, kl
-        """
-        device = x.device
-        batch_size = x.size(0)
-
-        weight_std = self.get_weight_std()
-        bias_std = torch.clamp(self._softplus(self.bias_rho), min=self.min_std)
-
-        # === CRITICAL: Detach std from task gradient path ===
-        weight_std_detached = weight_std.detach()
-        bias_std_detached = bias_std.detach()
-
-        # Sample weights using detached std
-        eps_w = torch.randn(n_samples, self.out_features, self.in_features, device=device)
-        eps_b = torch.randn(n_samples, self.out_features, device=device)
-
-        weights = self.weight_mu + eps_w * weight_std_detached
-        biases = self.bias_mu + eps_b * bias_std_detached
-
-        # Forward pass: [S, O, I] x [B, I] -> [S, B, O]
-        mc_logits = torch.einsum('soi,bi->sbo', weights, x) + biases.unsqueeze(1)
-        mc_probs = torch.sigmoid(mc_logits)
-
-        # Statistics
-        mean = mc_probs.mean(dim=0)  # [B, O]
-        epistemic_var = mc_probs.var(dim=0)  # [B, O]
-        logits_mean = mc_logits.mean(dim=0)  # [B, O]
-
-        return {
-            'mean': mean,
-            'epistemic_var': epistemic_var,
-            'logits_mean': logits_mean,
-            'mc_samples': mc_probs,  # [S, B, O]
-            'weight_std': weight_std,  # For monitoring
-        }
-
-    def kl_divergence(self) -> torch.Tensor:
-        """KL(q(W) || p(W)) - this DOES backprop to weight_rho."""
-        weight_std = self.get_weight_std()
-        prior_std = self.prior_std.to(weight_std.dtype)
-
-        # Closed-form KL for diagonal Gaussian
-        kl = 0.5 * (
-            (weight_std / prior_std) ** 2
-            + (self.weight_mu / prior_std) ** 2
-            - 1
-            - 2 * torch.log(weight_std / prior_std)
-        )
-
-        # Bias KL
-        bias_std = torch.clamp(self._softplus(self.bias_rho), min=self.min_std)
-        kl_bias = 0.5 * (
-            (bias_std / prior_std) ** 2
-            + (self.bias_mu / prior_std) ** 2
-            - 1
-            - 2 * torch.log(bias_std / prior_std)
-        )
-
-        return kl.sum() + kl_bias.sum()
-
-
-# ============================================================================
-# ERROR PREDICTION HEAD
-# ============================================================================
-
-class ErrorPredictionHead(nn.Module):
-    """
-    Predicts soft concept-level errors.
-
-    Target: |sigmoid(logit) - ground_truth| for each concept
-    This is the BCE "gap" that Tomov-style approaches use.
-
-    Provides supervision signal for epistemic uncertainty:
-    - High predicted error → high epistemic (model unsure)
-    - Low predicted error → low epistemic (model confident)
+    Maps h_epi → concept probabilities (no variational sampling).
     """
 
     def __init__(self, in_features: int, num_concepts: int, hidden_dim: int = 128):
@@ -244,11 +183,58 @@ class ErrorPredictionHead(nn.Module):
             nn.Linear(in_features, hidden_dim),
             nn.GELU(),
             nn.Dropout(0.1),
+            nn.Linear(hidden_dim, num_concepts),
+        )
+
+    def forward(self, h: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            h: [batch, in_features]
+
+        Returns:
+            concept_logits: [batch, num_concepts]
+        """
+        return self.net(h)
+
+
+# ============================================================================
+# EPISTEMIC HEAD (Predicts Concept Errors)
+# ============================================================================
+
+class EpistemicHead(nn.Module):
+    """
+    Predicts per-concept epistemic uncertainty.
+
+    Training signal: concept-level error |pred - target|
+    VAE-style tension: KL toward prior ↔ error prediction loss
+
+    Interpretation: "How likely is the model wrong on this concept?"
+    """
+
+    def __init__(
+        self,
+        in_features: int,
+        num_concepts: int,
+        hidden_dim: int = 128,
+        prior_mean: float = 0.1
+    ):
+        super().__init__()
+        self.num_concepts = num_concepts
+        self.prior_mean = prior_mean
+
+        self.net = nn.Sequential(
+            nn.Linear(in_features, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(0.1),
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.GELU(),
             nn.Linear(hidden_dim // 2, num_concepts),
-            nn.Sigmoid()  # Output in [0, 1] (predicted error magnitude)
         )
+
+        # Learnable prior (initialized to prior_mean in logit space)
+        # sigmoid(x) = prior_mean → x = logit(prior_mean)
+        prior_logit = np.log(prior_mean / (1 - prior_mean))
+        self.log_prior = nn.Parameter(torch.ones(num_concepts) * prior_logit)
 
     def forward(self, h: torch.Tensor) -> torch.Tensor:
         """
@@ -256,35 +242,106 @@ class ErrorPredictionHead(nn.Module):
             h: [batch, in_features] - h_epi from orthogonal projection
 
         Returns:
-            error_pred: [batch, num_concepts] - predicted error per concept
+            epistemic: [batch, num_concepts] in [0, 1]
         """
-        return self.net(h)
+        logits = self.net(h) + self.log_prior
+        logits = torch.clamp(logits, -10, 10)
+        return torch.sigmoid(logits)
+
+    def kl_divergence(self, epistemic: torch.Tensor) -> torch.Tensor:
+        """
+        KL divergence from predicted epistemic to prior.
+
+        Encourages epistemic to stay near prior unless data says otherwise.
+        This creates VAE-style tension with the error prediction loss.
+
+        Args:
+            epistemic: [batch, num_concepts] predicted epistemic uncertainty
+
+        Returns:
+            KL divergence (scalar)
+        """
+        # Prior: Beta distribution centered at prior_mean
+        # Approximation: treat as Bernoulli, compute binary cross-entropy to prior
+        prior = torch.sigmoid(self.log_prior)
+        prior = prior.unsqueeze(0).expand_as(epistemic)
+
+        # KL(predicted || prior) for Bernoulli
+        eps = 1e-7
+        epistemic_clamped = torch.clamp(epistemic, eps, 1 - eps)
+        prior_clamped = torch.clamp(prior, eps, 1 - eps)
+
+        kl = epistemic_clamped * torch.log(epistemic_clamped / prior_clamped) + \
+             (1 - epistemic_clamped) * torch.log((1 - epistemic_clamped) / (1 - prior_clamped))
+
+        return kl.mean()
 
 
 # ============================================================================
-# ALEATORIC HEAD (unchanged from before)
+# ALEATORIC HEAD (Predicts Annotator Disagreement)
 # ============================================================================
 
 class AleatoricHead(nn.Module):
-    """Heteroscedastic aleatoric uncertainty head."""
+    """
+    Predicts per-concept aleatoric uncertainty.
 
-    def __init__(self, in_features: int, num_concepts: int, hidden_dim: int = 64):
+    Training signal: annotator disagreement entropy
+    VAE-style tension: KL toward prior ↔ entropy prediction loss
+
+    Interpretation: "How much do humans disagree on this concept?"
+    """
+
+    def __init__(
+        self,
+        in_features: int,
+        num_concepts: int,
+        hidden_dim: int = 128,
+        prior_mean: float = 0.3
+    ):
         super().__init__()
+        self.num_concepts = num_concepts
+        self.prior_mean = prior_mean
 
         self.net = nn.Sequential(
             nn.Linear(in_features, hidden_dim),
             nn.GELU(),
             nn.Dropout(0.1),
-            nn.Linear(hidden_dim, num_concepts),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.GELU(),
+            nn.Linear(hidden_dim // 2, num_concepts),
         )
 
-        # Learnable prior (encourages some baseline uncertainty)
-        self.log_prior = nn.Parameter(torch.ones(num_concepts) * -1.5)
+        # Learnable prior
+        prior_logit = np.log(prior_mean / (1 - prior_mean))
+        self.log_prior = nn.Parameter(torch.ones(num_concepts) * prior_logit)
 
     def forward(self, h: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            h: [batch, in_features] - h_ale from orthogonal projection
+
+        Returns:
+            aleatoric: [batch, num_concepts] in [0, 1]
+        """
         logits = self.net(h) + self.log_prior
         logits = torch.clamp(logits, -10, 10)
         return torch.sigmoid(logits)
+
+    def kl_divergence(self, aleatoric: torch.Tensor) -> torch.Tensor:
+        """
+        KL divergence from predicted aleatoric to prior.
+        """
+        prior = torch.sigmoid(self.log_prior)
+        prior = prior.unsqueeze(0).expand_as(aleatoric)
+
+        eps = 1e-7
+        aleatoric_clamped = torch.clamp(aleatoric, eps, 1 - eps)
+        prior_clamped = torch.clamp(prior, eps, 1 - eps)
+
+        kl = aleatoric_clamped * torch.log(aleatoric_clamped / prior_clamped) + \
+             (1 - aleatoric_clamped) * torch.log((1 - aleatoric_clamped) / (1 - prior_clamped))
+
+        return kl.mean()
 
 
 # ============================================================================
@@ -308,44 +365,16 @@ class TaskClassifier(nn.Module):
 
 
 # ============================================================================
-# ALPHA SCHEDULER
-# ============================================================================
-
-class AlphaScheduler:
-    """
-    Schedules α for epistemic combination:
-        epistemic = α * σ_var + (1-α) * σ_err
-
-    Starts at α=1.0 (pure variational), anneals to α_end (more error-based).
-    """
-
-    def __init__(
-        self,
-        alpha_start: float = 1.0,
-        alpha_end: float = 0.3,
-        warmup_epochs: int = 10
-    ):
-        self.alpha_start = alpha_start
-        self.alpha_end = alpha_end
-        self.warmup_epochs = warmup_epochs
-
-    def get_alpha(self, epoch: int) -> float:
-        """Get α value for given epoch."""
-        if epoch >= self.warmup_epochs:
-            return self.alpha_end
-
-        # Linear annealing
-        progress = epoch / self.warmup_epochs
-        return self.alpha_start + progress * (self.alpha_end - self.alpha_start)
-
-
-# ============================================================================
 # MAIN MODEL
 # ============================================================================
 
-class GradSeparatedCredalCBM(nn.Module):
+class ConceptSupervisedCredalCBM(nn.Module):
     """
-    Gradient-Separated Variational Credal CBM
+    Concept-Supervised Credal CBM
+
+    Both epistemic and aleatoric have direct per-concept supervision:
+    - σ_epi: trained to predict |concept_pred - concept_target|
+    - σ_ale: trained to predict annotator_entropy per concept
 
     Architecture:
     ┌─────────────────────────────────────────────────────────────────┐
@@ -360,27 +389,27 @@ class GradSeparatedCredalCBM(nn.Module):
     │      ├───────┐       │                                         │
     │      ↓       ↓       ↓                                         │
     │ ┌─────────┐ ┌─────┐ ┌─────────┐                               │
-    │ │Variation│ │Error│ │Aleatoric│                               │
-    │ │ Linear  │ │Head │ │  Head   │                               │
+    │ │ Concept │ │Epist│ │Aleatoric│                               │
+    │ │  Head   │ │Head │ │  Head   │                               │
     │ │         │ │     │ │         │                               │
-    │ │μ, σ_var │ │σ_err│ │  σ_ale  │                               │
+    │ │ μ(x)    │ │σ_epi│ │  σ_ale  │                               │
     │ └────┬────┘ └──┬──┘ └────┬────┘                               │
     │      │         │         │                                     │
-    │      └────┬────┘         │                                     │
-    │           ↓              │                                     │
-    │   epistemic = α·σ_var + (1-α)·σ_err                           │
-    │                          │                                     │
-    │                     aleatoric                                  │
+    │      │    Predicts   Predicts                                  │
+    │      │    concept    annotator                                 │
+    │      │    errors     entropy                                   │
+    │      │         │         │                                     │
+    │      ↓         ↓         ↓                                     │
+    │   concepts  epistemic  aleatoric                               │
     │                                                                │
     │  Gradient flow:                                                │
-    │  • μ        ← task_loss + concept_bce                         │
-    │  • σ_var    ← kl_loss + alignment_loss (DETACHED from task)   │
-    │  • σ_err    ← error_prediction_loss (after warmup)            │
-    │  • σ_ale    ← aleatoric_nll (detached concept preds)          │
+    │  • concept_head ← concept_bce + task_loss                     │
+    │  • epistemic_head ← error_pred_loss + kl_epi (VAE tension)    │
+    │  • aleatoric_head ← entropy_pred_loss + kl_ale (VAE tension)  │
     └─────────────────────────────────────────────────────────────────┘
     """
 
-    def __init__(self, config: GradSeparatedConfig):
+    def __init__(self, config: ConceptSupervisedConfig):
         super().__init__()
         self.config = config
 
@@ -401,23 +430,27 @@ class GradSeparatedCredalCBM(nn.Module):
             self.projection = None
             proj_dim = self.hidden_size
 
-        # Epistemic pathway: Variational + Error head
-        self.variational_layer = VariationalLinearGradSeparated(
+        # Concept prediction (deterministic)
+        self.concept_head = ConceptHead(
             in_features=proj_dim,
-            out_features=config.num_concepts,
-            prior_std=config.prior_std,
-            min_std=config.min_std
+            num_concepts=config.num_concepts,
+            hidden_dim=config.uncertainty_hidden_dim
         )
 
-        self.error_head = ErrorPredictionHead(
+        # Epistemic head (predicts concept errors)
+        self.epistemic_head = EpistemicHead(
             in_features=proj_dim,
-            num_concepts=config.num_concepts
+            num_concepts=config.num_concepts,
+            hidden_dim=config.uncertainty_hidden_dim,
+            prior_mean=config.epistemic_prior
         )
 
-        # Aleatoric pathway
+        # Aleatoric head (predicts annotator disagreement)
         self.aleatoric_head = AleatoricHead(
             in_features=proj_dim,
-            num_concepts=config.num_concepts
+            num_concepts=config.num_concepts,
+            hidden_dim=config.uncertainty_hidden_dim,
+            prior_mean=config.aleatoric_prior
         )
 
         # Task classifier
@@ -426,39 +459,22 @@ class GradSeparatedCredalCBM(nn.Module):
             num_classes=config.num_classes
         )
 
-        # Alpha scheduler
-        self.alpha_scheduler = AlphaScheduler(
-            alpha_start=config.alpha_start,
-            alpha_end=config.alpha_end,
-            warmup_epochs=config.alpha_warmup_epochs
-        )
-
-        # Track training state
-        self.current_epoch = 0
-
         self._print_config()
 
     def _print_config(self):
         print("\n" + "=" * 70)
-        print("GRADIENT-SEPARATED CREDAL CBM")
+        print("CONCEPT-SUPERVISED CREDAL CBM")
         print("=" * 70)
         print(f"Encoder: {self.config.encoder_name}")
-        print(f"Concepts: {self.config.num_concepts}")
-        if self.config.concept_names:
-            print(f"  {self.config.concept_names}")
+        print(f"Concepts: {self.config.num_concepts} {self.config.concept_names}")
         print(f"Orthogonal projection: {self.config.use_orthogonal_projection}")
-        print(f"\nGradient separation:")
-        print(f"  • μ ← task_loss + concept_bce")
-        print(f"  • σ_var ← kl_loss + alignment (DETACHED from task)")
-        print(f"  • σ_err ← error_pred_loss (warmup: {self.config.error_warmup_epochs} epochs)")
-        print(f"  • σ_ale ← aleatoric_nll")
-        print(f"\nEpistemic combination: α·σ_var + (1-α)·σ_err")
-        print(f"  • α: {self.config.alpha_start} → {self.config.alpha_end} over {self.config.alpha_warmup_epochs} epochs")
+        print(f"\nSupervision signals:")
+        print(f"  • σ_epi ← concept errors |pred - target| (prior={self.config.epistemic_prior})")
+        print(f"  • σ_ale ← annotator entropy H(dist) (prior={self.config.aleatoric_prior})")
+        print(f"\nVAE-style tension:")
+        print(f"  • KL weight: {self.config.kl_weight}")
+        print(f"  • Both heads have learnable priors")
         print("=" * 70 + "\n")
-
-    def set_epoch(self, epoch: int):
-        """Set current epoch for scheduling."""
-        self.current_epoch = epoch
 
     def encode(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         """Encode input to hidden representation."""
@@ -476,14 +492,18 @@ class GradSeparatedCredalCBM(nn.Module):
         attention_mask: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
         concept_labels: Optional[torch.Tensor] = None,
-        n_samples: Optional[int] = None
+        annotator_entropy: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
-        Forward pass with gradient separation.
-        """
-        if n_samples is None:
-            n_samples = self.config.num_mc_samples
+        Forward pass with concept-level supervision.
 
+        Args:
+            input_ids: [batch, seq_len]
+            attention_mask: [batch, seq_len]
+            labels: [batch] task labels
+            concept_labels: [batch, num_concepts] concept labels (0=neg, 1=unk, 2=pos)
+            annotator_entropy: [batch, num_concepts] per-concept annotator entropy
+        """
         # Encode
         hidden = self.encode(input_ids, attention_mask)
 
@@ -494,20 +514,15 @@ class GradSeparatedCredalCBM(nn.Module):
             h_epi = hidden
             h_ale = hidden
 
-        # === EPISTEMIC PATHWAY ===
-        var_out = self.variational_layer(h_epi, n_samples=n_samples)
-        concept_probs = var_out['mean']          # [B, K]
-        epistemic_var = var_out['epistemic_var'] # [B, K] from MC variance
+        # === CONCEPT PREDICTION ===
+        concept_logits = self.concept_head(h_epi)
+        concept_probs = torch.sigmoid(concept_logits)
 
-        # Error prediction (uses same h_epi)
-        epistemic_err = self.error_head(h_epi)   # [B, K]
+        # === EPISTEMIC (predicts concept errors) ===
+        epistemic = self.epistemic_head(h_epi)
 
-        # Combine with scheduled α
-        alpha = self.alpha_scheduler.get_alpha(self.current_epoch)
-        epistemic = alpha * epistemic_var + (1 - alpha) * epistemic_err
-
-        # === ALEATORIC PATHWAY ===
-        aleatoric = self.aleatoric_head(h_ale)   # [B, K]
+        # === ALEATORIC (predicts annotator entropy) ===
+        aleatoric = self.aleatoric_head(h_ale)
 
         # === TASK CLASSIFICATION ===
         task_out = self.task_classifier(concept_probs)
@@ -521,25 +536,18 @@ class GradSeparatedCredalCBM(nn.Module):
 
             # Concepts
             'concept_probs': concept_probs,
-            'concept_logits': var_out['logits_mean'],
+            'concept_logits': concept_logits,
 
-            # Epistemic (combined)
+            # Uncertainties
             'epistemic': epistemic,
-            'epistemic_var': epistemic_var,  # From variational
-            'epistemic_err': epistemic_err,  # From error head
-            'alpha': alpha,
-
-            # Aleatoric
             'aleatoric': aleatoric,
-
-            # Monitoring
-            'weight_std': var_out['weight_std'],
-            'mc_samples': var_out['mc_samples'],
         }
 
         # === COMPUTE LOSSES ===
         if labels is not None or concept_labels is not None:
-            losses = self._compute_losses(result, labels, concept_labels, var_out)
+            losses = self._compute_losses(
+                result, labels, concept_labels, annotator_entropy
+            )
             result.update(losses)
 
         return result
@@ -549,27 +557,22 @@ class GradSeparatedCredalCBM(nn.Module):
         result: Dict[str, torch.Tensor],
         labels: Optional[torch.Tensor],
         concept_labels: Optional[torch.Tensor],
-        var_out: Dict[str, torch.Tensor]
+        annotator_entropy: Optional[torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
         """
-        Compute all losses with proper gradient separation.
+        Compute all losses with per-concept supervision.
         """
         losses = {}
         device = result['predictions'].device
 
         # =====================================================================
-        # TERM 1: Task loss (gradients → μ via concept_probs)
+        # TERM 1: Task loss
         # =====================================================================
         if labels is not None:
             losses['task_loss'] = F.cross_entropy(result['logits'], labels)
 
         # =====================================================================
-        # TERM 2: KL divergence (gradients → σ_var via weight_rho)
-        # =====================================================================
-        losses['kl_loss'] = self.variational_layer.kl_divergence()
-
-        # =====================================================================
-        # TERM 3: Concept BCE (gradients → μ)
+        # TERM 2: Concept BCE (gradients → concept_head)
         # =====================================================================
         if concept_labels is not None:
             known_mask = (concept_labels != 1)  # Exclude unknown
@@ -583,36 +586,22 @@ class GradSeparatedCredalCBM(nn.Module):
                 losses['concept_bce'] = F.binary_cross_entropy(preds_clamped, targets)
 
                 # =============================================================
-                # TERM 4: Error prediction loss (gradients → error_head)
-                # Only active after warmup
+                # TERM 3: Epistemic supervision (gradients → epistemic_head)
+                # Predicts concept-level errors
                 # =============================================================
-                if self.current_epoch >= self.config.error_warmup_epochs:
-                    # Soft error: |pred - target|
-                    soft_errors = torch.abs(preds.detach() - targets)
-                    error_pred = result['epistemic_err'][known_mask]
-
-                    losses['error_pred_loss'] = F.mse_loss(error_pred, soft_errors)
-
-                    # =============================================================
-                    # TERM 5: Alignment loss (gradients → σ_var)
-                    # σ_var should track σ_err
-                    # =============================================================
-                    epistemic_var = result['epistemic_var'][known_mask]
-                    losses['alignment_loss'] = F.mse_loss(
-                        epistemic_var,
-                        error_pred.detach()  # Detach to not affect error_head
-                    )
+                # Soft error: |pred - target|
+                soft_errors = torch.abs(preds.detach() - targets)
+                epistemic_pred = result['epistemic'][known_mask]
+                losses['epistemic_loss'] = F.mse_loss(epistemic_pred, soft_errors)
 
                 # =============================================================
-                # TERM 6: Aleatoric NLL (gradients → aleatoric_head)
-                # Uses DETACHED concept predictions
+                # TERM 4: Aleatoric supervision (gradients → aleatoric_head)
+                # Predicts annotator entropy
                 # =============================================================
-                preds_det = preds.detach()
-                ale = torch.clamp(result['aleatoric'][known_mask], 1e-4, 10.0)
-
-                # Gaussian NLL
-                nll = 0.5 * torch.log(2 * np.pi * ale) + 0.5 * (preds_det - targets)**2 / ale
-                losses['aleatoric_nll'] = nll.mean()
+                if annotator_entropy is not None:
+                    entropy_targets = annotator_entropy[known_mask]
+                    aleatoric_pred = result['aleatoric'][known_mask]
+                    losses['aleatoric_loss'] = F.mse_loss(aleatoric_pred, entropy_targets)
 
             # Unknown concepts should have high aleatoric
             unknown_mask = (concept_labels == 1)
@@ -621,6 +610,18 @@ class GradSeparatedCredalCBM(nn.Module):
                     result['aleatoric'][unknown_mask],
                     torch.ones_like(result['aleatoric'][unknown_mask])
                 )
+
+        # =====================================================================
+        # TERM 5: Epistemic KL (VAE-style tension)
+        # =====================================================================
+        if 'epistemic' in result:
+            losses['epistemic_kl'] = self.epistemic_head.kl_divergence(result['epistemic'])
+
+        # =====================================================================
+        # TERM 6: Aleatoric KL (VAE-style tension)
+        # =====================================================================
+        if 'aleatoric' in result:
+            losses['aleatoric_kl'] = self.aleatoric_head.kl_divergence(result['aleatoric'])
 
         # =====================================================================
         # TERM 7: Orthogonality penalty
@@ -639,22 +640,20 @@ class GradSeparatedCredalCBM(nn.Module):
         if 'concept_bce' in losses:
             total = total + self.config.concept_weight * losses['concept_bce']
 
-        total = total + self.config.kl_weight * losses['kl_loss']
+        if 'epistemic_loss' in losses:
+            total = total + self.config.epistemic_weight * losses['epistemic_loss']
 
-        if 'error_pred_loss' in losses:
-            total = total + self.config.error_pred_weight * losses['error_pred_loss']
-
-        if 'alignment_loss' in losses:
-            total = total + self.config.alignment_weight * losses['alignment_loss']
-
-        if 'aleatoric_nll' in losses:
-            total = total + self.config.aleatoric_weight * losses['aleatoric_nll']
+        if 'aleatoric_loss' in losses:
+            total = total + self.config.aleatoric_weight * losses['aleatoric_loss']
 
         if 'aleatoric_unknown' in losses:
             total = total + 0.5 * self.config.aleatoric_weight * losses['aleatoric_unknown']
 
+        total = total + self.config.kl_weight * losses.get('epistemic_kl', 0)
+        total = total + self.config.kl_weight * losses.get('aleatoric_kl', 0)
+
         if 'orth_penalty' in losses:
-            total = total + 0.001 * losses['orth_penalty']
+            total = total + self.config.orth_weight * losses['orth_penalty']
 
         losses['loss'] = total
         return losses
@@ -664,17 +663,19 @@ class GradSeparatedCredalCBM(nn.Module):
 # DIAGNOSTIC UTILITIES
 # ============================================================================
 
-def diagnose_gradient_separation(
-    model: GradSeparatedCredalCBM,
+def diagnose_concept_supervision(
+    model: ConceptSupervisedCredalCBM,
     dataloader,
     device: str = 'cpu'
 ) -> Dict[str, float]:
     """
-    Diagnose whether gradient separation is working.
+    Diagnose concept supervision quality.
     """
     model.eval()
 
-    # Diagnostic print statements removed for clean output
+    print("\n" + "=" * 60)
+    print("CONCEPT-SUPERVISED CREDAL CBM DIAGNOSTIC")
+    print("=" * 60)
 
     results = {}
 
@@ -682,166 +683,86 @@ def diagnose_gradient_separation(
     if model.projection is not None:
         orth_loss = model.projection.orthogonality_loss().item()
         results['orthogonality_loss'] = orth_loss
-
-    # Check weight std (should NOT collapse)
-    weight_std = model.variational_layer.get_weight_std()
-    results['weight_std_mean'] = weight_std.mean().item()
-    results['weight_std_min'] = weight_std.min().item()
-
-    # Check alpha
-    alpha = model.alpha_scheduler.get_alpha(model.current_epoch)
-    results['alpha'] = alpha
+        print(f"Orthogonality loss: {orth_loss:.6f} (should be ~0)")
 
     # Collect predictions
-    all_epi_var = []
-    all_epi_err = []
+    all_epi = []
     all_ale = []
+    all_preds = []
+    all_targets = []
     all_errors = []
 
     with torch.no_grad():
         for batch in dataloader:
             input_ids = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
+            labels = batch['labels'].to(device)
             concept_labels = batch.get('concept_labels')
 
-            outputs = model(input_ids, attention_mask)
+            outputs = model(input_ids, attention_mask, labels=labels, concept_labels=concept_labels)
 
-            all_epi_var.append(outputs['epistemic_var'].cpu())
-            all_epi_err.append(outputs['epistemic_err'].cpu())
+            all_epi.append(outputs['epistemic'].cpu())
             all_ale.append(outputs['aleatoric'].cpu())
 
             if concept_labels is not None:
-                concept_labels = concept_labels.to(device)
                 known_mask = (concept_labels != 1)
                 if known_mask.any():
                     targets = (concept_labels[known_mask].float() / 2.0)
-                    preds = (outputs['concept_probs'][known_mask] > 0.5).float()
-                    errors = (preds != targets).float()
+                    preds = outputs['concept_probs'][known_mask]
+                    errors = torch.abs(preds - targets).cpu()
+
+                    all_preds.append(preds.cpu())
+                    all_targets.append(targets.cpu())
                     all_errors.append(errors.cpu())
 
-    epi_var = torch.cat(all_epi_var).numpy().mean(axis=-1)
-    epi_err = torch.cat(all_epi_err).numpy().mean(axis=-1)
-    ale = torch.cat(all_ale).numpy().mean(axis=-1)
+    epi = torch.cat(all_epi).numpy()
+    ale = torch.cat(all_ale).numpy()
 
-    # Correlations
-    from scipy import stats
+    # Statistics
+    results['mean_epistemic'] = epi.mean()
+    results['mean_aleatoric'] = ale.mean()
+    print(f"\nMean epistemic: {epi.mean():.4f}")
+    print(f"Mean aleatoric: {ale.mean():.4f}")
 
-    # σ_var vs σ_err (should be correlated after alignment training)
-    rho, p = stats.spearmanr(epi_var, epi_err)
-    results['rho_var_err'] = rho
-
-    # Epistemic vs Aleatoric (should be LOW)
-    epi_combined = alpha * epi_var + (1 - alpha) * epi_err
-    rho, p = stats.spearmanr(epi_combined, ale)
-    results['rho_epi_ale'] = rho
-
-    # Epistemic vs Errors (should be POSITIVE)
+    # Check if epistemic correlates with errors
     if len(all_errors) > 0:
-        errors = torch.cat(all_errors).numpy().mean(axis=-1) if all_errors[0].dim() > 0 else torch.cat(all_errors).numpy()
-        # Truncate to match
-        min_len = min(len(epi_combined), len(errors))
-        rho, p = stats.spearmanr(epi_combined[:min_len], errors[:min_len])
+        all_errors = torch.cat(all_errors)
+        all_preds = torch.cat(all_preds)
+
+        epi_flat = epi.flatten()[:len(all_errors.flatten())]
+        err_flat = all_errors.flatten()
+
+        from scipy import stats
+        rho, p = stats.spearmanr(epi_flat, err_flat)
         results['rho_epi_error'] = rho
+        print(f"\nρ(epistemic, error): {rho:.3f} (p={p:.2e})")
+
+        if rho > 0.3:
+            print("  ✓ Epistemic tracks errors well!")
+        else:
+            print("  ⚠️  Epistemic not tracking errors")
+
+    # Epistemic vs Aleatoric correlation (should be low)
+    min_len = min(epi.size, ale.size)
+    rho, p = stats.spearmanr(epi.flatten()[:min_len], ale.flatten()[:min_len])
+    results['rho_epi_ale'] = rho
+    print(f"ρ(epistemic, aleatoric): {rho:.3f} (p={p:.2e})")
+
+    if abs(rho) < 0.3:
+        print("  ✓ Good separation!")
+    else:
+        print("  ⚠️  High correlation - separation issues")
+
+    print("=" * 60)
 
     return results
 
 
-# ============================================================================
-# TRAINING UTILITIES
-# ============================================================================
-
-def train_epoch(
-    model: GradSeparatedCredalCBM,
-    dataloader,
-    optimizer,
-    device: str,
-    epoch: int
-) -> Dict[str, float]:
-    """
-    Train one epoch with proper gradient separation.
-    """
-    model.train()
-    model.set_epoch(epoch)
-
-    total_loss = 0
-    loss_components = {}
-
-    for batch in dataloader:
-        input_ids = batch['input_ids'].to(device)
-        attention_mask = batch['attention_mask'].to(device)
-        labels = batch.get('labels')
-        concept_labels = batch.get('concept_labels')
-
-        if labels is not None:
-            labels = labels.to(device)
-        if concept_labels is not None:
-            concept_labels = concept_labels.to(device)
-
-        optimizer.zero_grad()
-
-        outputs = model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            labels=labels,
-            concept_labels=concept_labels
-        )
-
-        loss = outputs['loss']
-        loss.backward()
-
-        # Gradient clipping
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-
-        optimizer.step()
-
-        total_loss += loss.item()
-
-        # Track components
-        for key in ['task_loss', 'concept_bce', 'kl_loss', 'error_pred_loss',
-                    'alignment_loss', 'aleatoric_nll']:
-            if key in outputs:
-                if key not in loss_components:
-                    loss_components[key] = 0
-                loss_components[key] += outputs[key].item()
-
-    n_batches = len(dataloader)
-    metrics = {'loss': total_loss / n_batches}
-    for key, val in loss_components.items():
-        metrics[key] = val / n_batches
-
-    return metrics
-
-
-# ============================================================================
-# EXAMPLE USAGE
-# ============================================================================
-
 if __name__ == "__main__":
-    # Config
-    config = GradSeparatedConfig(
-        encoder_name="distilbert-base-uncased",
+    # Test
+    config = ConceptSupervisedConfig(
         num_concepts=4,
-        num_classes=2,
-        error_warmup_epochs=3,
-        alpha_start=1.0,
-        alpha_end=0.3,
-        alpha_warmup_epochs=10
+        concept_names=['food', 'service', 'ambiance', 'noise']
     )
 
-    # Create model
-    model = GradSeparatedCredalCBM(config)
-
-    # Example forward
-    from transformers import AutoTokenizer
-    tokenizer = AutoTokenizer.from_pretrained(config.encoder_name)
-
-    texts = ["The food was great but service was slow."]
-    encoded = tokenizer(texts, padding=True, truncation=True, return_tensors='pt')
-
-    with torch.no_grad():
-        outputs = model(
-            input_ids=encoded['input_ids'],
-            attention_mask=encoded['attention_mask']
-        )
-
-    # Example output print statements removed for clean code
+    model = ConceptSupervisedCredalCBM(config)

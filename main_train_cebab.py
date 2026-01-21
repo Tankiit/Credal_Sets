@@ -19,7 +19,7 @@ from pathlib import Path
 from tqdm import tqdm
 from typing import Dict, Optional
 
-from VCBM import GradSeparatedCredalCBM, GradSeparatedConfig, CovarianceFamily
+from VCBM import ConceptSupervisedCredalCBM, ConceptSupervisedConfig, CovarianceFamily, compute_concept_entropies_batch
 from load_cebab_direct import get_cebab_dataloaders
 
 # torch-uncertainty imports
@@ -140,19 +140,18 @@ class UncertaintyMetrics:
 
 class CredalCBMTrainer:
     """
-    Trainer for Gradient-Separated Variational Credal CBM.
+    Trainer for Concept-Supervised Variational Credal CBM.
 
     Features:
-    - Training loop with gradient separation
-    - Alpha scheduling for epistemic combination
+    - Training loop with concept supervision
     - Comprehensive evaluation with torch-uncertainty metrics
     - Model checkpointing
     """
 
     def __init__(
         self,
-        model: GradSeparatedCredalCBM,
-        config: GradSeparatedConfig,
+        model: ConceptSupervisedCredalCBM,
+        config: ConceptSupervisedConfig,
         device: str = "auto",
         save_dir: str = "./checkpoints/cebab",
     ):
@@ -197,16 +196,12 @@ class CredalCBMTrainer:
         optimizer: optim.Optimizer,
         scheduler: Optional[object] = None,
     ) -> Dict[str, float]:
-        """Single training epoch with gradient separation."""
+        """Single training epoch with concept supervision."""
         self.model.train()
-        self.model.set_epoch(self.current_epoch)  # CRITICAL: Set epoch for alpha scheduling
 
         total_loss = 0.0
         all_preds = []
         all_labels = []
-
-        # Get current alpha for display
-        alpha = self.model.alpha_scheduler.get_alpha(self.current_epoch)
 
         pbar = tqdm(train_loader, desc=f"Epoch {self.current_epoch} [Train]")
         for batch_idx, batch in enumerate(pbar):
@@ -218,14 +213,20 @@ class CredalCBMTrainer:
             if concept_labels is not None:
                 concept_labels = concept_labels.to(self.device)
 
+            # Get annotator entropy for aleatoric supervision
+            annotator_entropy = batch.get('annotator_entropy')
+            if annotator_entropy is not None:
+                annotator_entropy = annotator_entropy.to(self.device)
+
             optimizer.zero_grad()
 
-            # Forward (alpha scheduling handled internally by model)
+            # Forward
             outputs = self.model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
-                concept_labels=concept_labels
+                concept_labels=concept_labels,
+                annotator_entropy=annotator_entropy
             )
 
             loss = outputs['loss']
@@ -243,7 +244,7 @@ class CredalCBMTrainer:
             all_preds.extend(outputs['predictions'].cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
 
-            pbar.set_postfix({'loss': loss.item(), 'α': f'{alpha:.3f}'})
+            pbar.set_postfix({'loss': loss.item()})
 
             # Clear GPU cache periodically
             if (batch_idx + 1) % 10 == 0 and torch.cuda.is_available():
@@ -271,7 +272,6 @@ class CredalCBMTrainer:
             UncertaintyMetrics object with all computed metrics
         """
         self.model.eval()
-        self.model.set_epoch(self.current_epoch)  # Set for consistent alpha
 
         # Collectors
         all_preds = []
@@ -309,12 +309,18 @@ class CredalCBMTrainer:
             if concept_labels is not None:
                 concept_labels = concept_labels.to(self.device)
 
+            # Get annotator entropy for aleatoric supervision
+            annotator_entropy = batch.get('annotator_entropy')
+            if annotator_entropy is not None:
+                annotator_entropy = annotator_entropy.to(self.device)
+
             # Forward
             outputs = self.model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
-                concept_labels=concept_labels
+                concept_labels=concept_labels,
+                annotator_entropy=annotator_entropy
             )
 
             total_loss += outputs['loss'].item()
@@ -653,8 +659,8 @@ def main():
     print(f"  Classes: {metadata['num_classes']}")
 
     # Create model
-    print("\nCreating Gradient-Separated VCBM model...")
-    config = GradSeparatedConfig(
+    print("\nCreating Concept-Supervised VCBM model...")
+    config = ConceptSupervisedConfig(
         encoder_name='distilbert-base-uncased',
         freeze_encoder=True,
         num_concepts=4,
@@ -664,34 +670,29 @@ def main():
         covariance_family=CovarianceFamily.MEAN_FIELD,
 
         # Variational
-        prior_std=1.0,
-        num_mc_samples=10,
-        min_std=0.05,
+        epistemic_prior=0.1,
+        aleatoric_prior=0.3,
+        kl_weight=0.01,
 
         # Loss weights
-        kl_weight=1e-3,
         concept_weight=2.0,
-        aleatoric_weight=0.2,
-        error_pred_weight=1.0,
-        alignment_weight=0.5,
-
-        # Scheduling
-        error_warmup_epochs=3,
-        alpha_start=1.0,
-        alpha_end=0.3,
-        alpha_warmup_epochs=10,
+        epistemic_weight=1.0,
+        aleatoric_weight=1.0,
+        orth_weight=0.001,
 
         # Architecture
-        use_orthogonal_projection=True
+        uncertainty_hidden_dim=128,
     )
 
     print(f"  Config:")
-    print(f"    MC samples: {config.num_mc_samples}")
     print(f"    KL weight: {config.kl_weight}")
-    print(f"    Error warmup: {config.error_warmup_epochs} epochs")
-    print(f"    Alpha schedule: {config.alpha_start} → {config.alpha_end} over {config.alpha_warmup_epochs} epochs")
+    print(f"    Epistemic prior: {config.epistemic_prior}")
+    print(f"    Aleatoric prior: {config.aleatoric_prior}")
+    print(f"    Concept weight: {config.concept_weight}")
+    print(f"    Epistemic weight: {config.epistemic_weight}")
+    print(f"    Aleatoric weight: {config.aleatoric_weight}")
 
-    model = GradSeparatedCredalCBM(config).to(device)
+    model = ConceptSupervisedCredalCBM(config).to(device)
 
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
