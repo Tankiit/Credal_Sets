@@ -486,7 +486,9 @@ class KClassConceptClassifier(nn.Module):
         if concept_labels is not None:
             if exclude_unknown:
                 # Mask out unknown class
-                known_mask = (concept_labels != self.unknown_class)
+                # Ensure concept_labels is long type for comparison
+                concept_labels_long = concept_labels.long() if concept_labels.dtype != torch.long else concept_labels
+                known_mask = (concept_labels_long != self.unknown_class)
 
                 if known_mask.any():
                     loss = F.cross_entropy(
@@ -638,6 +640,9 @@ class CredalClassifier(nn.Module):
             W = self.linear.weight  # [out, in]
             b = self.linear.bias    # [out]
 
+            # Ensure bias matches device and dtype of the linear output
+            b = b.to(device=credal_lower.device, dtype=credal_lower.dtype)
+
             W_pos = F.relu(W)
             W_neg = F.relu(-W)
 
@@ -742,13 +747,6 @@ class VariationalCredalCBM(nn.Module):
             use_prior=config.use_aleatoric_prior
         )
 
-        # Concept supervision: K-class classifier
-        self.concept_classifier = KClassConceptClassifier(
-            hidden_size=self.hidden_size,  # Uses full hidden size
-            num_concepts=config.num_concepts,
-            num_classes=config.concept_classes
-        )
-
         # Task classifier with bound propagation
         self.task_classifier = CredalClassifier(
             num_concepts=config.num_concepts,
@@ -834,10 +832,6 @@ class VariationalCredalCBM(nn.Module):
         # === ALEATORIC PATHWAY (uses h_ale - orthogonal!) ===
         aleatoric = self.aleatoric_head(h_ale)       # [B, K]
 
-        # === CONCEPT SUPERVISION (uses full hidden) ===
-        concept_class_out = self.concept_classifier(hidden, concept_labels)
-        concept_class_probs = concept_class_out['probs']  # [B, K, num_classes]
-
         # === TASK CLASSIFICATION ===
         task_out = self.task_classifier(
             concept_probs, credal_lower, credal_upper
@@ -852,8 +846,6 @@ class VariationalCredalCBM(nn.Module):
 
             # Concept outputs
             'concept_probs': concept_probs,
-            'concept_class_probs': concept_class_probs,
-            'concept_predictions': concept_class_out['predictions'],
 
             # Uncertainty decomposition
             'epistemic': epistemic,
@@ -878,7 +870,7 @@ class VariationalCredalCBM(nn.Module):
         # === LOSSES ===
         if labels is not None or concept_labels is not None:
             losses = self._compute_losses(
-                result, labels, concept_labels, kl_loss, concept_class_out
+                result, labels, concept_labels, kl_loss
             )
             result.update(losses)
 
@@ -889,17 +881,13 @@ class VariationalCredalCBM(nn.Module):
         result: Dict,
         labels: Optional[torch.Tensor],
         concept_labels: Optional[torch.Tensor],
-        kl_loss: torch.Tensor,
-        concept_class_out: Dict
+        kl_loss: torch.Tensor
     ) -> Dict[str, torch.Tensor]:
         """
-        Compute all losses with ENHANCED gradient separation.
-
-        KEY ENHANCEMENT: Aleatoric loss uses DETACHED predictions
-        to prevent gradients from flowing to the variational layer.
+        Simplified loss computation without redundant K-class classifier.
         """
         losses = {}
-        batch_size = result['predictions'].size(0)
+        device = result['predictions'].device
 
         # =====================================================================
         # TERM 1: Task Reconstruction
@@ -913,136 +901,82 @@ class VariationalCredalCBM(nn.Module):
         losses['kl'] = kl_loss
 
         # =====================================================================
-        # TERM 3: Concept Likelihood (Original - for aleatoric)
+        # TERM 3: Concept Supervision (BCE on variational output)
         # =====================================================================
         if concept_labels is not None:
-            # Ensure concept_labels is on CPU for boolean comparisons to avoid MPS issues
-            concept_labels_cpu = concept_labels.cpu() if concept_labels.device.type == 'mps' else concept_labels
-            known_mask = (concept_labels_cpu != 1)
-            unknown_mask = (concept_labels_cpu == 1)
-
-            # Case (a): Known Concepts - ALEATORIC LOSS WITH GRADIENT STOP
-            if known_mask.any():
-                targets = (concept_labels[known_mask].float() / 2.0)
-
-                # ============================================================
-                # CRITICAL: Use DETACHED predictions for aleatoric loss
-                # This prevents gradients from aleatoric loss affecting
-                # the variational layer, ensuring gradient separation
-                # ============================================================
-                preds_detached = result['concept_probs'][known_mask].detach()
-
-                ale_var = result['aleatoric'][known_mask]
-                ale_var = torch.clamp(ale_var, min=1e-4, max=10.0)
-
-                # NLL with detached mean (gradients only affect aleatoric head)
-                nll_known = 0.5 * torch.log(2 * np.pi * ale_var)
-                nll_known = nll_known + 0.5 * (preds_detached - targets)**2 / ale_var
-                losses['concept_nll_known'] = nll_known.mean()
-
-                losses['known_ratio'] = known_mask.float().mean()
-
-            # Case (b): Unknown Concepts
-            if unknown_mask.any():
-                target_uncertainty = torch.ones_like(result['aleatoric'][unknown_mask])
-                losses['aleatoric_unknown_reg'] = F.mse_loss(
-                    result['aleatoric'][unknown_mask],
-                    target_uncertainty
-                )
-                losses['unknown_ratio'] = unknown_mask.float().mean()
-
-        # =====================================================================
-        # TERM 4: NEW - Strong Concept Supervision (BCE)
-        # =====================================================================
-        if concept_labels is not None:
-            # Ensure concept_labels is on CPU for boolean comparisons to avoid MPS issues
-            concept_labels_cpu = concept_labels.cpu() if concept_labels.device.type == 'mps' else concept_labels
-            known_mask = (concept_labels_cpu != 1)
+            known_mask = (concept_labels != 1)
+            unknown_mask = (concept_labels == 1)
 
             if known_mask.any():
+                # Binary targets: 0 (Negative) → 0.0, 2 (Positive) → 1.0
                 targets = (concept_labels[known_mask].float() / 2.0)
-
-                # Use NON-DETACHED predictions for supervision
-                # (gradients SHOULD flow to variational layer here)
                 preds = result['concept_probs'][known_mask]
 
-                # Convert to logits for BCE
+                # BCE supervision (gradients flow to variational layer)
                 eps = 1e-7
                 preds_clamped = torch.clamp(preds, min=eps, max=1.0 - eps)
-                pseudo_logits = torch.log(preds_clamped / (1.0 - preds_clamped))
-
-                # Strong BCE supervision
-                bce_loss = F.binary_cross_entropy_with_logits(
-                    pseudo_logits,
-                    targets,
-                    reduction='mean'
+                losses['concept_bce'] = F.binary_cross_entropy(
+                    preds_clamped, targets, reduction='mean'
                 )
-                losses['concept_bce_strong'] = bce_loss
+
+                # =========================================================
+                # TERM 4: Aleatoric NLL (with DETACHED predictions)
+                # =========================================================
+                preds_detached = preds.detach()
+                ale_var = torch.clamp(result['aleatoric'][known_mask], min=1e-4, max=10.0)
+
+                nll = 0.5 * torch.log(2 * np.pi * ale_var)
+                nll = nll + 0.5 * (preds_detached - targets)**2 / ale_var
+                losses['aleatoric_nll'] = nll.mean()
+
+            # Unknown concepts should have high aleatoric
+            if unknown_mask.any():
+                losses['aleatoric_unknown'] = F.mse_loss(
+                    result['aleatoric'][unknown_mask],
+                    torch.ones_like(result['aleatoric'][unknown_mask])
+                )
 
         # =====================================================================
-        # TERM 5: K-Class Concept Supervision
-        # =====================================================================
-        if concept_class_out.get('loss') is not None:
-            losses['concept_class'] = concept_class_out['loss']
-
-        # =====================================================================
-        # TERM 6: Calibration
+        # TERM 5: Calibration (epistemic matches empirical variance)
         # =====================================================================
         if result.get('mc_samples') is not None:
             empirical_var = result['mc_samples'].var(dim=0)
             losses['calibration'] = F.mse_loss(
-                result['epistemic'],
-                empirical_var.detach()
+                result['epistemic'], empirical_var.detach()
             )
 
         # =====================================================================
-        # TERM 7: Posterior Sharpening
-        # =====================================================================
-        if labels is not None:
-            correct = (result['predictions'] == labels).float()
-            sharpening = correct.unsqueeze(-1) * result['epistemic']
-            losses['sharpening'] = sharpening.mean()
-
-        # =====================================================================
-        # TERM 8: NEW - Aleatoric Prior KL
+        # TERM 6: Aleatoric Prior KL
         # =====================================================================
         if hasattr(self.aleatoric_head, 'prior_kl'):
             losses['aleatoric_prior_kl'] = self.aleatoric_head.prior_kl()
 
         # =====================================================================
-        # COMBINE INTO TOTAL LOSS
+        # COMBINE
         # =====================================================================
-        total = 0.0
+        total = torch.tensor(0.0, device=device)
 
         if 'task_recon' in losses:
             total = total + losses['task_recon']
 
         total = total + self.config.kl_weight * losses['kl']
 
-        # STRONG supervision for concepts (high weight)
-        if 'concept_bce_strong' in losses:
-            total = total + self.config.supervision_weight * losses['concept_bce_strong']
+        if 'concept_bce' in losses:
+            total = total + self.config.supervision_weight * losses['concept_bce']
 
-        if 'concept_nll_known' in losses:
-            total = total + self.config.aleatoric_weight * losses['concept_nll_known']
+        if 'aleatoric_nll' in losses:
+            total = total + self.config.aleatoric_weight * losses['aleatoric_nll']
 
-        if 'aleatoric_unknown_reg' in losses:
-            total = total + 0.5 * self.config.aleatoric_weight * losses['aleatoric_unknown_reg']
-
-        if 'concept_class' in losses:
-            total = total + self.config.concept_weight * losses['concept_class']
+        if 'aleatoric_unknown' in losses:
+            total = total + 0.5 * self.config.aleatoric_weight * losses['aleatoric_unknown']
 
         if 'calibration' in losses:
             total = total + 0.1 * losses['calibration']
-
-        if 'sharpening' in losses:
-            total = total + 0.05 * losses['sharpening']
 
         if 'aleatoric_prior_kl' in losses:
             total = total + losses['aleatoric_prior_kl']
 
         losses['loss'] = total
-
         return losses
 
 
@@ -1456,10 +1390,10 @@ def diagnose_concept_learning(
     print("="*60)
 
     num_concepts = concept_probs.shape[1]
-    # Ensure concept_labels is on CPU for boolean comparisons to avoid MPS issues
-    concept_labels_cpu = concept_labels.cpu() if concept_labels.device.type == 'mps' else concept_labels
+    # Ensure concept_labels is long type for comparison
+    concept_labels_long = concept_labels.long() if concept_labels.dtype != torch.long else concept_labels
     for c in range(num_concepts):
-        known_mask = (concept_labels_cpu[:, c] != 1)
+        known_mask = (concept_labels_long[:, c] != 1)
 
         if known_mask.sum() > 0:
             acc = (concept_preds[known_mask, c] == concept_targets[known_mask, c]).mean()
@@ -1480,9 +1414,9 @@ def diagnose_concept_learning(
             results[f'concept_{c}_aleatoric'] = aleatoric[:, c].mean()
 
     # Overall
-    # Ensure concept_labels is on CPU for boolean comparisons to avoid MPS issues
-    concept_labels_cpu = concept_labels.cpu() if concept_labels.device.type == 'mps' else concept_labels
-    known_mask = (concept_labels_cpu != 1)
+    # Ensure concept_labels is long type for comparison
+    concept_labels_long = concept_labels.long() if concept_labels.dtype != torch.long else concept_labels
+    known_mask = (concept_labels_long != 1)
     if known_mask.any():
         overall_acc = (concept_preds[known_mask] == concept_targets[known_mask]).mean()
         print(f"\nOverall concept accuracy: {overall_acc:.1%}")

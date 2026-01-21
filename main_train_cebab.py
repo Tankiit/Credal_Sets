@@ -264,16 +264,18 @@ class CredalCBMTrainer:
         total_loss = 0.0
 
         # Initialize torch-uncertainty metrics (move to device)
+        # NOTE: torch-uncertainty metrics have issues on MPS, so we keep them on CPU
         if TORCH_UNCERTAINTY_AVAILABLE:
+            metric_device = 'cpu' if self.device.type == 'mps' else self.device
             ece_metric = CalibrationError(
                 task='multiclass',
                 num_classes=self.config.num_classes,
                 num_bins=15
-            ).to(self.device)
-            brier_metric = BrierScore(num_classes=self.config.num_classes).to(self.device)
-            nll_metric = CategoricalNLL().to(self.device)
-            aurc_metric = AURC().to(self.device)
-            augrc_metric = AUGRC().to(self.device)
+            ).to(metric_device)
+            brier_metric = BrierScore(num_classes=self.config.num_classes).to(metric_device)
+            nll_metric = CategoricalNLL().to(metric_device)
+            aurc_metric = AURC().to(metric_device)
+            augrc_metric = AUGRC().to(metric_device)
         else:
             ece_metric = None
 
@@ -311,19 +313,32 @@ class CredalCBMTrainer:
                 probs = outputs['probs']
                 preds = outputs['predictions']
 
-                ece_metric.update(probs, labels)
-                brier_metric.update(probs, labels)
-                nll_metric.update(probs, labels)
+                # Move tensors to CPU for MPS compatibility
+                if self.device.type == 'mps':
+                    probs_cpu = probs.cpu()
+                    labels_cpu = labels.cpu()
+                    preds_cpu = preds.cpu()
+                    ece_metric.update(probs_cpu, labels_cpu)
+                    brier_metric.update(probs_cpu, labels_cpu)
+                    nll_metric.update(probs_cpu, labels_cpu)
 
-                # AURC and AUGRC: positional args (confidence, errors)
-                confidence = probs.max(dim=-1).values
-                # Fix for MPS: ensure types match before comparison
-                errors = (preds != labels).long()
-                # AURC/AUGRC expect negative confidence (risk = 1 - confidence)
-                # Convert to float32 for MPS compatibility
-                neg_conf = (-confidence).float()
-                aurc_metric.update(neg_conf, errors)
-                augrc_metric.update(neg_conf, errors)
+                    # AURC and AUGRC: positional args (confidence, errors)
+                    confidence = probs_cpu.max(dim=-1).values
+                    errors = (preds_cpu != labels_cpu).long()
+                    neg_conf = (-confidence).float()
+                    aurc_metric.update(neg_conf, errors)
+                    augrc_metric.update(neg_conf, errors)
+                else:
+                    ece_metric.update(probs, labels)
+                    brier_metric.update(probs, labels)
+                    nll_metric.update(probs, labels)
+
+                    # AURC and AUGRC: positional args (confidence, errors)
+                    confidence = probs.max(dim=-1).values
+                    errors = (preds != labels).long()
+                    neg_conf = (-confidence).float()
+                    aurc_metric.update(neg_conf, errors)
+                    augrc_metric.update(neg_conf, errors)
 
             # Clear GPU cache periodically
             if (batch_idx + 1) % 10 == 0 and torch.cuda.is_available():
@@ -575,7 +590,8 @@ class CredalCBMTrainer:
         """Load the best model from checkpoint."""
         checkpoint_path = self.save_dir / "best_model.pt"
         if checkpoint_path.exists():
-            checkpoint = torch.load(checkpoint_path, map_location=self.device)
+            # FIX: Add weights_only=False for checkpoints containing numpy arrays
+            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
             self.model.load_state_dict(checkpoint['model_state_dict'])
             print(f"✓ Loaded best model from epoch {checkpoint['epoch']}")
             return checkpoint['metrics']
@@ -626,15 +642,18 @@ def main():
         concept_classes=3,
         num_classes=5,
         covariance_family=CovarianceFamily.MEAN_FIELD,
-        kl_weight=1e-5,
-        concept_weight=0.5,
+
+        # CHANGED: Higher KL weight to prevent collapse
+        kl_weight=0.1,  # Was 1e-5
+
+        concept_weight=0.0,  # CHANGED: Disable K-class loss (redundant)
         aleatoric_weight=0.2,
         supervision_weight=1.0,
         use_orthogonal_projection=True,
         use_temperature_scaling=True,
         use_aleatoric_prior=True,
         pooling_strategy="cls",
-        num_mc_samples=5  # Reduced from 10 to save memory
+        num_mc_samples=10  # Increased for better uncertainty estimates
     )
 
     print(f"  Config: MC samples={config.num_mc_samples}, KL weight={config.kl_weight}")
