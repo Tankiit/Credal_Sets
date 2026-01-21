@@ -157,6 +157,27 @@ class CredalCBMTrainer:
         self.best_val_acc = 0.0
         self.current_epoch = 0
 
+    def get_kl_weight(self, epoch: int, total_epochs: int) -> float:
+        """
+        Cyclical KL annealing to prevent posterior collapse.
+
+        Starts at 0, ramps to target, helps model learn useful representations
+        before regularization kicks in.
+
+        Args:
+            epoch: Current epoch
+            total_epochs: Total number of training epochs
+
+        Returns:
+            KL weight for this epoch
+        """
+        warmup_epochs = min(5, total_epochs // 3)
+        if epoch <= warmup_epochs:
+            # Linear warmup
+            return self.config.kl_weight * (epoch / warmup_epochs)
+        else:
+            return self.config.kl_weight
+
     def train_epoch(
         self,
         train_loader,
@@ -170,7 +191,7 @@ class CredalCBMTrainer:
         all_labels = []
 
         pbar = tqdm(train_loader, desc=f"Epoch {self.current_epoch} [Train]")
-        for batch in pbar:
+        for batch_idx, batch in enumerate(pbar):
             input_ids = batch['input_ids'].to(self.device)
             attention_mask = batch['attention_mask'].to(self.device)
             labels = batch['labels'].to(self.device)
@@ -205,6 +226,10 @@ class CredalCBMTrainer:
 
             pbar.set_postfix({'loss': loss.item()})
 
+            # Clear GPU cache periodically
+            if (batch_idx + 1) % 10 == 0 and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
         # Compute metrics
         all_preds = np.array(all_preds)
         all_labels = np.array(all_labels)
@@ -231,29 +256,29 @@ class CredalCBMTrainer:
         # Collectors
         all_preds = []
         all_labels = []
-        all_concept_preds = []
+        all_concept_probs = []
         all_concept_labels = []
         all_epistemic = []
         all_aleatoric = []
         all_probs = []
         total_loss = 0.0
 
-        # Initialize torch-uncertainty metrics
+        # Initialize torch-uncertainty metrics (move to device)
         if TORCH_UNCERTAINTY_AVAILABLE:
             ece_metric = CalibrationError(
                 task='multiclass',
                 num_classes=self.config.num_classes,
-                n_bins=15
-            )
-            brier_metric = BrierScore(num_classes=self.config.num_classes)
-            nll_metric = CategoricalNLL()
-            aurc_metric = AURC()
-            augrc_metric = AUGRC()
+                num_bins=15
+            ).to(self.device)
+            brier_metric = BrierScore(num_classes=self.config.num_classes).to(self.device)
+            nll_metric = CategoricalNLL().to(self.device)
+            aurc_metric = AURC().to(self.device)
+            augrc_metric = AUGRC().to(self.device)
         else:
             ece_metric = None
 
         # Evaluation loop
-        for batch in tqdm(val_loader, desc=f"Epoch {self.current_epoch} [Val]"):
+        for batch_idx, batch in enumerate(tqdm(val_loader, desc=f"Epoch {self.current_epoch} [Val]")):
             input_ids = batch['input_ids'].to(self.device)
             attention_mask = batch['attention_mask'].to(self.device)
             labels = batch['labels'].to(self.device)
@@ -274,7 +299,7 @@ class CredalCBMTrainer:
 
             all_preds.extend(outputs['predictions'].cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
-            all_concept_preds.extend(outputs['concept_predictions'].cpu().numpy())
+            all_concept_probs.extend(outputs['concept_probs'].cpu().numpy())
             if concept_labels is not None:
                 all_concept_labels.extend(concept_labels.cpu().numpy())
             all_epistemic.append(outputs['epistemic'].cpu())
@@ -290,20 +315,24 @@ class CredalCBMTrainer:
                 brier_metric.update(probs, labels)
                 nll_metric.update(probs, labels)
 
+                # AURC and AUGRC: positional args (confidence, errors)
                 confidence = probs.max(dim=-1).values
-                aurc_metric.update(
-                    scores=-confidence,
-                    errors=(preds != labels).long()
-                )
-                augrc_metric.update(
-                    scores=-confidence,
-                    errors=(preds != labels).long()
-                )
+                # Fix for MPS: ensure types match before comparison
+                errors = (preds != labels).long()
+                # AURC/AUGRC expect negative confidence (risk = 1 - confidence)
+                # Convert to float32 for MPS compatibility
+                neg_conf = (-confidence).float()
+                aurc_metric.update(neg_conf, errors)
+                augrc_metric.update(neg_conf, errors)
+
+            # Clear GPU cache periodically
+            if (batch_idx + 1) % 10 == 0 and torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         # Concatenate
         all_preds = np.array(all_preds)
         all_labels = np.array(all_labels)
-        all_concept_preds = np.array(all_concept_preds)
+        all_concept_probs = np.array(all_concept_probs).numpy()
         if all_concept_labels:
             all_concept_labels = np.array(all_concept_labels)
         else:
@@ -324,7 +353,7 @@ class CredalCBMTrainer:
                 known_mask = (all_concept_labels[:, k] != 1)
                 if known_mask.sum() > 0:
                     c_labels_binary = (all_concept_labels[known_mask, k] / 2.0 > 0.5).astype(int)
-                    c_preds_binary = (all_concept_preds[known_mask, k] > 0.5).astype(int)
+                    c_preds_binary = (all_concept_probs[known_mask, k] > 0.5).astype(int)
                     c_acc = (c_preds_binary == c_labels_binary).mean()
                     concept_accs[concept_names[k]] = c_acc
                 else:
@@ -387,12 +416,18 @@ class CredalCBMTrainer:
         metrics.p_eu_error = p_eu_error
 
         # torch-uncertainty metrics
-        if TORCH_UNCERTAINTY_AVAILABLE:
+        if TORCH_UNCERTAINTY_AVAILABLE and ece_metric is not None:
             metrics.ece = ece_metric.compute().item()
             metrics.brier = brier_metric.compute().item()
             metrics.nll = nll_metric.compute().item()
             metrics.aurc = aurc_metric.compute().item()
             metrics.augrc = augrc_metric.compute().item()
+        else:
+            metrics.ece = float('nan')
+            metrics.brier = float('nan')
+            metrics.nll = float('nan')
+            metrics.aurc = float('nan')
+            metrics.augrc = float('nan')
 
         # Quadrant metrics
         metrics.trust_accuracy = trust_acc
@@ -561,7 +596,7 @@ def main():
     print("="*80)
 
     # Configuration
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     print(f"\nDevice: {device}")
 
     # Load data
@@ -569,7 +604,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained('distilbert-base-uncased')
     train_loader, val_loader, test_loader, tokenizer, metadata = get_cebab_dataloaders(
         tokenizer=tokenizer,
-        batch_size=16,
+        batch_size=8,  # Reduced from 16 to save memory
         max_length=256,
         num_workers=0
     )
@@ -599,10 +634,11 @@ def main():
         use_temperature_scaling=True,
         use_aleatoric_prior=True,
         pooling_strategy="cls",
-        num_mc_samples=10
+        num_mc_samples=5  # Reduced from 10 to save memory
     )
 
-    model = VariationalCredalCBM(config)
+    print(f"  Config: MC samples={config.num_mc_samples}, KL weight={config.kl_weight}")
+    model = VariationalCredalCBM(config).to(device)
 
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -615,11 +651,11 @@ def main():
     results = trainer.fit(
         train_loader=train_loader,
         val_loader=val_loader,
-        num_epochs=10,
+        num_epochs=2,  # Quick test - reduced from 10
         lr=2e-5,
         weight_decay=0.01,
         warmup_steps=100,
-        save_every=5
+        save_every=1
     )
 
     # Load best model and evaluate on test set

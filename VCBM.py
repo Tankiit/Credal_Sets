@@ -231,14 +231,19 @@ class VariationalLinearZC(nn.Module):
         """
         device = self.weight_mu.device
 
+        # MINIMUM VARIANCE TO PREVENT COLLAPSE
+        MIN_STD = 0.05
+
         if self.covariance_family == CovarianceFamily.MEAN_FIELD:
             weight_std = self._softplus(self.weight_rho)
+            weight_std = torch.clamp(weight_std, min=MIN_STD)  # Prevent collapse
             eps = torch.randn(n_samples, self.out_features, self.in_features, device=device)
             weights = self.weight_mu + eps * weight_std
 
         elif self.covariance_family == CovarianceFamily.LOW_RANK:
             mu_flat = self.weight_mu.flatten()
             cov_diag = self._softplus(self.cov_diag_rho)
+            cov_diag = torch.clamp(cov_diag, min=MIN_STD**2)  # Prevent collapse
 
             posterior = dist.LowRankMultivariateNormal(
                 loc=mu_flat,
@@ -258,6 +263,7 @@ class VariationalLinearZC(nn.Module):
 
         # Bias sampling (always mean-field)
         bias_std = self._softplus(self.bias_rho)
+        bias_std = torch.clamp(bias_std, min=MIN_STD)  # Prevent collapse
         eps_b = torch.randn(n_samples, self.out_features, device=device)
         biases = self.bias_mu + eps_b * bias_std
 
@@ -265,21 +271,31 @@ class VariationalLinearZC(nn.Module):
 
     def kl_divergence(self) -> torch.Tensor:
         """
-        KL[q(W) || p(W)] divergence
+        KL[q(W) || p(W)] divergence with free bits to prevent collapse
 
         Returns scalar KL divergence
         """
         if self.covariance_family == CovarianceFamily.MEAN_FIELD:
             # Closed-form for diagonal Gaussians
             weight_std = self._softplus(self.weight_rho)
+            # Ensure type consistency
+            prior_std = self.prior_std.to(dtype=weight_std.dtype, device=weight_std.device)
+            log_prior_std = self.log_prior_std.to(dtype=weight_std.dtype, device=weight_std.device)
 
-            kl = 0.5 * torch.sum(
-                weight_std**2 / self.prior_std**2
-                + self.weight_mu**2 / self.prior_std**2
+            # Per-dimension KL
+            kl_per_dim = 0.5 * (
+                weight_std**2 / prior_std**2
+                + self.weight_mu**2 / prior_std**2
                 - 1
                 - 2 * torch.log(weight_std)
-                + 2 * self.log_prior_std
+                + 2 * log_prior_std
             )
+
+            # FREE BITS: Minimum KL per dimension (prevents collapse)
+            free_bits = 0.1  # nats per dimension
+            kl_per_dim = torch.clamp(kl_per_dim, min=free_bits)
+
+            kl = kl_per_dim.sum()
         else:
             # MC estimation for structured posteriors
             n_mc = 5
@@ -310,12 +326,15 @@ class VariationalLinearZC(nn.Module):
 
         # Add bias KL
         bias_std = self._softplus(self.bias_rho)
+        # Ensure type consistency
+        prior_std = self.prior_std.to(dtype=bias_std.dtype, device=bias_std.device)
+        log_prior_std = self.log_prior_std.to(dtype=bias_std.dtype, device=bias_std.device)
         kl_bias = 0.5 * torch.sum(
-            bias_std**2 / self.prior_std**2
-            + self.bias_mu**2 / self.prior_std**2
+            bias_std**2 / prior_std**2
+            + self.bias_mu**2 / prior_std**2
             - 1
             - 2 * torch.log(bias_std)
-            + 2 * self.log_prior_std
+            + 2 * log_prior_std
         )
 
         return kl + kl_bias
@@ -351,6 +370,8 @@ class VariationalLinearZC(nn.Module):
 
         # NEW: Apply temperature scaling
         temperature = torch.clamp(self.temperature, min=0.5, max=2.0)
+        # Ensure temperature is on same device and same dtype as mc_logits
+        temperature = temperature.to(device=mc_logits.device, dtype=mc_logits.dtype)
         mc_logits_scaled = mc_logits / temperature
 
         mc_probs = torch.sigmoid(mc_logits_scaled)
@@ -540,7 +561,9 @@ class AleatoricHead(nn.Module):
 
         # Add learnable prior
         if self.use_prior:
-            logits = logits + self.log_prior_mean
+            # Ensure log_prior_mean is on same device and dtype as logits
+            log_prior_mean = self.log_prior_mean.to(device=logits.device, dtype=logits.dtype)
+            logits = logits + log_prior_mean
 
         # Numerical stability
         logits = torch.clamp(logits, min=-15.0, max=15.0)
@@ -893,8 +916,10 @@ class VariationalCredalCBM(nn.Module):
         # TERM 3: Concept Likelihood (Original - for aleatoric)
         # =====================================================================
         if concept_labels is not None:
-            known_mask = (concept_labels != 1)
-            unknown_mask = (concept_labels == 1)
+            # Ensure concept_labels is on CPU for boolean comparisons to avoid MPS issues
+            concept_labels_cpu = concept_labels.cpu() if concept_labels.device.type == 'mps' else concept_labels
+            known_mask = (concept_labels_cpu != 1)
+            unknown_mask = (concept_labels_cpu == 1)
 
             # Case (a): Known Concepts - ALEATORIC LOSS WITH GRADIENT STOP
             if known_mask.any():
@@ -930,7 +955,9 @@ class VariationalCredalCBM(nn.Module):
         # TERM 4: NEW - Strong Concept Supervision (BCE)
         # =====================================================================
         if concept_labels is not None:
-            known_mask = (concept_labels != 1)
+            # Ensure concept_labels is on CPU for boolean comparisons to avoid MPS issues
+            concept_labels_cpu = concept_labels.cpu() if concept_labels.device.type == 'mps' else concept_labels
+            known_mask = (concept_labels_cpu != 1)
 
             if known_mask.any():
                 targets = (concept_labels[known_mask].float() / 2.0)
@@ -1429,8 +1456,10 @@ def diagnose_concept_learning(
     print("="*60)
 
     num_concepts = concept_probs.shape[1]
+    # Ensure concept_labels is on CPU for boolean comparisons to avoid MPS issues
+    concept_labels_cpu = concept_labels.cpu() if concept_labels.device.type == 'mps' else concept_labels
     for c in range(num_concepts):
-        known_mask = (concept_labels[:, c] != 1)
+        known_mask = (concept_labels_cpu[:, c] != 1)
 
         if known_mask.sum() > 0:
             acc = (concept_preds[known_mask, c] == concept_targets[known_mask, c]).mean()
@@ -1451,7 +1480,9 @@ def diagnose_concept_learning(
             results[f'concept_{c}_aleatoric'] = aleatoric[:, c].mean()
 
     # Overall
-    known_mask = (concept_labels != 1)
+    # Ensure concept_labels is on CPU for boolean comparisons to avoid MPS issues
+    concept_labels_cpu = concept_labels.cpu() if concept_labels.device.type == 'mps' else concept_labels
+    known_mask = (concept_labels_cpu != 1)
     if known_mask.any():
         overall_acc = (concept_preds[known_mask] == concept_targets[known_mask]).mean()
         print(f"\nOverall concept accuracy: {overall_acc:.1%}")
