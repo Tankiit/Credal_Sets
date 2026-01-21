@@ -197,11 +197,18 @@ class CredalCBMTrainer:
         optimizer: optim.Optimizer,
         scheduler: Optional[object] = None,
     ) -> Dict[str, float]:
-        """Single training epoch"""
+        """Single training epoch with regularization warmup"""
         self.model.train()
         total_loss = 0.0
         all_preds = []
         all_labels = []
+
+        # Compute regularization warmup factor
+        warmup_epochs = 5
+        if self.current_epoch <= warmup_epochs:
+            reg_factor = self.current_epoch / warmup_epochs
+        else:
+            reg_factor = 1.0
 
         pbar = tqdm(train_loader, desc=f"Epoch {self.current_epoch} [Train]")
         for batch_idx, batch in enumerate(pbar):
@@ -213,13 +220,15 @@ class CredalCBMTrainer:
             if concept_labels is not None:
                 concept_labels = concept_labels.to(self.device)
 
-            # Forward
             optimizer.zero_grad()
+
+            # Forward with reg_factor
             outputs = self.model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
-                concept_labels=concept_labels
+                concept_labels=concept_labels,
+                reg_factor=reg_factor  # NEW: Warmup regularization
             )
 
             loss = outputs['loss']
@@ -237,7 +246,7 @@ class CredalCBMTrainer:
             all_preds.extend(outputs['predictions'].cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
 
-            pbar.set_postfix({'loss': loss.item()})
+            pbar.set_postfix({'loss': loss.item(), 'reg': f'{reg_factor:.2f}'})
 
             # Clear GPU cache periodically
             if (batch_idx + 1) % 10 == 0 and torch.cuda.is_available():

@@ -791,7 +791,8 @@ class VariationalCredalCBM(nn.Module):
         attention_mask: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
         concept_labels: Optional[torch.Tensor] = None,
-        n_samples: int = None
+        n_samples: int = None,
+        reg_factor: float = 1.0
     ) -> Dict[str, torch.Tensor]:
         """
         Full forward pass with enhanced architecture.
@@ -802,6 +803,7 @@ class VariationalCredalCBM(nn.Module):
             labels: [batch] task labels
             concept_labels: [batch, num_concepts] K-class concept labels
             n_samples: MC samples (default from config)
+            reg_factor: Regularization warmup factor (0.0 to 1.0)
 
         Returns:
             Dictionary with all outputs and losses
@@ -870,7 +872,7 @@ class VariationalCredalCBM(nn.Module):
         # === LOSSES ===
         if labels is not None or concept_labels is not None:
             losses = self._compute_losses(
-                result, labels, concept_labels, kl_loss
+                result, labels, concept_labels, kl_loss, reg_factor
             )
             result.update(losses)
 
@@ -881,10 +883,18 @@ class VariationalCredalCBM(nn.Module):
         result: Dict,
         labels: Optional[torch.Tensor],
         concept_labels: Optional[torch.Tensor],
-        kl_loss: torch.Tensor
+        kl_loss: torch.Tensor,
+        reg_factor: float = 1.0
     ) -> Dict[str, torch.Tensor]:
         """
-        Enhanced loss computation with separation regularization.
+        Enhanced loss computation with separation regularization and warmup.
+
+        Args:
+            result: Model outputs
+            labels: Task labels
+            concept_labels: Concept labels
+            kl_loss: KL divergence loss
+            reg_factor: Regularization warmup factor (0.0 to 1.0)
         """
         losses = {}
         device = result['predictions'].device
@@ -999,10 +1009,10 @@ class VariationalCredalCBM(nn.Module):
         if 'aleatoric_prior_kl' in losses:
             total = total + losses['aleatoric_prior_kl']
 
-        # Separation regularization terms
-        total = total + 0.1 * losses.get('corr_penalty', 0)
-        total = total + 0.01 * losses.get('orth_penalty', 0)
-        total = total + losses.get('eu_error_align', 0)
+        # Separation regularization terms (with warmup)
+        total = total + reg_factor * 0.1 * losses.get('corr_penalty', 0)
+        total = total + reg_factor * 0.01 * losses.get('orth_penalty', 0)
+        total = total + reg_factor * losses.get('eu_error_align', 0)
 
         losses['loss'] = total
         return losses
