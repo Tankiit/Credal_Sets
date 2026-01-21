@@ -19,7 +19,7 @@ from pathlib import Path
 from tqdm import tqdm
 from typing import Dict, Optional
 
-from VCBM import VariationalCredalCBM, VariationalCredalConfig, CovarianceFamily
+from VCBM import GradSeparatedCredalCBM, GradSeparatedConfig, CovarianceFamily
 from load_cebab_direct import get_cebab_dataloaders
 
 # torch-uncertainty imports
@@ -140,19 +140,19 @@ class UncertaintyMetrics:
 
 class CredalCBMTrainer:
     """
-    Trainer for Variational Credal CBM with comprehensive uncertainty metrics.
+    Trainer for Gradient-Separated Variational Credal CBM.
 
     Features:
-    - Training loop with concept bottleneck supervision
+    - Training loop with gradient separation
+    - Alpha scheduling for epistemic combination
     - Comprehensive evaluation with torch-uncertainty metrics
-    - Quadrant analysis for actionable uncertainty
     - Model checkpointing
     """
 
     def __init__(
         self,
-        model: VariationalCredalCBM,
-        config: VariationalCredalConfig,
+        model: GradSeparatedCredalCBM,
+        config: GradSeparatedConfig,
         device: str = "auto",
         save_dir: str = "./checkpoints/cebab",
     ):
@@ -197,18 +197,16 @@ class CredalCBMTrainer:
         optimizer: optim.Optimizer,
         scheduler: Optional[object] = None,
     ) -> Dict[str, float]:
-        """Single training epoch with regularization warmup"""
+        """Single training epoch with gradient separation."""
         self.model.train()
+        self.model.set_epoch(self.current_epoch)  # CRITICAL: Set epoch for alpha scheduling
+
         total_loss = 0.0
         all_preds = []
         all_labels = []
 
-        # Compute regularization warmup factor
-        warmup_epochs = 5
-        if self.current_epoch <= warmup_epochs:
-            reg_factor = self.current_epoch / warmup_epochs
-        else:
-            reg_factor = 1.0
+        # Get current alpha for display
+        alpha = self.model.alpha_scheduler.get_alpha(self.current_epoch)
 
         pbar = tqdm(train_loader, desc=f"Epoch {self.current_epoch} [Train]")
         for batch_idx, batch in enumerate(pbar):
@@ -222,13 +220,12 @@ class CredalCBMTrainer:
 
             optimizer.zero_grad()
 
-            # Forward with reg_factor
+            # Forward (alpha scheduling handled internally by model)
             outputs = self.model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
-                concept_labels=concept_labels,
-                reg_factor=reg_factor  # NEW: Warmup regularization
+                concept_labels=concept_labels
             )
 
             loss = outputs['loss']
@@ -246,7 +243,7 @@ class CredalCBMTrainer:
             all_preds.extend(outputs['predictions'].cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
 
-            pbar.set_postfix({'loss': loss.item(), 'reg': f'{reg_factor:.2f}'})
+            pbar.set_postfix({'loss': loss.item(), 'α': f'{alpha:.3f}'})
 
             # Clear GPU cache periodically
             if (batch_idx + 1) % 10 == 0 and torch.cuda.is_available():
@@ -274,6 +271,7 @@ class CredalCBMTrainer:
             UncertaintyMetrics object with all computed metrics
         """
         self.model.eval()
+        self.model.set_epoch(self.current_epoch)  # Set for consistent alpha
 
         # Collectors
         all_preds = []
@@ -655,8 +653,8 @@ def main():
     print(f"  Classes: {metadata['num_classes']}")
 
     # Create model
-    print("\nCreating VCBM model...")
-    config = VariationalCredalConfig(
+    print("\nCreating Gradient-Separated VCBM model...")
+    config = GradSeparatedConfig(
         encoder_name='distilbert-base-uncased',
         freeze_encoder=True,
         num_concepts=4,
@@ -665,19 +663,35 @@ def main():
         num_classes=5,
         covariance_family=CovarianceFamily.MEAN_FIELD,
 
-        kl_weight=1e-5,  # Very small - let model learn first
-        concept_weight=0.0,
+        # Variational
+        prior_std=1.0,
+        num_mc_samples=10,
+        min_std=0.05,
+
+        # Loss weights
+        kl_weight=1e-3,
+        concept_weight=2.0,
         aleatoric_weight=0.2,
-        supervision_weight=1.0,
-        use_orthogonal_projection=True,
-        use_temperature_scaling=True,
-        use_aleatoric_prior=True,
-        pooling_strategy="cls",
-        num_mc_samples=10
+        error_pred_weight=1.0,
+        alignment_weight=0.5,
+
+        # Scheduling
+        error_warmup_epochs=3,
+        alpha_start=1.0,
+        alpha_end=0.3,
+        alpha_warmup_epochs=10,
+
+        # Architecture
+        use_orthogonal_projection=True
     )
 
-    print(f"  Config: MC samples={config.num_mc_samples}, KL weight={config.kl_weight}")
-    model = VariationalCredalCBM(config).to(device)
+    print(f"  Config:")
+    print(f"    MC samples: {config.num_mc_samples}")
+    print(f"    KL weight: {config.kl_weight}")
+    print(f"    Error warmup: {config.error_warmup_epochs} epochs")
+    print(f"    Alpha schedule: {config.alpha_start} → {config.alpha_end} over {config.alpha_warmup_epochs} epochs")
+
+    model = GradSeparatedCredalCBM(config).to(device)
 
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
