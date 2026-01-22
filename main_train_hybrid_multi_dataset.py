@@ -7,10 +7,23 @@ Training script for the Hybrid Credal CBM with support for:
 - HateXplain (hate speech detection)
 - GoEmotions (emotion classification)
 
+Encoder Support:
+- Encoders: DistilBERT, RoBERTa, DeBERTa-v3, ModernBERT (SOTA, 8192 context)
+- LLMs: Phi-3/3.5, Mistral-7B, Llama-3.2, Qwen-2.5 (with LoRA)
+- Quantization: 4-bit/8-bit via BitsAndBytes (memory efficient)
+
 Usage:
+    # Basic training with DistilBERT (default)
     python main_train_hybrid_multi_dataset.py --dataset hatexplain
-    python main_train_hybrid_multi_dataset.py --dataset cebab
-    python main_train_hybrid_multi_dataset.py --dataset goemotions
+
+    # Use ModernBERT (SOTA encoder)
+    python main_train_hybrid_multi_dataset.py --dataset cebab --encoder modernbert
+
+    # Use LLM with quantization and LoRA
+    python main_train_hybrid_multi_dataset.py --dataset goemotions --encoder phi-3 --quantization 4bit --use_lora
+
+    # Unfreeze encoder for fine-tuning
+    python main_train_hybrid_multi_dataset.py --dataset hatexplain --encoder deberta --unfreeze_encoder
 
 Author: Tanmoy
 Date: January 2026
@@ -18,7 +31,7 @@ Date: January 2026
 
 import torch
 import torch.optim as optim
-from transformers import AutoTokenizer, get_linear_schedule_with_warmup
+from transformers import AutoTokenizer, get_linear_schedule_with_warmup, AutoModel
 import numpy as np
 from scipy import stats
 import json
@@ -31,13 +44,28 @@ from VCBM import HybridCredalCBM, HybridCredalConfig
 from load_cebab_direct import get_cebab_dataloaders
 from load_hatexplain_direct import get_hatexplain_dataloaders
 
-# Try to import the multi-dataset loader
+# Try to import optional dependencies
 try:
     from credence_dataloader import load_dataset_splits, DatasetConfig, get_recommended_config
     HAS_MULTI_LOADER = True
 except ImportError:
     HAS_MULTI_LOADER = False
-    print("Warning: credence_dataloader not found, using individual loaders only")
+
+try:
+    import bitsandbytes as bnb
+    from transformers import BitsAndBytesConfig
+    HAS_BNB = True
+except ImportError:
+    HAS_BNB = False
+    print("Warning: bitsandbytes not found, 4-bit quantization unavailable")
+
+# Try to import PEFT for LoRA
+try:
+    from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training, TaskType
+    HAS_PEFT = True
+except ImportError:
+    HAS_PEFT = False
+    print("Warning: PEFT not found, LoRA fine-tuning unavailable")
 
 
 # ============================================================================
@@ -106,6 +134,267 @@ DATASET_CONFIGS = {
         'num_epochs': 20,
     }
 }
+
+
+# ============================================================================
+# MODEL REGISTRY
+# ============================================================================
+
+MODEL_REGISTRY = {
+    # ==========================================================================
+    # ENCODER MODELS (frozen encoder, train heads)
+    # ==========================================================================
+
+    # Classic encoders (2019)
+    "distilbert-base-uncased": {
+        "type": "encoder",
+        "hidden_size": 768,
+        "max_length": 512,
+        "use_token_type_ids": True,
+    },
+    "roberta-base": {
+        "type": "encoder",
+        "hidden_size": 768,
+        "max_length": 512,
+        "use_token_type_ids": False,
+    },
+    "roberta-large": {
+        "type": "encoder",
+        "hidden_size": 1024,
+        "max_length": 512,
+        "use_token_type_ids": False,
+    },
+
+    # DeBERTa-v3 (2021) - Previous SOTA
+    "microsoft/deberta-v3-base": {
+        "type": "encoder",
+        "hidden_size": 768,
+        "max_length": 512,
+        "use_token_type_ids": True,
+    },
+    "microsoft/deberta-v3-large": {
+        "type": "encoder",
+        "hidden_size": 1024,
+        "max_length": 512,
+        "use_token_type_ids": True,
+    },
+
+    # =========================================================================
+    # ModernBERT (December 2024) - CURRENT SOTA ENCODER
+    # =========================================================================
+    "answerdotai/ModernBERT-base": {
+        "type": "encoder",
+        "hidden_size": 768,
+        "max_length": 8192,
+        "use_token_type_ids": False,
+    },
+    "answerdotai/ModernBERT-large": {
+        "type": "encoder",
+        "hidden_size": 1024,
+        "max_length": 8192,
+        "use_token_type_ids": False,
+    },
+
+    # ==========================================================================
+    # LLM MODELS (LoRA fine-tuning)
+    # ==========================================================================
+
+    # Phi Series (Microsoft)
+    "microsoft/phi-3-mini-4k-instruct": {
+        "type": "llm",
+        "hidden_size": 3072,
+        "max_length": 256,
+        "target_modules": ["qkv_proj", "o_proj"],
+    },
+    "microsoft/Phi-3.5-mini-instruct": {
+        "type": "llm",
+        "hidden_size": 3072,
+        "max_length": 256,
+        "target_modules": ["qkv_proj", "o_proj"],
+    },
+
+    # Mistral Series
+    "mistralai/Mistral-7B-v0.1": {
+        "type": "llm",
+        "hidden_size": 4096,
+        "max_length": 256,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+    },
+    "mistralai/Mistral-7B-Instruct-v0.3": {
+        "type": "llm",
+        "hidden_size": 4096,
+        "max_length": 256,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+    },
+
+    # Llama 3.2 (Meta, September 2024)
+    "meta-llama/Llama-3.2-1B": {
+        "type": "llm",
+        "hidden_size": 2048,
+        "max_length": 256,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+    },
+    "meta-llama/Llama-3.2-3B": {
+        "type": "llm",
+        "hidden_size": 3072,
+        "max_length": 256,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+    },
+    "meta-llama/Llama-3.2-3B-Instruct": {
+        "type": "llm",
+        "hidden_size": 3072,
+        "max_length": 256,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+    },
+
+    # Qwen 2.5 (Alibaba)
+    "Qwen/Qwen2.5-3B": {
+        "type": "llm",
+        "hidden_size": 2048,
+        "max_length": 256,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+    },
+}
+
+# Short name mapping
+ENCODER_SHORT_NAMES = {
+    "distilbert": "distilbert-base-uncased",
+    "roberta": "roberta-base",
+    "roberta-large": "roberta-large",
+    "deberta": "microsoft/deberta-v3-base",
+    "deberta-v3": "microsoft/deberta-v3-base",
+    "modernbert": "answerdotai/ModernBERT-base",
+    "modernbert-base": "answerdotai/ModernBERT-base",
+    "modernbert-large": "answerdotai/ModernBERT-large",
+    "phi-3": "microsoft/phi-3-mini-4k-instruct",
+    "phi-3.5": "microsoft/Phi-3.5-mini-instruct",
+    "llama-3.2-3b": "meta-llama/Llama-3.2-3B",
+}
+
+
+def expand_encoder_name(encoder_name: str) -> str:
+    """Expand short encoder names to full HuggingFace model names."""
+    if encoder_name.lower() in ENCODER_SHORT_NAMES:
+        return ENCODER_SHORT_NAMES[encoder_name.lower()]
+    if encoder_name in MODEL_REGISTRY:
+        return encoder_name
+    return encoder_name
+
+
+def get_encoder_config(encoder_name: str) -> Dict:
+    """Get encoder configuration from MODEL_REGISTRY."""
+    full_name = expand_encoder_name(encoder_name)
+    if full_name not in MODEL_REGISTRY:
+        raise ValueError(f"Unknown encoder: {encoder_name}. Choose from {list(MODEL_REGISTRY.keys())}")
+    return MODEL_REGISTRY[full_name]
+
+
+def load_encoder_with_quantization(
+    encoder_name: str,
+    quantization: str = "none",  # "none", "4bit", "8bit"
+    device_map: str = "auto"
+):
+    """
+    Load encoder with optional quantization.
+
+    Args:
+        encoder_name: Full HuggingFace model name
+        quantization: Quantization mode ("none", "4bit", "8bit")
+        device_map: Device mapping strategy
+
+    Returns:
+        Loaded model and tokenizer
+    """
+    from transformers import AutoTokenizer
+
+    # Load tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(encoder_name)
+
+    # Configure quantization
+    quantization_config = None
+    if quantization == "4bit" and HAS_BNB:
+        quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4"
+        )
+        print(f"  ✓ 4-bit quantization enabled via BitsAndBytes")
+    elif quantization == "8bit" and HAS_BNB:
+        quantization_config = BitsAndBytesConfig(
+            load_in_8bit=True,
+        )
+        print(f"  ✓ 8-bit quantization enabled via BitsAndBytes")
+    elif quantization in ["4bit", "8bit"]:
+        print(f"  ⚠ Requested {quantization} quantization but bitsandbytes not available")
+        print(f"  → Loading model without quantization")
+
+    # Load model
+    model_kwargs = {"device_map": device_map}
+    if quantization_config is not None:
+        model_kwargs["quantization_config"] = quantization_config
+
+    encoder = AutoModel.from_pretrained(encoder_name, **model_kwargs)
+
+    return encoder, tokenizer
+
+
+def apply_lora_to_model(
+    model,
+    encoder_name: str,
+    lora_r: int = 8,
+    lora_alpha: int = 16,
+    lora_dropout: float = 0.05,
+):
+    """
+    Apply LoRA fine-tuning to a model.
+
+    Args:
+        model: The model to apply LoRA to
+        encoder_name: Full model name (to get target modules)
+        lora_r: LoRA rank
+        lora_alpha: LoRA alpha
+        lora_dropout: LoRA dropout
+
+    Returns:
+        Model with LoRA applied
+    """
+    if not HAS_PEFT:
+        print("  ⚠ PEFT not available, skipping LoRA")
+        return model
+
+    encoder_config = get_encoder_config(encoder_name)
+
+    # Only apply LoRA to LLMs
+    if encoder_config.get("type") != "llm":
+        print(f"  → LoRA only recommended for LLMs, skipping for {encoder_name}")
+        return model
+
+    # Get target modules from config
+    target_modules = encoder_config.get("target_modules", ["q_proj", "v_proj"])
+
+    # Prepare for k-bit training if quantized
+    if hasattr(model, "is_loaded_in_4bit") or hasattr(model, "is_loaded_in_8bit"):
+        model = prepare_model_for_kbit_training(model)
+
+    # Configure LoRA
+    lora_config = LoraConfig(
+        r=lora_r,
+        lora_alpha=lora_alpha,
+        target_modules=target_modules,
+        lora_dropout=lora_dropout,
+        bias="none",
+        task_type=TaskType.FEATURE_EXTRACTION,  # For encoder-style usage
+    )
+
+    # Apply LoRA
+    model = get_peft_model(model, lora_config)
+
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"  ✓ LoRA applied: {trainable_params:,} trainable / {total_params:,} total")
+
+    return model
 
 
 # ============================================================================
@@ -514,12 +803,27 @@ def main():
     parser.add_argument('--dataset', type=str, default='cebab',
                        choices=['cebab', 'hatexplain', 'goemotions'],
                        help='Dataset to train on')
+    parser.add_argument('--encoder', type=str, default='distilbert',
+                       help='Encoder model (short name or full HF name)')
     parser.add_argument('--num_epochs', type=int, default=None,
                        help='Number of epochs (overrides default)')
     parser.add_argument('--lr', type=float, default=None,
                        help='Learning rate (overrides default)')
     parser.add_argument('--batch_size', type=int, default=None,
                        help='Batch size (overrides default)')
+    parser.add_argument('--quantization', type=str, default='none',
+                       choices=['none', '4bit', '8bit'],
+                       help='Quantization mode (for LLMs)')
+    parser.add_argument('--use_lora', action='store_true',
+                       help='Apply LoRA fine-tuning (for LLMs)')
+    parser.add_argument('--lora_r', type=int, default=8,
+                       help='LoRA rank (default: 8)')
+    parser.add_argument('--lora_alpha', type=int, default=16,
+                       help='LoRA alpha (default: 16)')
+    parser.add_argument('--freeze_encoder', action='store_true', default=True,
+                       help='Freeze encoder weights (default: True)')
+    parser.add_argument('--unfreeze_encoder', action='store_true',
+                       help='Unfreeze encoder for fine-tuning')
     args = parser.parse_args()
 
     # Get dataset config
@@ -529,9 +833,22 @@ def main():
 
     config = DATASET_CONFIGS[dataset_key]
 
+    # Expand encoder name and get config
+    encoder_name = expand_encoder_name(args.encoder)
+    encoder_config = get_encoder_config(args.encoder)
+
     print("\n" + "="*80)
     print(f"Hybrid Credal CBM Training on {config['name']}")
     print("="*80)
+    print(f"\nModel Configuration:")
+    print(f"  Encoder: {encoder_name}")
+    print(f"  Type: {encoder_config['type'].upper()}")
+    print(f"  Hidden size: {encoder_config['hidden_size']}")
+    print(f"  Max length: {encoder_config['max_length']}")
+    if args.quantization != 'none':
+        print(f"  Quantization: {args.quantization}")
+    if args.use_lora:
+        print(f"  LoRA: enabled (r={args.lora_r}, alpha={args.lora_alpha})")
 
     # Device
     device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
@@ -539,13 +856,39 @@ def main():
 
     # Load data
     print(f"\nLoading {config['name']} dataset...")
-    tokenizer = AutoTokenizer.from_pretrained('distilbert-base-uncased')
+
+    # Load encoder and tokenizer with quantization if specified
+    if args.quantization != 'none' or args.use_lora:
+        print(f"\nLoading encoder with quantization/LoRA support...")
+        encoder, tokenizer = load_encoder_with_quantization(
+            encoder_name,
+            quantization=args.quantization,
+            device_map="auto"
+        )
+
+        # Apply LoRA if requested
+        if args.use_lora:
+            encoder = apply_lora_to_model(
+                encoder,
+                encoder_name,
+                lora_r=args.lora_r,
+                lora_alpha=args.lora_alpha
+            )
+    else:
+        # Standard loading via tokenizer only
+        tokenizer = AutoTokenizer.from_pretrained(encoder_name)
 
     # Override batch size if specified
     loader_kwargs = config['loader_kwargs'].copy()
     if args.batch_size is not None:
         loader_kwargs['batch_size'] = args.batch_size
         print(f"Using batch size: {args.batch_size}")
+
+    # Update max_length from encoder config
+    loader_kwargs['max_length'] = min(
+        loader_kwargs.get('max_length', 128),
+        encoder_config['max_length']
+    )
 
     # Choose loading method
     use_multi = config.get('use_multi_loader', False) and HAS_MULTI_LOADER
@@ -556,7 +899,7 @@ def main():
         ds_config = DatasetConfig(
             max_length=loader_kwargs.get('max_length', 128),
             batch_size=loader_kwargs.get('batch_size', 16),
-            tokenizer_name='distilbert-base-uncased',
+            tokenizer_name=encoder_name,
             num_workers=loader_kwargs.get('num_workers', 0),
         )
         train_loader, val_loader, test_loader, tokenizer, metadata = load_dataset_splits(
@@ -578,11 +921,14 @@ def main():
         print(f"  Concepts: {metadata['concept_names']}")
     print(f"  Classes: {metadata['num_classes']}")
 
+    # Determine freeze setting
+    freeze_encoder = args.freeze_encoder and not args.unfreeze_encoder
+
     # Create model
     print(f"\nCreating Hybrid Credal CBM...")
     model_config = HybridCredalConfig(
-        encoder_name='distilbert-base-uncased',
-        freeze_encoder=True,
+        encoder_name=encoder_name,
+        freeze_encoder=freeze_encoder,
         num_concepts=config['num_concepts'],
         concept_names=config['concept_names'],
         num_classes=config['num_classes'],
@@ -612,6 +958,12 @@ def main():
     )
 
     model = HybridCredalCBM(model_config)
+
+    # Replace encoder if quantization/LoRA was used
+    if args.quantization != 'none' or args.use_lora:
+        print(f"\n  Replacing encoder with quantized/LoRA version...")
+        model.encoder = encoder
+        print(f"  ✓ Encoder replaced")
 
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
