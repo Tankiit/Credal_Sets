@@ -647,7 +647,7 @@ class ConceptSupervisedCredalCBM(nn.Module):
             total = total + self.config.aleatoric_weight * losses['aleatoric_loss']
 
         if 'aleatoric_unknown' in losses:
-            total = total + 0.5 * self.config.aleatoric_weight * losses['aleatoric_unknown']
+            total = total + 0.1 * self.config.aleatoric_weight * losses['aleatoric_unknown']  # Reduced from 0.5
 
         total = total + self.config.kl_weight * losses.get('epistemic_kl', 0)
         total = total + self.config.kl_weight * losses.get('aleatoric_kl', 0)
@@ -985,7 +985,9 @@ class CredalSetHead(nn.Module):
         # Initialize last layer bias
         if hasattr(self.log_sigma_net[-1], 'bias'):
             nn.init.constant_(self.log_sigma_net[-1].bias, init_val)
-            nn.init.zeros_(self.log_sigma_net[-1].weight)
+        # Small weights so initial output ≈ bias (FIX: was zeros, now small random)
+        if hasattr(self.log_sigma_net[-1], 'weight'):
+            nn.init.normal_(self.log_sigma_net[-1].weight, std=0.01)
 
     def forward(
         self,
@@ -1109,7 +1111,7 @@ class CredalSetHead(nn.Module):
 # ALEATORIC HEAD
 # ============================================================================
 
-class AleatoricHead(nn.Module):
+class CredalAleatoricHead(nn.Module):
     """
     Predicts aleatoric uncertainty from h_ale.
 
@@ -1308,7 +1310,7 @@ class TrueCredalCBM(nn.Module):
         )
 
         # Aleatoric head (from h_ale)
-        self.aleatoric_head = AleatoricHead(
+        self.aleatoric_head = CredalAleatoricHead(
             proj_dim=config.projection_dim,
             num_concepts=config.num_concepts,
             hidden_dim=config.hidden_dim,
@@ -1530,7 +1532,7 @@ class TrueCredalCBM(nn.Module):
             total = total + self.config.aleatoric_weight * losses['aleatoric_loss']
 
         if 'aleatoric_unknown' in losses:
-            total = total + 0.5 * self.config.aleatoric_weight * losses['aleatoric_unknown']
+            total = total + 0.1 * self.config.aleatoric_weight * losses['aleatoric_unknown']  # Reduced from 0.5
 
         total = total + self.config.orth_weight * losses['orth_penalty']
 
@@ -1710,3 +1712,765 @@ def analyze_credal_sets(model: TrueCredalCBM, dataloader, device='cpu'):
         print("  ⚠ High correlation")
 
     print("=" * 60)
+
+
+# ============================================================================
+# HYBRID CREDAL CBM - COMBINES GEOMETRY + SUPERVISION
+# ============================================================================
+
+"""
+Hybrid Credal CBM with Structural Separation
+============================================
+
+This design combines the best of both worlds:
+- TRUE credal geometry: EU = log(Σ_epi) derived from credal set size
+- DIRECT supervision: Σ_epi trained to predict concept errors
+- THREE-WAY orthogonal projection for structural separation
+
+The key insight: Pure KL-based training for Σ_epi doesn't work because
+it gives the model no incentive to make Σ_epi input-dependent. It just
+stays at the prior for all inputs.
+
+By ADDING error supervision, we teach Σ_epi to vary with input:
+- High error → large Σ_epi → high EU
+- Low error → small Σ_epi → low EU
+
+The KL term now serves as REGULARIZATION, preventing Σ_epi from
+overfitting to noise in the error signal.
+
+Training signals:
+- W_concept, μ_net ← L_concept + L_task
+- W_epi, σ_net ← L_error + L_KL (error supervision + regularization)
+- W_ale, ale_net ← L_ale (annotator entropy)
+
+Author: Tanmoy
+Target: ICML 2026
+"""
+
+import math
+
+
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
+
+@dataclass
+class HybridCredalConfig:
+    """Configuration for Hybrid Credal CBM"""
+
+    # Encoder
+    encoder_name: str = "distilbert-base-uncased"
+    freeze_encoder: bool = True
+    pooling_strategy: str = "cls"
+
+    # Concepts
+    num_concepts: int = 4
+    concept_names: List[str] = field(
+        default_factory=lambda: ['food', 'service', 'ambiance', 'noise']
+    )
+
+    # Task
+    num_classes: int = 2
+
+    # Credal set parameters
+    num_mc_samples: int = 10
+    min_sigma: float = 0.01    # Minimum credal set size
+    max_sigma: float = 2.0     # Maximum credal set size
+    prior_sigma: float = 0.5   # Prior for KL (smaller than before!)
+
+    # Loss weights
+    concept_weight: float = 2.0
+    kl_weight: float = 0.01           # KL regularization (keep small!)
+    error_supervision_weight: float = 1.0  # Error supervision (main signal)
+    aleatoric_weight: float = 2.0     # Increased from 1.0 to strengthen entropy supervision
+    orth_weight: float = 0.001
+
+    # Error scaling
+    error_scale: float = 2.0  # Scale errors to match Σ_epi range
+
+    # Aleatoric prior
+    aleatoric_prior: float = 0.3
+
+    # Architecture
+    projection_dim: int = 256
+    hidden_dim: int = 128
+
+
+# ============================================================================
+# HYBRID CREDAL SET HEAD
+# ============================================================================
+
+class HybridCredalSetHead(nn.Module):
+    """
+    Hybrid Credal Set Head
+
+    Combines:
+    1. Credal geometry: EU = log(Σ_epi) derived from set size
+    2. Error supervision: Σ_epi trained to predict |pred - target|
+    3. KL regularization: prevents overfitting to error noise
+
+    Why hybrid works better than pure KL:
+    =====================================
+
+    Pure KL approach:
+    - L = KL(Σ_epi || prior)
+    - Problem: No incentive for Σ_epi to vary with input
+    - Result: Σ_epi stays at prior for all inputs
+
+    Hybrid approach:
+    - L = λ_error * MSE(Σ_epi, errors) + λ_KL * KL(Σ_epi || prior)
+    - Error supervision: teaches Σ_epi to be INPUT-DEPENDENT
+    - KL regularization: prevents overfitting, maintains credal interpretation
+
+    The credal interpretation is preserved:
+    - Σ_epi defines the size of the credal set
+    - EU = log(Σ_epi) is still DERIVED from geometry
+    - We just supervise the geometry to capture the right thing
+    """
+
+    def __init__(
+        self,
+        proj_dim: int,
+        num_concepts: int,
+        hidden_dim: int = 128,
+        prior_sigma: float = 0.5,
+        min_sigma: float = 0.01,
+        max_sigma: float = 2.0,
+        error_scale: float = 2.0,
+    ):
+        super().__init__()
+        self.num_concepts = num_concepts
+        self.prior_sigma = prior_sigma
+        self.min_sigma = min_sigma
+        self.max_sigma = max_sigma
+        self.error_scale = error_scale
+
+        # μ head: credal center (from h_concept)
+        self.mu_net = nn.Sequential(
+            nn.Linear(proj_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, num_concepts),
+        )
+
+        # Σ_epi head: credal size (from h_epi)
+        self.log_sigma_net = nn.Sequential(
+            nn.Linear(proj_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.GELU(),
+            nn.Linear(hidden_dim // 2, num_concepts),
+        )
+
+        # Initialize to reasonable starting point
+        self._init_sigma()
+
+    def _init_sigma(self):
+        """Initialize Σ_epi to start at a reasonable value."""
+        # We want softplus(output) ≈ prior_sigma initially
+        # softplus(x) = log(1 + exp(x))
+        # Inverse: x = log(exp(y) - 1) for y > 0
+        if self.prior_sigma > 0:
+            init_val = math.log(math.exp(self.prior_sigma) - 1 + 1e-6)
+        else:
+            init_val = -2.0
+
+        # Initialize last layer
+        last_layer = self.log_sigma_net[-1]
+        if hasattr(last_layer, 'bias') and last_layer.bias is not None:
+            nn.init.constant_(last_layer.bias, init_val)
+        # Small weights so initial output ≈ bias
+        if hasattr(last_layer, 'weight'):
+            nn.init.normal_(last_layer.weight, std=0.01)
+
+    def forward(
+        self,
+        h_concept: torch.Tensor,
+        h_epi: torch.Tensor,
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Args:
+            h_concept: [batch, proj_dim] - features for credal center
+            h_epi: [batch, proj_dim] - features for credal size
+
+        Returns:
+            mu: [batch, num_concepts] - credal centers (logit space)
+            sigma_epi: [batch, num_concepts] - credal sizes
+            p_mean: [batch, num_concepts] - mean concept probabilities
+        """
+        # Credal center
+        mu = self.mu_net(h_concept)
+
+        # Credal size (will be supervised to track errors)
+        log_sigma_raw = self.log_sigma_net(h_epi)
+        sigma_epi = F.softplus(log_sigma_raw)
+        sigma_epi = torch.clamp(sigma_epi, self.min_sigma, self.max_sigma)
+
+        # Mean concept probability
+        p_mean = torch.sigmoid(mu)
+
+        return {
+            'mu': mu,
+            'sigma_epi': sigma_epi,
+            'p_mean': p_mean,
+        }
+
+    def sample_credal_set(
+        self,
+        mu: torch.Tensor,
+        sigma_epi: torch.Tensor,
+        num_samples: int = 10,
+    ) -> torch.Tensor:
+        """
+        Sample from credal set using reparameterization.
+
+        Returns:
+            samples: [num_samples, batch, num_concepts] in [0, 1]
+        """
+        batch_size, num_concepts = mu.shape
+
+        eps = torch.randn(
+            num_samples, batch_size, num_concepts,
+            device=mu.device, dtype=mu.dtype
+        )
+
+        logit_samples = mu.unsqueeze(0) + sigma_epi.unsqueeze(0) * eps
+        prob_samples = torch.sigmoid(logit_samples)
+
+        return prob_samples
+
+    def epistemic_uncertainty(self, sigma_epi: torch.Tensor) -> torch.Tensor:
+        """
+        EU = log(Σ_epi) — DERIVED from credal geometry.
+
+        Even though we supervise Σ_epi, the EU is still derived
+        from the credal set size, not directly predicted.
+        """
+        return torch.log(sigma_epi + 1e-10)
+
+    def error_supervision_loss(
+        self,
+        sigma_epi: torch.Tensor,
+        concept_preds: torch.Tensor,
+        concept_targets: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Supervise Σ_epi to predict concept errors.
+
+        This is the KEY addition that makes Σ_epi input-dependent!
+
+        Args:
+            sigma_epi: [batch, num_concepts] or [N] flattened
+            concept_preds: [batch, num_concepts] or [N] (DETACHED!)
+            concept_targets: [batch, num_concepts] or [N]
+            mask: optional mask for known concepts
+
+        Returns:
+            MSE loss
+        """
+        # Compute concept errors (detach predictions!)
+        errors = torch.abs(concept_preds.detach() - concept_targets)
+
+        # Scale errors to match Σ_epi range
+        # errors are in [0, 1], Σ_epi is in [min_sigma, max_sigma]
+        scaled_errors = errors * self.error_scale + self.min_sigma
+        scaled_errors = torch.clamp(scaled_errors, self.min_sigma, self.max_sigma)
+
+        if mask is not None:
+            sigma_epi = sigma_epi[mask]
+            scaled_errors = scaled_errors[mask] if scaled_errors.shape == mask.shape else scaled_errors
+
+        return F.mse_loss(sigma_epi, scaled_errors)
+
+    def kl_divergence(self, sigma_epi: torch.Tensor) -> torch.Tensor:
+        """
+        KL regularization toward prior.
+
+        Now serves as REGULARIZATION, not main training signal.
+        Prevents Σ_epi from overfitting to error noise.
+        """
+        # KL for log-normal-ish: log(prior/sigma) + sigma²/(2*prior²) - 0.5
+        prior = self.prior_sigma
+
+        kl = (
+            torch.log(prior / (sigma_epi + 1e-10)) +
+            (sigma_epi ** 2) / (2 * prior ** 2) -
+            0.5
+        )
+
+        return kl.mean()
+
+
+# ============================================================================
+# MAIN MODEL: HYBRID CREDAL CBM
+# ============================================================================
+
+class HybridCredalCBM(nn.Module):
+    """
+    Hybrid Credal CBM with Structural Separation
+
+    Combines credal geometry with direct supervision:
+
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │  Input → Encoder → h                                                │
+    │              │                                                      │
+    │      ┌───────┼───────┐                                             │
+    │      ↓       ↓       ↓                                             │
+    │  [W_concept][W_epi][W_ale]  ← Three orthogonal projections         │
+    │      ↓       ↓       ↓                                             │
+    │  h_concept h_epi  h_ale                                            │
+    │      ↓       ↓       ↓                                             │
+    │   ┌──┴──┐ ┌──┴──┐ ┌──┴──┐                                         │
+    │   │μ^(k)│ │Σ_epi│ │σ_ale│                                         │
+    │   └──┬──┘ └──┬──┘ └──┬──┘                                         │
+    │      │       │       │                                             │
+    │      └───┬───┘       │                                             │
+    │          ↓           │                                             │
+    │   ┌────────────┐     │                                             │
+    │   │ Credal Set │     │                                             │
+    │   │ C = N(μ,Σ) │     │                                             │
+    │   └─────┬──────┘     │                                             │
+    │         │            │                                             │
+    │    EU = log(Σ_epi)   │   ← DERIVED from geometry                  │
+    │         │            │                                             │
+    │   SUPERVISED by:     │                                             │
+    │   |pred - target|    │   ← Makes it input-dependent!              │
+    │         +            │                                             │
+    │   KL regularization  │   ← Prevents overfitting                   │
+    │                      │                                             │
+    │                      ↓                                             │
+    │                 AU = σ_ale                                         │
+    │                 SUPERVISED by annotator entropy                    │
+    └─────────────────────────────────────────────────────────────────────┘
+
+    Training signals (FULLY DISJOINT):
+    - W_concept, μ_net ← L_concept + L_task
+    - W_epi, σ_net ← L_error + L_KL
+    - W_ale, ale_net ← L_ale
+    """
+
+    def __init__(self, config: HybridCredalConfig):
+        super().__init__()
+        self.config = config
+
+        # Encoder
+        from transformers import AutoModel
+        self.encoder = AutoModel.from_pretrained(config.encoder_name)
+        self.hidden_size = self.encoder.config.hidden_size
+
+        if config.freeze_encoder:
+            for param in self.encoder.parameters():
+                param.requires_grad = False
+
+        # Three-way orthogonal projection (reuse from TrueCredalCBM)
+        self.projection = ThreeWayOrthogonalProjection(
+            self.hidden_size,
+            config.projection_dim
+        )
+
+        # Hybrid credal head
+        self.credal_head = HybridCredalSetHead(
+            proj_dim=config.projection_dim,
+            num_concepts=config.num_concepts,
+            hidden_dim=config.hidden_dim,
+            prior_sigma=config.prior_sigma,
+            min_sigma=config.min_sigma,
+            max_sigma=config.max_sigma,
+            error_scale=config.error_scale,
+        )
+
+        # Aleatoric head (reuse from TrueCredalCBM)
+        self.aleatoric_head = CredalAleatoricHead(
+            proj_dim=config.projection_dim,
+            num_concepts=config.num_concepts,
+            hidden_dim=config.hidden_dim,
+            prior_mean=config.aleatoric_prior,
+        )
+
+        # Task classifier (reuse from TrueCredalCBM)
+        self.task_classifier = CredalTaskClassifier(
+            num_concepts=config.num_concepts,
+            num_classes=config.num_classes,
+        )
+
+        self._print_architecture()
+
+    def _print_architecture(self):
+        print("\n" + "=" * 70)
+        print("HYBRID CREDAL CBM WITH STRUCTURAL SEPARATION")
+        print("=" * 70)
+        print(f"Encoder: {self.config.encoder_name}")
+        print(f"Concepts: {self.config.num_concepts} {self.config.concept_names}")
+        print(f"\nHYBRID APPROACH:")
+        print(f"  • EU = log(Σ_epi) — DERIVED from credal geometry")
+        print(f"  • Σ_epi SUPERVISED by concept errors (input-dependent!)")
+        print(f"  • KL regularization prevents overfitting")
+        print(f"\nPARAMETERS:")
+        print(f"  • Prior σ: {self.config.prior_sigma}")
+        print(f"  • Error scale: {self.config.error_scale}")
+        print(f"  • σ range: [{self.config.min_sigma}, {self.config.max_sigma}]")
+        print(f"\nLOSS WEIGHTS:")
+        print(f"  • Error supervision: {self.config.error_supervision_weight}")
+        print(f"  • KL regularization: {self.config.kl_weight}")
+        print(f"  • Aleatoric: {self.config.aleatoric_weight}")
+        print("=" * 70 + "\n")
+
+    def encode(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor
+    ) -> torch.Tensor:
+        outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
+        if self.config.pooling_strategy == "cls":
+            return outputs.last_hidden_state[:, 0, :]
+        else:
+            hidden = outputs.last_hidden_state
+            mask = attention_mask.unsqueeze(-1).float()
+            return (hidden * mask).sum(1) / mask.sum(1).clamp(min=1e-9)
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+        concept_labels: Optional[torch.Tensor] = None,
+        annotator_entropy: Optional[torch.Tensor] = None,
+        entropy_weights: Optional[torch.Tensor] = None,
+        num_mc_samples: Optional[int] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass."""
+        num_samples = num_mc_samples or self.config.num_mc_samples
+
+        # Encode
+        hidden = self.encode(input_ids, attention_mask)
+
+        # Three orthogonal projections
+        h_concept, h_epi, h_ale = self.projection(hidden)
+
+        # Credal set parameters
+        credal_out = self.credal_head(h_concept, h_epi)
+        mu = credal_out['mu']
+        sigma_epi = credal_out['sigma_epi']
+        p_mean = credal_out['p_mean']
+
+        # Sample from credal set
+        p_samples = self.credal_head.sample_credal_set(mu, sigma_epi, num_samples)
+
+        # Aleatoric
+        sigma_ale = self.aleatoric_head(h_ale)
+
+        # Task prediction
+        task_out = self.task_classifier(p_mean, p_samples)
+
+        # Epistemic (DERIVED from geometry)
+        epistemic = self.credal_head.epistemic_uncertainty(sigma_epi)
+
+        result = {
+            # Task
+            'predictions': task_out['predictions'],
+            'logits': task_out['logits'],
+            'probs': task_out['probs'],
+            'prob_lower': task_out.get('prob_lower'),
+            'prob_upper': task_out.get('prob_upper'),
+
+            # Concepts
+            'concept_probs': p_mean,
+            'concept_samples': p_samples,
+            'mu': mu,
+            'sigma_epi': sigma_epi,
+
+            # Uncertainties
+            'epistemic': epistemic,
+            'aleatoric': sigma_ale,
+        }
+
+        # Compute losses
+        if labels is not None or concept_labels is not None:
+            # Create batch dict for passing entropy_weights
+            batch = {
+                'entropy_weights': entropy_weights
+            }
+            losses = self._compute_losses(
+                result, labels, concept_labels, annotator_entropy, batch
+            )
+            result.update(losses)
+
+        return result
+
+    def _compute_losses(
+        self,
+        result: Dict[str, torch.Tensor],
+        labels: Optional[torch.Tensor],
+        concept_labels: Optional[torch.Tensor],
+        annotator_entropy: Optional[torch.Tensor],
+        batch: Optional[Dict[str, torch.Tensor]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """Compute losses with proper gradient separation."""
+        losses = {}
+        device = result['predictions'].device
+
+        # =====================================================================
+        # TERM 1: Task loss → W_concept
+        # =====================================================================
+        if labels is not None:
+            losses['task_loss'] = F.cross_entropy(result['logits'], labels)
+
+        # =====================================================================
+        # TERM 2: Concept loss → W_concept, μ_net
+        # =====================================================================
+        if concept_labels is not None:
+            known_mask = (concept_labels != 1)  # Exclude unknown
+
+            if known_mask.any():
+                # IMPORTANT: Filter FIRST, then convert!
+                # Only get known labels (0 or 2, NO 1s)
+                known_labels = concept_labels[known_mask]
+                known_preds = result['concept_probs'][known_mask]
+                known_preds_clamped = torch.clamp(known_preds, 1e-7, 1 - 1e-7)
+
+                # Convert to binary: 0→0.0, 2→1.0
+                # This is correct because known_labels only contains 0 and 2
+                known_targets = (known_labels.float() / 2.0)
+
+                # Sanity check
+                if known_targets.min() < 0 or known_targets.max() > 1:
+                    print(f"[WARNING] Targets out of range: [{known_targets.min()}, {known_targets.max()}]")
+                    print(f"  known_labels unique: {known_labels.unique()}")
+                    print(f"  This shouldn't happen - known_labels should only have 0 and 2!")
+
+                losses['concept_bce'] = F.binary_cross_entropy(
+                    known_preds_clamped, known_targets
+                )
+
+                # =============================================================
+                # TERM 3: Error supervision → W_epi, σ_net
+                # THIS IS THE KEY ADDITION!
+                # =============================================================
+                known_sigma = result['sigma_epi'][known_mask]
+                losses['error_supervision'] = self.credal_head.error_supervision_loss(
+                    known_sigma, known_preds, known_targets
+                )
+
+        # =====================================================================
+        # TERM 4: KL regularization → W_epi, σ_net (mild regularization)
+        # =====================================================================
+        losses['credal_kl'] = self.credal_head.kl_divergence(result['sigma_epi'])
+
+        # =====================================================================
+        # TERM 5: Aleatoric supervision → W_ale, ale_net
+        # =====================================================================
+        if annotator_entropy is not None and concept_labels is not None:
+            known_mask = (concept_labels != 1)
+
+            if known_mask.any():
+                entropy_targets = annotator_entropy[known_mask]
+                aleatoric_pred = result['aleatoric'][known_mask]
+
+                # Get entropy weights if available (for weighted loss)
+                entropy_weights = batch.get('entropy_weights', torch.ones_like(annotator_entropy))
+                if entropy_weights is not None:
+                    sample_weights = entropy_weights[known_mask]
+                else:
+                    sample_weights = torch.ones_like(aleatoric_pred)
+
+                # Ensure same shape
+                if entropy_targets.numel() > 0 and aleatoric_pred.numel() > 0:
+                    # Use weighted MSE loss
+                    pred_flat = aleatoric_pred.flatten()[:entropy_targets.flatten().numel()]
+                    target_flat = entropy_targets.flatten()[:aleatoric_pred.flatten().numel()]
+                    weight_flat = sample_weights.flatten()[:aleatoric_pred.flatten().numel()]
+
+                    # Weighted MSE: mean(weight * (pred - target)^2)
+                    squared_errors = (pred_flat - target_flat) ** 2
+                    weighted_errors = weight_flat * squared_errors
+                    losses['aleatoric_loss'] = weighted_errors.mean()
+
+        # Unknown concepts → high aleatoric
+        if concept_labels is not None:
+            unknown_mask = (concept_labels == 1)
+            if unknown_mask.any():
+                losses['aleatoric_unknown'] = F.mse_loss(
+                    result['aleatoric'][unknown_mask],
+                    torch.ones_like(result['aleatoric'][unknown_mask])
+                )
+
+        # =====================================================================
+        # TERM 6: Orthogonality
+        # =====================================================================
+        losses['orth_penalty'] = self.projection.orthogonality_loss()
+
+        # =====================================================================
+        # COMBINE
+        # =====================================================================
+        total = torch.tensor(0.0, device=device)
+
+        if 'task_loss' in losses:
+            total = total + losses['task_loss']
+
+        if 'concept_bce' in losses:
+            total = total + self.config.concept_weight * losses['concept_bce']
+
+        # Error supervision (MAIN epistemic signal)
+        if 'error_supervision' in losses:
+            total = total + self.config.error_supervision_weight * losses['error_supervision']
+
+        # KL regularization (mild)
+        total = total + self.config.kl_weight * losses['credal_kl']
+
+        if 'aleatoric_loss' in losses:
+            total = total + self.config.aleatoric_weight * losses['aleatoric_loss']
+
+        if 'aleatoric_unknown' in losses:
+            total = total + 0.1 * self.config.aleatoric_weight * losses['aleatoric_unknown']  # Reduced from 0.5
+
+        total = total + self.config.orth_weight * losses['orth_penalty']
+
+        losses['loss'] = total
+        return losses
+
+
+# ============================================================================
+# VERIFICATION
+# ============================================================================
+
+def verify_hybrid_credal(model: HybridCredalCBM, num_steps: int = 100):
+    """Verify hybrid credal properties."""
+    print("\n" + "=" * 60)
+    print("HYBRID CREDAL VERIFICATION")
+    print("=" * 60)
+
+    batch_size = 8
+    seq_len = 32
+    input_ids = torch.randint(0, 1000, (batch_size, seq_len))
+    attention_mask = torch.ones(batch_size, seq_len)
+    concept_labels = torch.randint(0, 3, (batch_size, model.config.num_concepts))
+    concept_labels[:, 0] = 0  # Some known labels
+    concept_labels[:, 1] = 2
+    annotator_entropy = torch.rand(batch_size, model.config.num_concepts)
+    labels = torch.randint(0, 2, (batch_size,))
+
+    # =========================================================================
+    # Test 1: EU is derived from Σ_epi
+    # =========================================================================
+    print("\n[Test 1] EU derived from credal geometry:")
+    model.eval()
+    with torch.no_grad():
+        result = model(input_ids, attention_mask)
+        expected_eu = torch.log(result['sigma_epi'] + 1e-10)
+        actual_eu = result['epistemic']
+        diff = (expected_eu - actual_eu).abs().max().item()
+        print(f"  max|EU - log(Σ_epi)|: {diff:.10f}")
+        assert diff < 1e-6
+        print("  ✓ PASSED")
+
+    # =========================================================================
+    # Test 2: Σ_epi becomes input-dependent (not stuck at prior)
+    # =========================================================================
+    print("\n[Test 2] Σ_epi becomes input-dependent:")
+    model.train()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+    initial_sigma_std = None
+    final_sigma_std = None
+
+    for step in range(num_steps):
+        result = model(
+            input_ids, attention_mask,
+            labels=labels,
+            concept_labels=concept_labels,
+            annotator_entropy=annotator_entropy
+        )
+
+        sigma_std = result['sigma_epi'].std().item()
+
+        if step == 0:
+            initial_sigma_std = sigma_std
+            print(f"  Initial Σ_epi std: {sigma_std:.6f}")
+
+        loss = result['loss']
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        if step == num_steps - 1:
+            final_sigma_std = sigma_std
+            print(f"  Final Σ_epi std: {sigma_std:.6f}")
+
+    if final_sigma_std > initial_sigma_std * 2:
+        print("  ✓ PASSED: Σ_epi is now input-dependent!")
+    else:
+        print(f"  ⚠ Σ_epi variance increased {final_sigma_std/initial_sigma_std:.1f}x")
+
+    # =========================================================================
+    # Test 3: Gradient separation
+    # =========================================================================
+    print("\n[Test 3] Gradient separation:")
+    model.train()
+
+    # Error supervision should only affect W_epi
+    model.zero_grad()
+    result = model(
+        input_ids, attention_mask,
+        concept_labels=concept_labels,
+        annotator_entropy=annotator_entropy
+    )
+
+    if 'error_supervision' in result:
+        result['error_supervision'].backward()
+
+        w_c = model.projection.W_concept.weight.grad
+        w_e = model.projection.W_epi.weight.grad
+        w_a = model.projection.W_ale.weight.grad
+
+        print(f"  L_error gradients:")
+        print(f"    W_concept: {w_c.norm().item() if w_c is not None else 0:.6f}")
+        print(f"    W_epi: {w_e.norm().item() if w_e is not None else 0:.6f}")
+        print(f"    W_ale: {w_a.norm().item() if w_a is not None else 0:.6f}")
+
+        if w_e is not None and w_e.norm() > 0:
+            if (w_c is None or w_c.norm() < 1e-10) and (w_a is None or w_a.norm() < 1e-10):
+                print("  ✓ PASSED: L_error only affects W_epi")
+            else:
+                print("  ⚠ Some gradient leakage")
+
+    print("\n" + "=" * 60)
+
+
+def compare_approaches():
+    """Print comparison of different approaches."""
+    print("""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                         APPROACH COMPARISON                                   ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║                                                                              ║
+║  1. SUPERVISED (ConceptSupervisedCBM):                                     ║
+║     • EU = σ_epi (directly PREDICTED by head)                                ║
+║     • Training: MSE(σ_epi, errors)                                           ║
+║     • Problem: Not truly "credal" — just regression                          ║
+║     • Pro: Works well, input-dependent                                       ║
+║                                                                              ║
+║  2. PURE CREDAL (TrueCredalCBM):                                            ║
+║     • EU = log(Σ_epi) (DERIVED from geometry)                                ║
+║     • Training: KL(Σ_epi || prior)                                           ║
+║     • Problem: Σ_epi stays at prior — NOT input-dependent!                   ║
+║     • Pro: Theoretically clean                                               ║
+║                                                                              ║
+║  3. HYBRID (HybridCredalCBM):  ← RECOMMENDED!                               ║
+║     • EU = log(Σ_epi) (DERIVED from geometry)                                ║
+║     • Training: MSE(Σ_epi, errors) + λ·KL(Σ_epi || prior)                    ║
+║     • Pro: Best of both worlds!                                              ║
+║       - Credal interpretation preserved                                      ║
+║       - Input-dependent via error supervision                                ║
+║       - KL prevents overfitting                                              ║
+║                                                                              ║
+║  THEORETICAL JUSTIFICATION:                                                  ║
+║  ─────────────────────────                                                   ║
+║  "We supervise Σ_epi with concept errors because errors indicate where       ║
+║  the model's knowledge is insufficient — precisely what the credal set       ║
+║  should capture. The KL term ensures the credal set doesn't overfit to       ║
+║  noise, maintaining its interpretation as a set of plausible distributions." ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+    """)

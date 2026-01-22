@@ -60,6 +60,69 @@ def compute_annotator_entropy(distribution: dict, eps: float = 1e-8) -> float:
     return float(entropy / max_entropy) if max_entropy > 0 else 0.0
 
 
+def process_annotator_entropy(sample, concepts=['food', 'service', 'ambiance', 'noise']):
+    """
+    Compute annotator entropies for each concept with intelligent fallbacks.
+
+    Returns (entropies, weights) for each concept.
+
+    Strategy:
+    1. If distribution available: compute actual entropy (weight=1.0)
+    2. If majority='unknown': high entropy 0.9 (weight=0.7) - proxy for ambiguity
+    3. If majority clear but no distribution: low entropy 0.15 (weight=0.3)
+    4. Otherwise: neutral 0.5 (weight=0.0) - masked out
+    """
+    entropies = []
+    weights = []
+
+    for concept in concepts:
+        # Try to get distribution (might be dict or JSON string)
+        dist_key = f'{concept}_aspect_label_distribution'
+        dist_raw = sample.get(dist_key, '')
+
+        # Parse if it's a JSON string (handle both single and double quotes)
+        dist = {}
+        if isinstance(dist_raw, str) and dist_raw.strip():
+            try:
+                # Try standard JSON first (double quotes)
+                dist = json.loads(dist_raw)
+            except:
+                try:
+                    # Try replacing single quotes with double quotes
+                    dist = json.loads(dist_raw.replace("'", '"'))
+                except:
+                    dist = {}
+        elif isinstance(dist_raw, dict):
+            dist = dist_raw
+
+        # Get majority vote
+        majority_key = f'{concept}_aspect_majority'
+        majority = sample.get(majority_key, '')
+
+        # Strategy 1: Ground truth distribution available
+        if dist and isinstance(dist, dict) and sum(dist.values()) > 0:
+            ent = compute_annotator_entropy(dist)
+            entropies.append(ent)
+            weights.append(1.0)  # Full confidence
+
+        # Strategy 2: "Unknown" majority → high ambiguity
+        elif majority == 'unknown':
+            entropies.append(0.9)  # High entropy
+            weights.append(0.7)  # Decent confidence (proxy)
+
+        # Strategy 3: Clear majority but no distribution → likely low entropy
+        elif majority in ['Positive', 'Negative']:
+            entropies.append(0.15)  # Low entropy
+            weights.append(0.3)  # Lower confidence (educated guess)
+
+        # Strategy 4: No signal at all → mask
+        else:
+            entropies.append(0.5)  # Neutral
+            weights.append(0.0)  # Mask out (no confidence)
+
+    return np.array(entropies, dtype=np.float32), np.array(weights, dtype=np.float32)
+
+
 def load_cebab(
     split_ids_path: Optional[str] = None,
     include_edits: bool = True,
@@ -183,9 +246,17 @@ def process_cebab_raw(raw_data: List[Dict]) -> List[Dict]:
             # Get distribution for disagreement computation
             dist_str = item.get(f'{aspect_name}_aspect_label_distribution', '{}')
             if dist_str:
-                # Parse JSON string
+                # Parse JSON string (handle single quotes)
                 try:
-                    dist = json.loads(dist_str) if isinstance(dist_str, str) else dist_str
+                    if isinstance(dist_str, str):
+                        # Try standard JSON first
+                        try:
+                            dist = json.loads(dist_str)
+                        except:
+                            # Try replacing single quotes with double quotes
+                            dist = json.loads(dist_str.replace("'", '"'))
+                    else:
+                        dist = dist_str
                 except:
                     dist = {}
 
@@ -242,9 +313,17 @@ def process_cebab_raw(raw_data: List[Dict]) -> List[Dict]:
         # ====================================================================
         review_dist_str = item.get('review_label_distribution', '{}')
         if review_dist_str:
-            # Parse JSON string
+            # Parse JSON string (handle single quotes)
             try:
-                review_dist = json.loads(review_dist_str) if isinstance(review_dist_str, str) else review_dist_str
+                if isinstance(review_dist_str, str):
+                    # Try standard JSON first
+                    try:
+                        review_dist = json.loads(review_dist_str)
+                    except:
+                        # Try replacing single quotes with double quotes
+                        review_dist = json.loads(review_dist_str.replace("'", '"'))
+                else:
+                    review_dist = review_dist_str
             except:
                 review_dist = {}
 
@@ -390,30 +469,17 @@ class CEBaBDataset:
             'is_unknown': torch.tensor(item["is_unknown"], dtype=torch.float),
         }
 
-        # Add concept entropies as annotator_entropy (for concept-supervised model)
-        # Use pre-computed entropies if available
+        # Add concept entropies - use pre-computed from process_cebab_raw
+        # These were computed from the actual annotator distributions
         if '_concept_entropies' in item:
-            result['annotator_entropy'] = torch.tensor(item["_concept_entropies"], dtype=torch.float)
-        elif '_concept_distributions' in item:
-            # Compute entropies on-the-fly from raw distributions
-            concept_names = ['food', 'service', 'ambiance', 'noise']
-            entropies = []
-            for i, dist in enumerate(item['_concept_distributions']):
-                if isinstance(dist, list) and len(dist) == 3:
-                    # Convert probability distribution to count distribution
-                    # dist = [prob_neg, prob_unk, prob_pos]
-                    # Scale to fake counts (e.g., out of 10 annotators)
-                    counts = {
-                        'Negative': max(1, int(dist[0] * 10)),
-                        'unknown': max(1, int(dist[1] * 10)),
-                        'Positive': max(1, int(dist[2] * 10))
-                    }
-                    entropy = compute_annotator_entropy(counts)
-                    entropies.append(entropy)
-                else:
-                    entropies.append(0.5)  # Default for missing data
+            result['annotator_entropy'] = torch.tensor(item['_concept_entropies'], dtype=torch.float)
+        else:
+            # Fallback to zeros if not available
+            result['annotator_entropy'] = torch.zeros(4, dtype=torch.float)
 
-            result['annotator_entropy'] = torch.tensor(entropies, dtype=torch.float)
+        # Note: We could add entropy_weights based on whether distribution was available,
+        # but for now all entropies are treated equally
+        result['entropy_weights'] = torch.ones(4, dtype=torch.float)  # All valid
 
         # Add optional metadata
         for key in ['_rating_entropy', '_overall_disagreement']:
@@ -432,10 +498,14 @@ def get_cebab_dataloaders(
     batch_size: int = 16,
     max_length: int = 256,
     num_workers: int = 4,
-    include_edits: bool = True
+    include_edits: bool = True,
+    subset_size: Optional[int] = None
 ):
     """
     Get PyTorch DataLoaders for CEBaB.
+
+    Args:
+        subset_size: If provided, only use this many samples from train set (for quick testing)
 
     Returns train_loader, val_loader, test_loader, tokenizer, metadata
     """
@@ -445,9 +515,14 @@ def get_cebab_dataloaders(
     processed_data = load_cebab_direct(include_edits=include_edits)
 
     # Create datasets
-    train_dataset = CEBaBDataset(
-        processed_data["train"], tokenizer, max_length
-    )
+    train_data = processed_data["train"]
+    if subset_size is not None and subset_size < len(train_data):
+        import random
+        random.shuffle(train_data)
+        train_data = train_data[:subset_size]
+        print(f"  Using subset of {subset_size} samples from training set")
+
+    train_dataset = CEBaBDataset(train_data, tokenizer, max_length)
     val_dataset = CEBaBDataset(
         processed_data["validation"], tokenizer, max_length
     )
