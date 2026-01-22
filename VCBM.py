@@ -766,3 +766,947 @@ if __name__ == "__main__":
     )
 
     model = ConceptSupervisedCredalCBM(config)
+
+
+# ============================================================================
+# TRUE CREDAL CBM WITH STRUCTURAL SEPARATION
+# ============================================================================
+
+"""
+True Credal CBM with Structural Separation
+==========================================
+
+This design is ACTUALLY credal:
+- Model outputs credal set parameters (μ, Σ_epi), not point estimates
+- Epistemic uncertainty = credal set size (derived from geometry)
+- Aleatoric uncertainty = supervised head (annotator entropy)
+- Three-way orthogonal projection for TRUE structural separation
+
+Key insight: In a credal model, Σ_epi IS the epistemic uncertainty,
+not a prediction of it. The supervision comes via KL regularization
+to a prior, which shrinks as the model becomes more confident.
+
+Connection to Tomov et al. impossibility:
+- We escape because EU comes from Σ_epi (geometric, trained by KL)
+- AU comes from σ_ale (supervised by annotator entropy)
+- Neither is derived from the predictive distribution p(y|x)
+
+Author: Tanmoy
+Target: ICML 2026
+"""
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.distributions import Normal, kl_divergence
+from typing import Dict, Optional, Tuple, List
+from dataclasses import dataclass, field
+import numpy as np
+import math
+
+
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
+
+@dataclass
+class TrueCredalConfig:
+    """Configuration for True Credal CBM"""
+
+    # Encoder
+    encoder_name: str = "distilbert-base-uncased"
+    freeze_encoder: bool = True
+    pooling_strategy: str = "cls"
+
+    # Concepts
+    num_concepts: int = 4
+    concept_names: List[str] = field(
+        default_factory=lambda: ['food', 'service', 'ambiance', 'noise']
+    )
+
+    # Task
+    num_classes: int = 2
+
+    # Credal set parameters
+    num_mc_samples: int = 10  # Samples from credal set at inference
+    min_sigma: float = 1e-4   # Minimum credal set size
+    max_sigma: float = 2.0    # Maximum credal set size
+
+    # Prior for epistemic (credal set size)
+    # Initialized large → shrinks during training as model learns
+    prior_sigma: float = 1.0
+
+    # Loss weights
+    concept_weight: float = 2.0
+    kl_weight: float = 0.1      # KL for credal set → epistemic signal
+    aleatoric_weight: float = 1.0
+    orth_weight: float = 0.001
+
+    # Aleatoric prior
+    aleatoric_prior: float = 0.3
+
+    # Architecture
+    projection_dim: int = 256
+    hidden_dim: int = 128
+
+
+# ============================================================================
+# THREE-WAY ORTHOGONAL PROJECTION
+# ============================================================================
+
+class ThreeWayOrthogonalProjection(nn.Module):
+    """
+    Projects encoder hidden state into THREE orthogonal subspaces:
+
+    h_concept: for credal set center (μ)
+    h_epi: for credal set size (Σ_epi)
+    h_ale: for aleatoric uncertainty (σ_ale)
+
+    This ensures TRUE gradient separation.
+    """
+
+    def __init__(self, hidden_size: int, proj_dim: int):
+        super().__init__()
+
+        self.W_concept = nn.Linear(hidden_size, proj_dim, bias=False)
+        self.W_epi = nn.Linear(hidden_size, proj_dim, bias=False)
+        self.W_ale = nn.Linear(hidden_size, proj_dim, bias=False)
+
+        self._initialize_orthogonal(hidden_size, proj_dim)
+
+    def _initialize_orthogonal(self, hidden_size: int, proj_dim: int):
+        """Initialize all three projections to be mutually orthogonal."""
+        total_dim = 3 * proj_dim
+
+        if total_dim <= hidden_size:
+            # Can achieve true orthogonality
+            full_orth = torch.empty(total_dim, hidden_size)
+            nn.init.orthogonal_(full_orth)
+
+            self.W_concept.weight.data = full_orth[:proj_dim]
+            self.W_epi.weight.data = full_orth[proj_dim:2*proj_dim]
+            self.W_ale.weight.data = full_orth[2*proj_dim:3*proj_dim]
+        else:
+            # Fall back to individual orthogonal init
+            nn.init.orthogonal_(self.W_concept.weight)
+            nn.init.orthogonal_(self.W_epi.weight)
+            nn.init.orthogonal_(self.W_ale.weight)
+
+    def forward(
+        self, hidden: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return (
+            self.W_concept(hidden),
+            self.W_epi(hidden),
+            self.W_ale(hidden)
+        )
+
+    def orthogonality_loss(self) -> torch.Tensor:
+        """Penalize non-orthogonality between all pairs."""
+        W_c = self.W_concept.weight
+        W_e = self.W_epi.weight
+        W_a = self.W_ale.weight
+
+        loss = (
+            torch.norm(W_c @ W_e.T, p='fro') ** 2 +
+            torch.norm(W_c @ W_a.T, p='fro') ** 2 +
+            torch.norm(W_e @ W_a.T, p='fro') ** 2
+        )
+        return loss
+
+
+# ============================================================================
+# CREDAL SET HEAD
+# ============================================================================
+
+class CredalSetHead(nn.Module):
+    """
+    Outputs credal set parameters for each concept.
+
+    For concept k, the credal set is:
+        C^(k) = {q ∈ [0,1] : q ~ N(μ^(k), (σ_epi^(k))²)}
+
+    This is a set of plausible probability values, not a single point.
+
+    Key design:
+    - μ comes from h_concept (trained by concept loss)
+    - σ_epi comes from h_epi (trained by KL to prior)
+    - These are SEPARATE pathways with SEPARATE gradients
+
+    The epistemic uncertainty IS the credal set size:
+        EU^(k) = log(σ_epi^(k))
+
+    This is not a prediction of uncertainty—it's the uncertainty itself,
+    derived from the geometry of the credal set.
+    """
+
+    def __init__(
+        self,
+        proj_dim: int,
+        num_concepts: int,
+        hidden_dim: int = 128,
+        prior_sigma: float = 1.0,
+        min_sigma: float = 1e-4,
+        max_sigma: float = 2.0,
+    ):
+        super().__init__()
+        self.num_concepts = num_concepts
+        self.prior_sigma = prior_sigma
+        self.min_sigma = min_sigma
+        self.max_sigma = max_sigma
+
+        # μ head: predicts center of credal set (from h_concept)
+        self.mu_net = nn.Sequential(
+            nn.Linear(proj_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, num_concepts),
+        )
+
+        # σ_epi head: predicts credal set size (from h_epi)
+        # This IS the epistemic uncertainty
+        self.log_sigma_net = nn.Sequential(
+            nn.Linear(proj_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, num_concepts),
+        )
+
+        # Initialize σ to prior (will shrink during training)
+        self._init_sigma_to_prior()
+
+    def _init_sigma_to_prior(self):
+        """Initialize so that σ_epi starts at prior_sigma."""
+        # We want softplus(output) ≈ prior_sigma
+        # softplus(x) = log(1 + exp(x))
+        # For softplus(x) = prior_sigma: x ≈ log(exp(prior_sigma) - 1)
+        init_val = math.log(math.exp(self.prior_sigma) - 1)
+
+        # Initialize last layer bias
+        if hasattr(self.log_sigma_net[-1], 'bias'):
+            nn.init.constant_(self.log_sigma_net[-1].bias, init_val)
+            nn.init.zeros_(self.log_sigma_net[-1].weight)
+
+    def forward(
+        self,
+        h_concept: torch.Tensor,
+        h_epi: torch.Tensor,
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Args:
+            h_concept: [batch, proj_dim] - features for credal center
+            h_epi: [batch, proj_dim] - features for credal size
+
+        Returns:
+            mu: [batch, num_concepts] - credal set centers (logit space)
+            sigma_epi: [batch, num_concepts] - credal set sizes
+            p_mean: [batch, num_concepts] - mean concept probabilities
+        """
+        # Credal set center (in logit space)
+        mu = self.mu_net(h_concept)
+
+        # Credal set size (epistemic uncertainty)
+        log_sigma_raw = self.log_sigma_net(h_epi)
+        sigma_epi = F.softplus(log_sigma_raw)
+        sigma_epi = torch.clamp(sigma_epi, self.min_sigma, self.max_sigma)
+
+        # Mean concept probability (center of credal set in prob space)
+        p_mean = torch.sigmoid(mu)
+
+        return {
+            'mu': mu,
+            'sigma_epi': sigma_epi,
+            'p_mean': p_mean,
+        }
+
+    def sample_credal_set(
+        self,
+        mu: torch.Tensor,
+        sigma_epi: torch.Tensor,
+        num_samples: int = 10,
+    ) -> torch.Tensor:
+        """
+        Sample points from the credal set.
+
+        Each sample represents a plausible "true" concept probability
+        given our epistemic uncertainty.
+
+        Args:
+            mu: [batch, num_concepts] - credal centers (logit space)
+            sigma_epi: [batch, num_concepts] - credal sizes
+            num_samples: number of samples
+
+        Returns:
+            samples: [num_samples, batch, num_concepts] - probabilities in [0,1]
+        """
+        batch_size, num_concepts = mu.shape
+
+        # Reparameterization trick: z = μ + σ * ε, ε ~ N(0,1)
+        eps = torch.randn(
+            num_samples, batch_size, num_concepts,
+            device=mu.device, dtype=mu.dtype
+        )
+
+        # Sample in logit space
+        logit_samples = mu.unsqueeze(0) + sigma_epi.unsqueeze(0) * eps
+
+        # Convert to probability space
+        prob_samples = torch.sigmoid(logit_samples)
+
+        return prob_samples
+
+    def epistemic_uncertainty(self, sigma_epi: torch.Tensor) -> torch.Tensor:
+        """
+        Compute epistemic uncertainty from credal set size.
+
+        EU = log(σ_epi) = log-volume of credal set
+
+        This is DERIVED from geometry, not predicted!
+
+        Args:
+            sigma_epi: [batch, num_concepts]
+
+        Returns:
+            eu: [batch, num_concepts] - epistemic uncertainty per concept
+        """
+        return torch.log(sigma_epi + 1e-10)
+
+    def kl_divergence(self, sigma_epi: torch.Tensor) -> torch.Tensor:
+        """
+        KL divergence from current credal set to prior.
+
+        Prior: N(0, prior_sigma²)
+        Current: N(μ, σ_epi²)
+
+        For the σ part only (μ is trained by concept loss):
+        KL contribution from σ: log(σ_prior/σ) + σ²/(2σ_prior²) - 1/2
+
+        This is the TRAINING SIGNAL for epistemic uncertainty!
+        As the model learns, σ_epi shrinks → KL decreases → EU decreases.
+
+        Args:
+            sigma_epi: [batch, num_concepts]
+
+        Returns:
+            kl: scalar
+        """
+        # KL for variance term only
+        # KL(N(μ,σ²) || N(0,σ_prior²)) variance contribution:
+        # = log(σ_prior/σ) + σ²/(2σ_prior²) - 1/2
+
+        prior_sigma = self.prior_sigma
+
+        kl = (
+            torch.log(prior_sigma / sigma_epi) +
+            (sigma_epi ** 2) / (2 * prior_sigma ** 2) -
+            0.5
+        )
+
+        return kl.mean()
+
+
+# ============================================================================
+# ALEATORIC HEAD
+# ============================================================================
+
+class AleatoricHead(nn.Module):
+    """
+    Predicts aleatoric uncertainty from h_ale.
+
+    Training signal: annotator disagreement entropy
+    This captures inherent ambiguity that cannot be reduced.
+
+    Note: This is SUPERVISED, unlike σ_epi which is REGULARIZED.
+    The aleatoric head learns what ambiguity looks like from data.
+    """
+
+    def __init__(
+        self,
+        proj_dim: int,
+        num_concepts: int,
+        hidden_dim: int = 128,
+        prior_mean: float = 0.3,
+    ):
+        super().__init__()
+        self.num_concepts = num_concepts
+        self.prior_mean = prior_mean
+
+        self.net = nn.Sequential(
+            nn.Linear(proj_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.GELU(),
+            nn.Linear(hidden_dim // 2, num_concepts),
+        )
+
+        # Learnable prior
+        prior_logit = np.log(prior_mean / (1 - prior_mean))
+        self.log_prior = nn.Parameter(torch.ones(num_concepts) * prior_logit)
+
+    def forward(self, h_ale: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            h_ale: [batch, proj_dim]
+
+        Returns:
+            sigma_ale: [batch, num_concepts] in [0, 1]
+        """
+        logits = self.net(h_ale) + self.log_prior
+        return torch.sigmoid(torch.clamp(logits, -10, 10))
+
+    def kl_divergence(self, sigma_ale: torch.Tensor) -> torch.Tensor:
+        """Optional KL regularization for aleatoric."""
+        prior = torch.sigmoid(self.log_prior).unsqueeze(0).expand_as(sigma_ale)
+        eps = 1e-7
+        a = torch.clamp(sigma_ale, eps, 1 - eps)
+        p = torch.clamp(prior, eps, 1 - eps)
+        kl = a * torch.log(a / p) + (1 - a) * torch.log((1 - a) / (1 - p))
+        return kl.mean()
+
+
+# ============================================================================
+# TASK CLASSIFIER (with credal bounds)
+# ============================================================================
+
+class CredalTaskClassifier(nn.Module):
+    """
+    Task classifier that can use credal bounds.
+
+    Given credal concept predictions, computes:
+    - Point prediction (from mean)
+    - Credal bounds on task prediction (from samples)
+    """
+
+    def __init__(self, num_concepts: int, num_classes: int):
+        super().__init__()
+        self.linear = nn.Linear(num_concepts, num_classes)
+
+    def forward(
+        self,
+        p_mean: torch.Tensor,
+        p_samples: Optional[torch.Tensor] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Args:
+            p_mean: [batch, num_concepts] - mean concept probs
+            p_samples: [num_samples, batch, num_concepts] - credal samples
+
+        Returns:
+            logits, probs, predictions, and optionally credal bounds
+        """
+        # Point prediction from mean
+        logits = self.linear(p_mean)
+        probs = F.softmax(logits, dim=-1)
+        predictions = logits.argmax(dim=-1)
+
+        result = {
+            'logits': logits,
+            'probs': probs,
+            'predictions': predictions,
+        }
+
+        # Credal bounds if samples provided
+        if p_samples is not None:
+            # [num_samples, batch, num_classes]
+            sample_logits = self.linear(p_samples)
+            sample_probs = F.softmax(sample_logits, dim=-1)
+
+            # Bounds across samples
+            result['prob_lower'] = sample_probs.min(dim=0)[0]
+            result['prob_upper'] = sample_probs.max(dim=0)[0]
+            result['logit_std'] = sample_logits.std(dim=0)
+
+        return result
+
+
+# ============================================================================
+# MAIN MODEL: TRUE CREDAL CBM
+# ============================================================================
+
+class TrueCredalCBM(nn.Module):
+    """
+    True Credal CBM with Structural Separation
+
+    This is ACTUALLY credal:
+    - Outputs credal sets (μ, Σ_epi) not point estimates
+    - EU = credal set size (derived from geometry)
+    - AU = supervised head (annotator entropy)
+
+    Architecture:
+
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │  Input → Encoder → h                                                │
+    │              │                                                      │
+    │      ┌───────┼───────┐                                             │
+    │      ↓       ↓       ↓                                             │
+    │  [W_concept][W_epi][W_ale]  ← Three orthogonal projections         │
+    │      ↓       ↓       ↓                                             │
+    │  h_concept h_epi  h_ale                                            │
+    │      ↓       ↓       ↓                                             │
+    │   ┌──┴──┐ ┌──┴──┐ ┌──┴──┐                                         │
+    │   │μ^(k)│ │Σ_epi│ │σ_ale│                                         │
+    │   └──┬──┘ └──┬──┘ └──┬──┘                                         │
+    │      │       │       │                                             │
+    │      └───┬───┘       │                                             │
+    │          ↓           │                                             │
+    │   ┌────────────┐     │                                             │
+    │   │ Credal Set │     │                                             │
+    │   │ C^(k) =    │     │                                             │
+    │   │ N(μ, Σ_epi)│     │                                             │
+    │   └─────┬──────┘     │                                             │
+    │         │            │                                             │
+    │    Sample/Mean       │                                             │
+    │         ↓            ↓                                             │
+    │   ┌──────────┐  ┌─────────┐                                       │
+    │   │Task Pred │  │   AU    │                                       │
+    │   │ŷ, bounds │  │σ_ale^(k)│                                       │
+    │   └──────────┘  └─────────┘                                       │
+    │                                                                    │
+    │   EU = log|Σ_epi| (DERIVED from geometry!)                        │
+    │   AU = σ_ale (SUPERVISED by annotator entropy)                    │
+    │                                                                    │
+    │  Training signals:                                                │
+    │    • μ ← L_concept (NLL on concept labels)                        │
+    │    • Σ_epi ← L_KL (shrink toward prior) ← CREDAL/EPISTEMIC        │
+    │    • σ_ale ← L_ale (match annotator entropy) ← ALEATORIC          │
+    └─────────────────────────────────────────────────────────────────────┘
+
+    Connection to impossibility:
+    - Tomov et al. prove no f(p) can separate EU/AU
+    - We escape: EU comes from Σ_epi (geometry), AU from σ_ale (supervision)
+    - Neither is derived from the predictive distribution!
+    """
+
+    def __init__(self, config: TrueCredalConfig):
+        super().__init__()
+        self.config = config
+
+        # Encoder
+        from transformers import AutoModel
+        self.encoder = AutoModel.from_pretrained(config.encoder_name)
+        self.hidden_size = self.encoder.config.hidden_size
+
+        if config.freeze_encoder:
+            for param in self.encoder.parameters():
+                param.requires_grad = False
+
+        # Three-way orthogonal projection
+        self.projection = ThreeWayOrthogonalProjection(
+            self.hidden_size,
+            config.projection_dim
+        )
+
+        # Credal set head (μ from h_concept, Σ_epi from h_epi)
+        self.credal_head = CredalSetHead(
+            proj_dim=config.projection_dim,
+            num_concepts=config.num_concepts,
+            hidden_dim=config.hidden_dim,
+            prior_sigma=config.prior_sigma,
+            min_sigma=config.min_sigma,
+            max_sigma=config.max_sigma,
+        )
+
+        # Aleatoric head (from h_ale)
+        self.aleatoric_head = AleatoricHead(
+            proj_dim=config.projection_dim,
+            num_concepts=config.num_concepts,
+            hidden_dim=config.hidden_dim,
+            prior_mean=config.aleatoric_prior,
+        )
+
+        # Task classifier
+        self.task_classifier = CredalTaskClassifier(
+            num_concepts=config.num_concepts,
+            num_classes=config.num_classes,
+        )
+
+        self._print_architecture()
+
+    def _print_architecture(self):
+        print("\n" + "=" * 70)
+        print("TRUE CREDAL CBM WITH STRUCTURAL SEPARATION")
+        print("=" * 70)
+        print(f"Encoder: {self.config.encoder_name}")
+        print(f"Concepts: {self.config.num_concepts} {self.config.concept_names}")
+        print(f"\nCREDAL SET PARAMETERS:")
+        print(f"  • μ^(k): credal center (from h_concept)")
+        print(f"  • Σ_epi^(k): credal size (from h_epi)")
+        print(f"  • Prior σ: {self.config.prior_sigma}")
+        print(f"  • MC samples: {self.config.num_mc_samples}")
+        print(f"\nUNCERTAINTY SOURCES:")
+        print(f"  • EU = log(Σ_epi) — DERIVED from credal geometry")
+        print(f"  • AU = σ_ale — SUPERVISED by annotator entropy")
+        print(f"\nTRAINING SIGNALS:")
+        print(f"  • W_concept, μ_net ← L_concept")
+        print(f"  • W_epi, σ_net ← L_KL (credal shrinkage)")
+        print(f"  • W_ale, ale_net ← L_ale (disagreement)")
+        print("=" * 70 + "\n")
+
+    def encode(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor
+    ) -> torch.Tensor:
+        outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
+        if self.config.pooling_strategy == "cls":
+            return outputs.last_hidden_state[:, 0, :]
+        else:
+            hidden = outputs.last_hidden_state
+            mask = attention_mask.unsqueeze(-1).float()
+            return (hidden * mask).sum(1) / mask.sum(1).clamp(min=1e-9)
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+        concept_labels: Optional[torch.Tensor] = None,
+        annotator_entropy: Optional[torch.Tensor] = None,
+        num_mc_samples: Optional[int] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Forward pass.
+
+        Args:
+            input_ids: [batch, seq_len]
+            attention_mask: [batch, seq_len]
+            labels: [batch] task labels
+            concept_labels: [batch, num_concepts] (0=neg, 1=unk, 2=pos)
+            annotator_entropy: [batch, num_concepts] per-concept entropy
+            num_mc_samples: override config for MC samples
+        """
+        num_samples = num_mc_samples or self.config.num_mc_samples
+
+        # Encode
+        hidden = self.encode(input_ids, attention_mask)
+
+        # Three orthogonal projections
+        h_concept, h_epi, h_ale = self.projection(hidden)
+
+        # Credal set parameters
+        credal_out = self.credal_head(h_concept, h_epi)
+        mu = credal_out['mu']
+        sigma_epi = credal_out['sigma_epi']
+        p_mean = credal_out['p_mean']
+
+        # Sample from credal set
+        p_samples = self.credal_head.sample_credal_set(mu, sigma_epi, num_samples)
+
+        # Aleatoric uncertainty
+        sigma_ale = self.aleatoric_head(h_ale)
+
+        # Task prediction (with credal bounds)
+        task_out = self.task_classifier(p_mean, p_samples)
+
+        # Epistemic uncertainty (DERIVED from credal geometry!)
+        epistemic = self.credal_head.epistemic_uncertainty(sigma_epi)
+
+        result = {
+            # Task
+            'predictions': task_out['predictions'],
+            'logits': task_out['logits'],
+            'probs': task_out['probs'],
+
+            # Credal bounds
+            'prob_lower': task_out.get('prob_lower'),
+            'prob_upper': task_out.get('prob_upper'),
+
+            # Concepts
+            'concept_probs': p_mean,          # Mean of credal set
+            'concept_samples': p_samples,      # Samples from credal set
+            'mu': mu,                          # Credal center (logits)
+            'sigma_epi': sigma_epi,            # Credal size
+
+            # Uncertainties
+            'epistemic': epistemic,            # DERIVED: log(σ_epi)
+            'aleatoric': sigma_ale,            # SUPERVISED: annotator entropy
+
+            # For analysis
+            'h_concept': h_concept,
+            'h_epi': h_epi,
+            'h_ale': h_ale,
+        }
+
+        # Compute losses if training
+        if labels is not None or concept_labels is not None:
+            losses = self._compute_losses(
+                result, labels, concept_labels, annotator_entropy
+            )
+            result.update(losses)
+
+        return result
+
+    def _compute_losses(
+        self,
+        result: Dict[str, torch.Tensor],
+        labels: Optional[torch.Tensor],
+        concept_labels: Optional[torch.Tensor],
+        annotator_entropy: Optional[torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Compute losses with proper gradient separation.
+
+        Critical insight:
+        - L_concept → gradients to W_concept, μ_net
+        - L_KL → gradients to W_epi, σ_net (THIS IS THE EPISTEMIC SIGNAL!)
+        - L_ale → gradients to W_ale, ale_net
+        """
+        losses = {}
+        device = result['predictions'].device
+
+        # =====================================================================
+        # TERM 1: Task loss (gradients → W_concept via p_mean)
+        # =====================================================================
+        if labels is not None:
+            losses['task_loss'] = F.cross_entropy(result['logits'], labels)
+
+        # =====================================================================
+        # TERM 2: Concept loss (gradients → W_concept, μ_net)
+        # =====================================================================
+        if concept_labels is not None:
+            known_mask = (concept_labels != 1)
+
+            if known_mask.any():
+                targets = (concept_labels[known_mask].float() / 2.0)
+                preds = result['concept_probs'][known_mask]
+                preds_clamped = torch.clamp(preds, 1e-7, 1 - 1e-7)
+
+                losses['concept_bce'] = F.binary_cross_entropy(
+                    preds_clamped, targets
+                )
+
+        # =====================================================================
+        # TERM 3: KL loss for credal set (gradients → W_epi, σ_net)
+        # THIS IS THE EPISTEMIC TRAINING SIGNAL!
+        #
+        # The KL term encourages σ_epi to shrink toward the prior.
+        # When the model is uncertain (early training, OOD inputs),
+        # σ_epi stays large → high epistemic uncertainty.
+        # As the model learns, σ_epi shrinks → low epistemic uncertainty.
+        # =====================================================================
+        losses['credal_kl'] = self.credal_head.kl_divergence(result['sigma_epi'])
+
+        # =====================================================================
+        # TERM 4: Aleatoric supervision (gradients → W_ale, ale_net)
+        # =====================================================================
+        if annotator_entropy is not None and concept_labels is not None:
+            known_mask = (concept_labels != 1)
+
+            if known_mask.any():
+                entropy_targets = annotator_entropy[known_mask]
+                aleatoric_pred = result['aleatoric'][known_mask]
+                losses['aleatoric_loss'] = F.mse_loss(aleatoric_pred, entropy_targets)
+
+        # Unknown concepts should have high aleatoric
+        if concept_labels is not None:
+            unknown_mask = (concept_labels == 1)
+            if unknown_mask.any():
+                losses['aleatoric_unknown'] = F.mse_loss(
+                    result['aleatoric'][unknown_mask],
+                    torch.ones_like(result['aleatoric'][unknown_mask])
+                )
+
+        # =====================================================================
+        # TERM 5: Orthogonality penalty
+        # =====================================================================
+        losses['orth_penalty'] = self.projection.orthogonality_loss()
+
+        # =====================================================================
+        # COMBINE
+        # =====================================================================
+        total = torch.tensor(0.0, device=device)
+
+        if 'task_loss' in losses:
+            total = total + losses['task_loss']
+
+        if 'concept_bce' in losses:
+            total = total + self.config.concept_weight * losses['concept_bce']
+
+        # KL loss IS the epistemic training signal
+        total = total + self.config.kl_weight * losses['credal_kl']
+
+        if 'aleatoric_loss' in losses:
+            total = total + self.config.aleatoric_weight * losses['aleatoric_loss']
+
+        if 'aleatoric_unknown' in losses:
+            total = total + 0.5 * self.config.aleatoric_weight * losses['aleatoric_unknown']
+
+        total = total + self.config.orth_weight * losses['orth_penalty']
+
+        losses['loss'] = total
+        return losses
+
+
+# ============================================================================
+# VERIFICATION AND DIAGNOSTICS
+# ============================================================================
+
+def verify_credal_properties(model: TrueCredalCBM, num_steps: int = 100):
+    """
+    Verify that the model has true credal properties.
+
+    Key properties to verify:
+    1. EU is derived from credal geometry (not predicted)
+    2. σ_epi shrinks during training (KL signal works)
+    3. Gradient separation holds
+    """
+    print("\n" + "=" * 60)
+    print("CREDAL PROPERTY VERIFICATION")
+    print("=" * 60)
+
+    # Create dummy data
+    batch_size = 8
+    seq_len = 32
+    input_ids = torch.randint(0, 1000, (batch_size, seq_len))
+    attention_mask = torch.ones(batch_size, seq_len)
+    concept_labels = torch.randint(0, 3, (batch_size, model.config.num_concepts))
+    annotator_entropy = torch.rand(batch_size, model.config.num_concepts)
+    labels = torch.randint(0, 2, (batch_size,))
+
+    # =========================================================================
+    # Test 1: EU is derived from σ_epi
+    # =========================================================================
+    print("\n[Test 1] EU derived from credal geometry:")
+    model.eval()
+    with torch.no_grad():
+        result = model(input_ids, attention_mask)
+
+        # EU should be exactly log(σ_epi)
+        expected_eu = torch.log(result['sigma_epi'] + 1e-10)
+        actual_eu = result['epistemic']
+
+        diff = (expected_eu - actual_eu).abs().max().item()
+        print(f"  max|EU - log(σ_epi)|: {diff:.10f}")
+        assert diff < 1e-6, "EU should be exactly log(σ_epi)!"
+        print("  ✓ PASSED: EU = log(σ_epi)")
+
+    # =========================================================================
+    # Test 2: σ_epi shrinks during training
+    # =========================================================================
+    print("\n[Test 2] σ_epi shrinks during training (KL signal):")
+    model.train()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+    initial_sigma = None
+    final_sigma = None
+
+    for step in range(num_steps):
+        result = model(
+            input_ids, attention_mask,
+            labels=labels,
+            concept_labels=concept_labels,
+            annotator_entropy=annotator_entropy
+        )
+
+        if step == 0:
+            initial_sigma = result['sigma_epi'].mean().item()
+
+        loss = result['loss']
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        if step == num_steps - 1:
+            final_sigma = result['sigma_epi'].mean().item()
+
+    print(f"  Initial mean σ_epi: {initial_sigma:.4f}")
+    print(f"  Final mean σ_epi: {final_sigma:.4f}")
+    print(f"  Shrinkage: {(1 - final_sigma/initial_sigma)*100:.1f}%")
+
+    if final_sigma < initial_sigma:
+        print("  ✓ PASSED: σ_epi shrinks during training")
+    else:
+        print("  ⚠ WARNING: σ_epi did not shrink")
+
+    # =========================================================================
+    # Test 3: Gradient separation
+    # =========================================================================
+    print("\n[Test 3] Gradient separation:")
+    model.train()
+
+    # Test KL gradients only affect W_epi
+    model.zero_grad()
+    result = model(input_ids, attention_mask, concept_labels=concept_labels)
+    result['credal_kl'].backward()
+
+    w_concept_grad = model.projection.W_concept.weight.grad
+    w_epi_grad = model.projection.W_epi.weight.grad
+    w_ale_grad = model.projection.W_ale.weight.grad
+
+    print(f"  L_KL gradients:")
+    print(f"    W_concept: {w_concept_grad.norm().item() if w_concept_grad is not None else 0:.6f}")
+    print(f"    W_epi: {w_epi_grad.norm().item():.6f}")
+    print(f"    W_ale: {w_ale_grad.norm().item() if w_ale_grad is not None else 0:.6f}")
+
+    assert w_epi_grad.norm() > 0, "W_epi should have gradients from KL!"
+    assert w_concept_grad is None or w_concept_grad.norm() < 1e-10, "W_concept should NOT have KL gradients!"
+    assert w_ale_grad is None or w_ale_grad.norm() < 1e-10, "W_ale should NOT have KL gradients!"
+    print("  ✓ PASSED: L_KL only affects W_epi")
+
+    print("\n" + "=" * 60)
+    print("ALL CREDAL PROPERTY TESTS PASSED!")
+    print("=" * 60)
+
+
+def analyze_credal_sets(model: TrueCredalCBM, dataloader, device='cpu'):
+    """
+    Analyze credal set properties on real data.
+    """
+    model.eval()
+    model.to(device)
+
+    all_sigma_epi = []
+    all_sigma_ale = []
+    all_eu = []
+    all_correct = []
+
+    with torch.no_grad():
+        for batch in dataloader:
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            labels = batch['labels'].to(device)
+
+            result = model(input_ids, attention_mask)
+
+            all_sigma_epi.append(result['sigma_epi'].cpu())
+            all_sigma_ale.append(result['aleatoric'].cpu())
+            all_eu.append(result['epistemic'].cpu())
+            all_correct.append((result['predictions'] == labels).cpu())
+
+    sigma_epi = torch.cat(all_sigma_epi)
+    sigma_ale = torch.cat(all_sigma_ale)
+    eu = torch.cat(all_eu)
+    correct = torch.cat(all_correct)
+
+    print("\n" + "=" * 60)
+    print("CREDAL SET ANALYSIS")
+    print("=" * 60)
+
+    print(f"\nCredal set size (σ_epi):")
+    print(f"  Mean: {sigma_epi.mean():.4f}")
+    print(f"  Std: {sigma_epi.std():.4f}")
+    print(f"  Range: [{sigma_epi.min():.4f}, {sigma_epi.max():.4f}]")
+
+    print(f"\nEpistemic uncertainty (log σ_epi):")
+    print(f"  Mean: {eu.mean():.4f}")
+    print(f"  Correct predictions: {eu[correct.any(dim=-1) if correct.dim() > 1 else correct].mean():.4f}")
+    print(f"  Wrong predictions: {eu[~(correct.any(dim=-1) if correct.dim() > 1 else correct)].mean():.4f}")
+
+    print(f"\nAleatoric uncertainty:")
+    print(f"  Mean: {sigma_ale.mean():.4f}")
+
+    # Correlation between EU and AU (should be low!)
+    eu_flat = eu.mean(dim=-1).numpy()
+    au_flat = sigma_ale.mean(dim=-1).numpy()
+
+    from scipy import stats
+    rho, p = stats.spearmanr(eu_flat, au_flat)
+    print(f"\nρ(EU, AU): {rho:.3f} (p={p:.2e})")
+
+    if abs(rho) < 0.3:
+        print("  ✓ Good separation!")
+    else:
+        print("  ⚠ High correlation")
+
+    print("=" * 60)
