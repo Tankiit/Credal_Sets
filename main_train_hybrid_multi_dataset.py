@@ -676,8 +676,12 @@ class HybridCredalCBMTrainer:
         warmup_steps: int = 100,
         save_every: int = 5,
         enable_diagnostics: bool = False,
+        metadata: Dict = None,
     ) -> Dict:
         """Full training loop."""
+        import time
+        from datetime import datetime
+
         optimizer = optim.AdamW(
             self.model.parameters(),
             lr=lr,
@@ -693,14 +697,29 @@ class HybridCredalCBMTrainer:
 
         history = []
         best_metrics = None
+        training_start_time = time.time()
+
+        # Collect data loader statistics
+        data_stats = {
+            'train_size': len(train_loader.dataset),
+            'val_size': len(val_loader.dataset),
+            'train_batches': len(train_loader),
+            'val_batches': len(val_loader),
+            'batch_size': train_loader.batch_size,
+        }
 
         print(f"\n{'='*80}")
         print(f"Training Hybrid Credal CBM for {num_epochs} Epochs")
         print(f"Learning rate: {lr:.0e}")
         print(f"{'='*80}")
+        print(f"\nData Statistics:")
+        print(f"  Train samples: {data_stats['train_size']}")
+        print(f"  Val samples: {data_stats['val_size']}")
+        print(f"  Batch size: {data_stats['batch_size']}")
 
         for epoch in range(1, num_epochs + 1):
             self.current_epoch = epoch
+            epoch_start_time = time.time()
 
             print(f"\n{'='*60}")
             print(f"Epoch {epoch}/{num_epochs}")
@@ -715,10 +734,14 @@ class HybridCredalCBMTrainer:
             # Validate
             val_metrics = self.evaluate(val_loader)
 
+            # Calculate epoch time
+            epoch_time = time.time() - epoch_start_time
+
             # Print results
             print(f"\n📊 Results:")
             print(f"  Train Loss: {train_metrics['loss']:.4f}, Train Acc: {train_metrics['accuracy']:.4f}")
             print(f"  Val Loss: {val_metrics.loss:.4f}, Val Acc: {val_metrics.accuracy:.4f}")
+            print(f"  Epoch Time: {epoch_time:.1f}s")
 
             if val_metrics.concept_accs:
                 print(f"\n🎯 Concept Accuracy:")
@@ -735,6 +758,19 @@ class HybridCredalCBMTrainer:
             print(f"  ρ(EU, Error): {val_metrics.rho_eu_error:.3f} (p={val_metrics.p_eu_error:.3f}) [target: > 0.2]")
             print(f"  ρ(AU, Entropy): {val_metrics.rho_ale_entropy:.3f} (p={val_metrics.p_ale_entropy:.3f}) [target: > 0.3]")
 
+            # Enhanced epoch data
+            epoch_data = {
+                'epoch': epoch,
+                'epoch_time': epoch_time,
+                'train': {
+                    **train_metrics,
+                    'loss': float(train_metrics['loss']),
+                    'accuracy': float(train_metrics['accuracy']),
+                },
+                'val': val_metrics.to_dict(),
+                'timestamp': datetime.now().isoformat(),
+            }
+
             # Save best model
             if val_metrics.accuracy > self.best_val_acc:
                 self.best_val_acc = val_metrics.accuracy
@@ -745,40 +781,97 @@ class HybridCredalCBMTrainer:
                     'epoch': epoch,
                     'model_state_dict': self.model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
-                    'metrics': val_metrics.to_dict()
+                    'metrics': val_metrics.to_dict(),
+                    'epoch_data': epoch_data,
+                    'config': self.config.__dict__ if hasattr(self.config, '__dict__') else str(self.config),
                 }, checkpoint_path)
                 print(f"\n  ✓ New best model saved! (Val Acc: {self.best_val_acc:.4f})")
 
-            # Periodic checkpoint
+            # Periodic checkpoint (every save_every epochs)
             if epoch % save_every == 0:
                 checkpoint_path = self.save_dir / f"checkpoint_epoch_{epoch}.pt"
                 torch.save({
                     'epoch': epoch,
                     'model_state_dict': self.model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
-                    'metrics': val_metrics.to_dict()
+                    'metrics': val_metrics.to_dict(),
+                    'epoch_data': epoch_data,
                 }, checkpoint_path)
+                print(f"  ✓ Checkpoint saved: {checkpoint_path}")
 
-            history.append({
-                'epoch': epoch,
-                'train': train_metrics,
-                'val': val_metrics.to_dict()
-            })
+            # Save per-epoch JSON for detailed analysis
+            epoch_json_path = self.save_dir / f"epoch_{epoch:03d}_metrics.json"
+            with open(epoch_json_path, 'w') as f:
+                json.dump(epoch_data, f, indent=2, default=float)
 
-        # Save history
+            history.append(epoch_data)
+
+        # Calculate total training time
+        total_training_time = time.time() - training_start_time
+
+        # Comprehensive training summary
+        training_summary = {
+            'metadata': metadata or {},
+            'data_statistics': data_stats,
+            'training_config': {
+                'num_epochs': num_epochs,
+                'learning_rate': lr,
+                'weight_decay': weight_decay,
+                'warmup_steps': warmup_steps,
+                'save_every': save_every,
+            },
+            'training_time': {
+                'total_seconds': total_training_time,
+                'total_minutes': total_training_time / 60,
+                'total_hours': total_training_time / 3600,
+                'avg_time_per_epoch': total_training_time / num_epochs,
+            },
+            'best_val_accuracy': float(self.best_val_acc),
+            'best_epoch': int(best_metrics.to_dict().get('epoch', 0) if best_metrics else 0),
+            'final_train_accuracy': float(history[-1]['train']['accuracy']),
+            'final_val_accuracy': float(history[-1]['val']['accuracy']),
+            'history': history,
+            'timestamp': datetime.now().isoformat(),
+        }
+
+        # Save comprehensive history
         history_path = self.save_dir / "training_history.json"
         with open(history_path, 'w') as f:
-            json.dump(history, f, indent=2, default=float)
+            json.dump(training_summary, f, indent=2, default=float)
+
+        # Save per-epoch CSV for easy analysis
+        try:
+            import pandas as pd
+            epoch_df = pd.DataFrame([
+                {
+                    'epoch': h['epoch'],
+                    'epoch_time': h.get('epoch_time', 0),
+                    'train_loss': h['train']['loss'],
+                    'train_acc': h['train']['accuracy'],
+                    'val_loss': h['val']['loss'],
+                    'val_acc': h['val']['accuracy'],
+                    'mean_sigma_epi': h['val']['mean_sigma_epi'],
+                    'mean_eu': h['val']['mean_eu'],
+                    'mean_au': h['val']['mean_aleatoric'],
+                    'rho_eu_au': h['val']['rho_eu_au'],
+                    'rho_eu_error': h['val']['rho_eu_error'],
+                    'rho_au_entropy': h['val']['rho_ale_entropy'],
+                }
+                for h in history
+            ])
+            csv_path = self.save_dir / "training_history.csv"
+            epoch_df.to_csv(csv_path, index=False)
+            print(f"  ✓ Training history CSV saved: {csv_path}")
+        except ImportError:
+            print("  ⚠ pandas not available, skipping CSV export")
 
         print(f"\n{'='*80}")
         print("Training Complete!")
         print(f"Best Val Accuracy: {self.best_val_acc:.4f}")
+        print(f"Total Training Time: {total_training_time/60:.1f} minutes")
         print(f"{'='*80}")
 
-        return {
-            'history': history,
-            'best_metrics': best_metrics.to_dict() if best_metrics else None
-        }
+        return training_summary
 
     def load_best_model(self):
         """Load best model from checkpoint."""
@@ -976,6 +1069,24 @@ def main():
     num_epochs = args.num_epochs if args.num_epochs is not None else config['num_epochs']
     lr = args.lr if args.lr is not None else config['learning_rate']
 
+    # Prepare metadata
+    run_metadata = {
+        'dataset': config['name'],
+        'encoder': encoder_name,
+        'encoder_type': encoder_config['type'],
+        'device': device,
+        'command_line_args': vars(args),
+        'dataset_metadata': metadata,
+        'model_config': {
+            'num_concepts': model_config.num_concepts,
+            'concept_names': model_config.concept_names,
+            'num_classes': model_config.num_classes,
+            'freeze_encoder': model_config.freeze_encoder,
+            'projection_dim': model_config.projection_dim,
+            'hidden_dim': model_config.hidden_dim,
+        },
+    }
+
     # Train
     results = trainer.fit(
         train_loader=train_loader,
@@ -986,6 +1097,7 @@ def main():
         warmup_steps=100,
         save_every=5,
         enable_diagnostics=False,
+        metadata=run_metadata,
     )
 
     # Load best and test
@@ -1015,17 +1127,31 @@ def main():
     print(f"  ρ(EU, Error): {test_metrics.rho_eu_error:.3f} [target: > 0.2]")
     print(f"  ρ(AU, Entropy): {test_metrics.rho_ale_entropy:.3f} [target: > 0.3]")
 
-    # Save results
+    # Save comprehensive final results
+    final_results = {
+        'test_metrics': test_metrics.to_dict(),
+        'training_summary': {
+            'best_val_accuracy': float(results.get('best_val_accuracy', 0)),
+            'best_epoch': int(results.get('best_epoch', 0)),
+            'total_training_time': float(results.get('training_time', {}).get('total_minutes', 0)),
+            'final_train_accuracy': float(results.get('final_train_accuracy', 0)),
+            'final_val_accuracy': float(results.get('final_val_accuracy', 0)),
+        },
+        'run_metadata': results.get('metadata', {}),
+        'data_statistics': results.get('data_statistics', {}),
+        'training_config': results.get('training_config', {}),
+    }
+
     results_path = trainer.save_dir / "final_results.json"
     with open(results_path, 'w') as f:
-        json.dump(test_metrics.to_dict(), f, indent=2)
+        json.dump(final_results, f, indent=2, default=float)
 
     print(f"\n✓ Results saved to: {results_path}")
     print("\n" + "="*80)
     print("All Done!")
     print("="*80)
 
-    return test_metrics.to_dict()
+    return final_results
 
 
 if __name__ == "__main__":
