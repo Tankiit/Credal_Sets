@@ -468,17 +468,22 @@ class MAQACredalTrainer:
         self.gradient_alignments = []
 
     def train_epoch(self) -> Dict:
-        """Train for one epoch."""
+        """Train for one epoch with detailed loss tracking."""
         self.model.train()
 
         total_loss = 0.0
-        total_kl = 0.0
-        total_cal = 0.0
-        total_cont = 0.0
+        total_answer_loss = 0.0
+        total_kl_reg_loss = 0.0
+        total_calibration_loss = 0.0
+        total_contrastive_loss = 0.0
         num_batches = 0
 
         epoch_conflicts = []
         epoch_alignments = []
+
+        # For contrastive success rate
+        contrastive_success_count = 0
+        contrastive_total = 0
 
         for batch in self.train_loader:
             # Check if paired
@@ -504,6 +509,11 @@ class MAQACredalTrainer:
                     amb_batch['entropy'],
                     params_clear=params_clear
                 )
+
+                # Track contrastive success
+                if params_amb.sigma_ale.mean() > params_clear.sigma_ale.mean():
+                    contrastive_success_count += 1
+                contrastive_total += 1
             else:
                 # Single batch
                 batch = {k: v.to(self.device) for k, v in batch.items()}
@@ -531,11 +541,12 @@ class MAQACredalTrainer:
             loss.backward()
             self.optimizer.step()
 
-            # Track
+            # Track losses
             total_loss += loss.item()
-            total_kl += losses['loss_kl'].item()
-            total_cal += losses['loss_cal'].item()
-            total_cont += losses['loss_cont'].item()
+            total_answer_loss += losses['loss_kl'].item()
+            total_kl_reg_loss += losses.get('loss_reg', torch.tensor(0.0)).item()
+            total_calibration_loss += losses['loss_cal'].item()
+            total_contrastive_loss += losses['loss_cont'].item()
             num_batches += 1
 
             epoch_conflicts.append(conflict)
@@ -544,63 +555,114 @@ class MAQACredalTrainer:
         # Compute metrics
         metrics = {
             'train_loss': total_loss / num_batches,
-            'loss_kl': total_kl / num_batches,
-            'loss_cal': total_cal / num_batches,
-            'loss_cont': total_cont / num_batches,
+            'answer_loss': total_answer_loss / num_batches,
+            'kl_reg_loss': total_kl_reg_loss / num_batches,
+            'calibration_loss': total_calibration_loss / num_batches,
+            'contrastive_loss': total_contrastive_loss / num_batches,
             'gradient_conflict_rate': np.mean(epoch_conflicts),
             'gradient_alignment_rate': np.mean(epoch_alignments),
+            'contrastive_success_rate': contrastive_success_count / contrastive_total if contrastive_total > 0 else 0.0,
         }
 
         return metrics
 
     def evaluate(self, loader) -> Dict:
-        """Evaluate model."""
+        """Evaluate model with comprehensive metrics."""
         self.model.eval()
 
         total_loss = 0.0
+        total_answer_loss = 0.0
+        total_kl_loss = 0.0
+        total_calibration_loss = 0.0
+        total_contrastive_loss = 0.0
         num_batches = 0
 
         all_sigma_epi = []
         all_sigma_ale = []
         all_entropy_gt = []
 
+        # For contrastive success rate
+        contrastive_success_count = 0
+        contrastive_total = 0
+
         with torch.no_grad():
             for batch in loader:
                 # Check if paired
                 if 'amb' in batch:
-                    # Only use ambiguous for evaluation
-                    batch = batch['amb']
+                    # Paired batch - evaluate contrastive learning
+                    amb_batch = {k: v.to(self.device) for k, v in batch['amb'].items()}
+                    clear_batch = {k: v.to(self.device) for k, v in batch['clear'].items()}
 
-                batch = {k: v.to(self.device) for k, v in batch.items()}
+                    # Forward both
+                    params_amb = self.model(
+                        amb_batch['input_ids'],
+                        amb_batch['attention_mask']
+                    )
+                    params_clear = self.model(
+                        clear_batch['input_ids'],
+                        clear_batch['attention_mask']
+                    )
 
-                # Forward
-                params = self.model(
-                    batch['input_ids'],
-                    batch['attention_mask']
-                )
+                    # Loss with contrastive
+                    loss, loss_dict = self.criterion(
+                        params_amb,
+                        amb_batch['p_star'],
+                        amb_batch['entropy'],
+                        params_clear=params_clear
+                    )
 
-                # Loss
-                loss, _ = self.criterion(
-                    params,
-                    batch['p_star'],
-                    batch['entropy']
-                )
+                    # Track contrastive success
+                    # AU(ambig) should be > AU(clear)
+                    if params_amb.sigma_ale.mean() > params_clear.sigma_ale.mean():
+                        contrastive_success_count += 1
+                    contrastive_total += 1
+
+                    # Use ambiguous for metrics
+                    params = params_amb
+                    batch_metrics = amb_batch
+
+                else:
+                    # Single batch
+                    batch = {k: v.to(self.device) for k, v in batch.items()}
+
+                    # Forward
+                    params = self.model(
+                        batch['input_ids'],
+                        batch['attention_mask']
+                    )
+
+                    # Loss
+                    loss, loss_dict = self.criterion(
+                        params,
+                        batch['p_star'],
+                        batch['entropy']
+                    )
+                    batch_metrics = batch
 
                 total_loss += loss.item()
+                total_answer_loss += loss_dict['loss_kl'].item()
+                total_kl_loss += loss_dict.get('loss_reg', torch.tensor(0.0)).item()
+                total_calibration_loss += loss_dict['loss_cal'].item()
+                total_contrastive_loss += loss_dict['loss_cont'].item()
                 num_batches += 1
 
                 # Collect predictions (flatten batches)
                 all_sigma_epi.append(params.sigma_epi.cpu())
                 all_sigma_ale.append(params.sigma_ale.cpu())
-                all_entropy_gt.append(batch['entropy'].cpu())
+                all_entropy_gt.append(batch_metrics['entropy'].cpu())
 
         # Compute metrics (concatenate batches)
         all_sigma_epi = torch.cat(all_sigma_epi, dim=0)
         all_sigma_ale = torch.cat(all_sigma_ale, dim=0)
         all_entropy_gt = torch.cat(all_entropy_gt, dim=0)
 
+        # Basic metrics
         metrics = {
             'val_loss': total_loss / num_batches,
+            'answer_loss': total_answer_loss / num_batches,
+            'kl_loss': total_kl_loss / num_batches,
+            'calibration_loss': total_calibration_loss / num_batches,
+            'contrastive_loss': total_contrastive_loss / num_batches,
             'mean_sigma_epi': all_sigma_epi.mean().item(),
             'mean_sigma_ale': all_sigma_ale.mean().item(),
             'mean_entropy_gt': all_entropy_gt.mean().item(),
@@ -609,10 +671,26 @@ class MAQACredalTrainer:
         # Add correlations if enough samples
         if len(all_sigma_epi) > 100:
             from scipy import stats
-            metrics['rho_eu_au'] = stats.pearsonr(
+            # ρ(EU, AU): Bifurcation success (target: < 0.3)
+            rho_eu_au, p_eu_au = stats.pearsonr(
                 all_sigma_epi.numpy(),
                 all_sigma_ale.numpy()
-            )[0]
+            )
+            metrics['rho_eu_au'] = rho_eu_au
+            metrics['p_eu_au'] = p_eu_au
+
+            # ρ(AU, Entropy): AU validity (target: > 0.5)
+            rho_au_entropy, p_au_entropy = stats.pearsonr(
+                all_sigma_ale.numpy(),
+                all_entropy_gt.numpy()
+            )
+            metrics['rho_au_entropy'] = rho_au_entropy
+            metrics['p_au_entropy'] = p_au_entropy
+
+        # Contrastive success rate (target: > 80%)
+        if contrastive_total > 0:
+            metrics['contrastive_success_rate'] = contrastive_success_count / contrastive_total
+            metrics['contrastive_total_pairs'] = contrastive_total
 
         return metrics
 

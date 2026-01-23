@@ -974,12 +974,29 @@ def train_maqa_model(
         print(f"\nEpoch {epoch} Results:")
         print(f"  Train Loss: {train_metrics['train_loss']:.4f}")
         print(f"  Val Loss: {val_metrics['val_loss']:.4f}")
-        print(f"  Mean σ_epi: {val_metrics['mean_sigma_epi']:.4f}")
-        print(f"  Mean σ_ale: {val_metrics['mean_sigma_ale']:.4f}")
-        print(f"  Gradient Conflict Rate: {train_metrics['gradient_conflict_rate']:.2%}")
-        print(f"  Gradient Alignment Rate: {train_metrics['gradient_alignment_rate']:.2%}")
+        print(f"\n  Loss Components:")
+        print(f"    Answer Loss: {train_metrics['answer_loss']:.4f}")
+        print(f"    KL Reg Loss: {train_metrics['kl_reg_loss']:.4f}")
+        print(f"    Calibration Loss: {train_metrics['calibration_loss']:.4f}")
+        print(f"    Contrastive Loss: {train_metrics['contrastive_loss']:.4f}")
+        print(f"\n  Uncertainties:")
+        print(f"    Mean σ_epi: {val_metrics['mean_sigma_epi']:.4f}")
+        print(f"    Mean σ_ale: {val_metrics['mean_sigma_ale']:.4f}")
+        print(f"    Mean Entropy GT: {val_metrics['mean_entropy_gt']:.4f}")
+        print(f"\n  Correlations:")
         if 'rho_eu_au' in val_metrics:
-            print(f"  ρ(EU, AU): {val_metrics['rho_eu_au']:.4f}")
+            print(f"    ρ(EU, AU): {val_metrics['rho_eu_au']:.4f} (target: < 0.3)")
+            print(f"    p-value: {val_metrics['p_eu_au']:.4e}")
+        if 'rho_au_entropy' in val_metrics:
+            print(f"    ρ(AU, Entropy): {val_metrics['rho_au_entropy']:.4f} (target: > 0.5)")
+            print(f"    p-value: {val_metrics['p_au_entropy']:.4e}")
+        print(f"\n  Gradient Metrics:")
+        print(f"    Conflict Rate: {train_metrics['gradient_conflict_rate']:.2%}")
+        print(f"    Alignment Rate: {train_metrics['gradient_alignment_rate']:.2%}")
+        print(f"\n  Contrastive Learning:")
+        print(f"    Success Rate: {train_metrics['contrastive_success_rate']:.2%} (target: > 80%)")
+        if 'contrastive_success_rate' in val_metrics:
+            print(f"    Val Success Rate: {val_metrics['contrastive_success_rate']:.2%}")
 
         # Save epoch results
         epoch_results = {
@@ -1056,15 +1073,21 @@ def train_maqa_model(
                 'epoch': h['epoch'],
                 'epoch_time': h.get('epoch_time', 0),
                 'train_loss': h['train']['train_loss'],
-                'loss_kl': h['train']['loss_kl'],
-                'loss_cal': h['train']['loss_cal'],
-                'loss_cont': h['train']['loss_cont'],
+                'answer_loss': h['train']['answer_loss'],
+                'kl_reg_loss': h['train']['kl_reg_loss'],
+                'calibration_loss': h['train']['calibration_loss'],
+                'contrastive_loss': h['train']['contrastive_loss'],
                 'val_loss': h['val']['val_loss'],
                 'mean_sigma_epi': h['val']['mean_sigma_epi'],
                 'mean_sigma_ale': h['val']['mean_sigma_ale'],
                 'mean_entropy_gt': h['val']['mean_entropy_gt'],
                 'gradient_conflict_rate': h['train']['gradient_conflict_rate'],
                 'gradient_alignment_rate': h['train']['gradient_alignment_rate'],
+                'contrastive_success_rate': h['train']['contrastive_success_rate'],
+                'rho_eu_au': h['val'].get('rho_eu_au', None),
+                'p_eu_au': h['val'].get('p_eu_au', None),
+                'rho_au_entropy': h['val'].get('rho_au_entropy', None),
+                'p_au_entropy': h['val'].get('p_au_entropy', None),
             }
             for h in history
         ])
@@ -1315,12 +1338,30 @@ def main():
         print("\n" + "="*80)
         print("Training Complete!")
         print("="*80)
-        print(f"\nFinal Results:")
+        print(f"\nFinal Test Results:")
         print(f"  Test Loss: {results['test_metrics']['val_loss']:.4f}")
-        print(f"  Mean σ_epi: {results['test_metrics']['mean_sigma_epi']:.4f}")
-        print(f"  Mean σ_ale: {results['test_metrics']['mean_sigma_ale']:.4f}")
+        print(f"\n  Loss Components:")
+        print(f"    Answer Loss: {results['test_metrics']['answer_loss']:.4f}")
+        print(f"    KL Reg Loss: {results['test_metrics']['kl_loss']:.4f}")
+        print(f"    Calibration Loss: {results['test_metrics']['calibration_loss']:.4f}")
+        print(f"    Contrastive Loss: {results['test_metrics']['contrastive_loss']:.4f}")
+        print(f"\n  Uncertainties:")
+        print(f"    Mean σ_epi: {results['test_metrics']['mean_sigma_epi']:.4f}")
+        print(f"    Mean σ_ale: {results['test_metrics']['mean_sigma_ale']:.4f}")
+        print(f"    Mean Entropy GT: {results['test_metrics']['mean_entropy_gt']:.4f}")
+        print(f"\n  Key Correlations:")
         if 'rho_eu_au' in results['test_metrics']:
-            print(f"  ρ(EU, AU): {results['test_metrics']['rho_eu_au']:.4f}")
+            status_eu_au = "✓" if results['test_metrics']['rho_eu_au'] < 0.3 else "✗"
+            print(f"    {status_eu_au} ρ(EU, AU): {results['test_metrics']['rho_eu_au']:.4f} (target: < 0.3)")
+            print(f"      p-value: {results['test_metrics']['p_eu_au']:.4e}")
+        if 'rho_au_entropy' in results['test_metrics']:
+            status_au_ent = "✓" if results['test_metrics']['rho_au_entropy'] > 0.5 else "✗"
+            print(f"    {status_au_ent} ρ(AU, Entropy): {results['test_metrics']['rho_au_entropy']:.4f} (target: > 0.5)")
+            print(f"      p-value: {results['test_metrics']['p_au_entropy']:.4e}")
+        if 'contrastive_success_rate' in results['test_metrics']:
+            status_cont = "✓" if results['test_metrics']['contrastive_success_rate'] > 0.8 else "✗"
+            print(f"    {status_cont} Contrastive Success: {results['test_metrics']['contrastive_success_rate']:.2%} (target: > 80%)")
+            print(f"      Total pairs: {results['test_metrics']['contrastive_total_pairs']}")
 
         return
 
