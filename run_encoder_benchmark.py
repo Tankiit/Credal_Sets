@@ -39,10 +39,9 @@ import pandas as pd
 ENCODER_GROUPS = {
     "classic": ["distilbert", "roberta"],
     "large": ["roberta-large", "deberta-v3-large"],
-    "modern": ["modernbert", "modernbert-large"],
-    "sota": ["deberta-v3", "modernbert"],
+    "sota": ["deberta-v3", "deberta-v3-large"],
     "llm": ["phi-3", "phi-3.5"],
-    "all": ["distilbert", "roberta", "deberta-v3", "modernbert"]
+    "all": ["distilbert", "roberta", "deberta-v3", "deberta-v3-large"]
 }
 
 ALL_ENCODERS = [
@@ -51,8 +50,6 @@ ALL_ENCODERS = [
     "roberta-large",
     "deberta-v3",
     "deberta-v3-large",
-    "modernbert",
-    "modernbert-large",
 ]
 
 

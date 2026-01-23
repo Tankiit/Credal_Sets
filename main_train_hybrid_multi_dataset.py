@@ -180,20 +180,22 @@ MODEL_REGISTRY = {
     },
 
     # =========================================================================
-    # ModernBERT (December 2024) - CURRENT SOTA ENCODER
+    # NOTE: ModernBERT (December 2024) - NOT COMPATIBLE WITH PYTHON 3.12+
     # =========================================================================
-    "answerdotai/ModernBERT-base": {
-        "type": "encoder",
-        "hidden_size": 768,
-        "max_length": 8192,
-        "use_token_type_ids": False,
-    },
-    "answerdotai/ModernBERT-large": {
-        "type": "encoder",
-        "hidden_size": 1024,
-        "max_length": 8192,
-        "use_token_type_ids": False,
-    },
+    # ModernBERT requires torch.compile which doesn't support Python 3.12+
+    # Use Python 3.10 or 3.11 if you want to use ModernBERT:
+    # "answerdotai/ModernBERT-base": {
+    #     "type": "encoder",
+    #     "hidden_size": 768,
+    #     "max_length": 8192,
+    #     "use_token_type_ids": False,
+    # },
+    # "answerdotai/ModernBERT-large": {
+    #     "type": "encoder",
+    #     "hidden_size": 1024,
+    #     "max_length": 8192,
+    #     "use_token_type_ids": False,
+    # },
 
     # ==========================================================================
     # LLM MODELS (LoRA fine-tuning)
@@ -263,9 +265,9 @@ ENCODER_SHORT_NAMES = {
     "roberta-large": "roberta-large",
     "deberta": "microsoft/deberta-v3-base",
     "deberta-v3": "microsoft/deberta-v3-base",
-    "modernbert": "answerdotai/ModernBERT-base",
-    "modernbert-base": "answerdotai/ModernBERT-base",
-    "modernbert-large": "answerdotai/ModernBERT-large",
+    # "modernbert": "answerdotai/ModernBERT-base",  # Requires Python < 3.12
+    # "modernbert-base": "answerdotai/ModernBERT-base",
+    # "modernbert-large": "answerdotai/ModernBERT-large",
     "phi-3": "microsoft/phi-3-mini-4k-instruct",
     "phi-3.5": "microsoft/Phi-3.5-mini-instruct",
     "llama-3.2-3b": "meta-llama/Llama-3.2-3B",
@@ -600,8 +602,10 @@ class HybridCredalCBMTrainer:
         else:
             all_concept_labels = None
 
-        if all_entropies:
+        if all_entropies and len(all_entropies) > 0:
             all_entropies = torch.cat(all_entropies).numpy()
+        else:
+            all_entropies = None
 
         # Task accuracy
         task_acc = (all_preds == all_labels).mean()
