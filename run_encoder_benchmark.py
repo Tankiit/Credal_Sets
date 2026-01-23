@@ -348,7 +348,7 @@ Encoder groups:
     )
 
     parser.add_argument('--dataset', type=str, required=True,
-                       choices=['cebab', 'hatexplain', 'goemotions'],
+                       choices=['cebab', 'hatexplain', 'goemotions', 'maqa'],
                        help='Dataset to benchmark on')
     parser.add_argument('--encoders', type=str, nargs='+',
                        help='Specific encoders to test')

@@ -44,6 +44,18 @@ from VCBM import HybridCredalCBM, HybridCredalConfig
 from load_cebab_direct import get_cebab_dataloaders
 from load_hatexplain_direct import get_hatexplain_dataloaders
 
+# Try to import MAQA components
+try:
+    from load_maqa_direct import load_maqa_direct
+    from maqa_credal_model import (
+        CredalMAQA, MAQADataset, MAQACredalLoss,
+        MAQACredalTrainer, maqa_collate_fn
+    )
+    HAS_MAQA = True
+except ImportError as e:
+    HAS_MAQA = False
+    print(f"Warning: MAQA components not found: {e}")
+
 # Try to import optional dependencies
 try:
     from credence_dataloader import load_dataset_splits, DatasetConfig, get_recommended_config
@@ -132,6 +144,25 @@ DATASET_CONFIGS = {
         'error_scale': 1.0,
         'learning_rate': 5e-5,
         'num_epochs': 20,
+    },
+    'maqa': {
+        'name': 'MAQA-Star',
+        'num_concepts': 0,  # MAQA doesn't use concepts
+        'concept_names': [],
+        'num_classes': 10,  # Max number of answers
+        'save_dir': './checkpoints/maqa_credal',
+        'use_multi_loader': False,
+        'use_maqa_model': True,  # Flag to use CredalMAQA instead of HybridCredalCBM
+        'loader_kwargs': {
+            'batch_size': 16,
+            'max_length': 128,
+            'num_workers': 0
+        },
+        'learning_rate': 1e-3,
+        'num_epochs': 15,
+        'use_paired': True,  # Use paired ambiguous/clear questions
+        'projection_dim': 256,
+        'dropout': 0.1,
     }
 }
 
@@ -890,6 +921,161 @@ class HybridCredalCBMTrainer:
             return None
 
 
+def train_maqa_model(
+    trainer: MAQACredalTrainer,
+    num_epochs: int,
+    save_dir: str,
+    run_metadata: Dict,
+    test_loader
+) -> Dict:
+    """
+    Train MAQA model with per-epoch metrics collection.
+
+    Args:
+        trainer: MAQACredalTrainer instance
+        num_epochs: Number of epochs to train
+        save_dir: Directory to save checkpoints
+        run_metadata: Metadata about the run
+        test_loader: Test dataloader
+
+    Returns:
+        Final results dict
+    """
+    from pathlib import Path
+    import time
+
+    save_dir = Path(save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    # Training history
+    history = []
+    best_val_loss = float('inf')
+    best_epoch = 0
+
+    start_time = time.time()
+
+    for epoch in range(1, num_epochs + 1):
+        print(f"\n{'='*80}")
+        print(f"Epoch {epoch}/{num_epochs}")
+        print(f"{'='*80}")
+
+        epoch_start = time.time()
+
+        # Train
+        train_metrics = trainer.train_epoch()
+
+        # Validate
+        val_metrics = trainer.evaluate(trainer.val_loader)
+
+        epoch_time = time.time() - epoch_start
+
+        # Print metrics
+        print(f"\nEpoch {epoch} Results:")
+        print(f"  Train Loss: {train_metrics['train_loss']:.4f}")
+        print(f"  Val Loss: {val_metrics['val_loss']:.4f}")
+        print(f"  Mean σ_epi: {val_metrics['mean_sigma_epi']:.4f}")
+        print(f"  Mean σ_ale: {val_metrics['mean_sigma_ale']:.4f}")
+        print(f"  Gradient Conflict Rate: {train_metrics['gradient_conflict_rate']:.2%}")
+        print(f"  Gradient Alignment Rate: {train_metrics['gradient_alignment_rate']:.2%}")
+        if 'rho_eu_au' in val_metrics:
+            print(f"  ρ(EU, AU): {val_metrics['rho_eu_au']:.4f}")
+
+        # Save epoch results
+        epoch_results = {
+            'epoch': epoch,
+            'epoch_time': epoch_time,
+            'train': train_metrics,
+            'val': val_metrics
+        }
+        history.append(epoch_results)
+
+        # Save checkpoint
+        is_best = val_metrics['val_loss'] < best_val_loss
+        if is_best:
+            best_val_loss = val_metrics['val_loss']
+            best_epoch = epoch
+
+        checkpoint = {
+            'epoch': epoch,
+            'model_state_dict': trainer.model.state_dict(),
+            'optimizer_state_dict': trainer.optimizer.state_dict(),
+            'train_metrics': train_metrics,
+            'val_metrics': val_metrics,
+            'is_best': is_best
+        }
+
+        torch.save(checkpoint, save_dir / f"epoch_{epoch}.pt")
+        if is_best:
+            torch.save(checkpoint, save_dir / "best_model.pt")
+
+        # Save per-epoch JSON
+        with open(save_dir / f"epoch_{epoch}_results.json", 'w') as f:
+            json.dump({
+                'epoch': epoch,
+                'train_metrics': train_metrics,
+                'val_metrics': val_metrics,
+                'run_metadata': run_metadata
+            }, f, indent=2, default=float)
+
+    total_time = time.time() - start_time
+
+    # Load best model
+    best_checkpoint = torch.load(save_dir / "best_model.pt", weights_only=False)
+    trainer.model.load_state_dict(best_checkpoint['model_state_dict'])
+
+    # Final test evaluation
+    print(f"\n{'='*80}")
+    print("Final Test Evaluation")
+    print(f"{'='*80}")
+    test_metrics = trainer.evaluate(test_loader)
+
+    # Prepare final results
+    results = {
+        'test_metrics': test_metrics,
+        'training_summary': {
+            'best_val_loss': best_val_loss,
+            'best_epoch': best_epoch,
+            'total_training_time': total_time,
+            'final_train_loss': history[-1]['train']['train_loss'],
+            'final_val_loss': history[-1]['val']['val_loss']
+        },
+        'run_metadata': run_metadata,
+        'history': history
+    }
+
+    # Save final results
+    with open(save_dir / "final_results.json", 'w') as f:
+        json.dump(results, f, indent=2, default=float)
+
+    # Save training history CSV
+    try:
+        import pandas as pd
+        epoch_df = pd.DataFrame([
+            {
+                'epoch': h['epoch'],
+                'epoch_time': h.get('epoch_time', 0),
+                'train_loss': h['train']['train_loss'],
+                'loss_kl': h['train']['loss_kl'],
+                'loss_cal': h['train']['loss_cal'],
+                'loss_cont': h['train']['loss_cont'],
+                'val_loss': h['val']['val_loss'],
+                'mean_sigma_epi': h['val']['mean_sigma_epi'],
+                'mean_sigma_ale': h['val']['mean_sigma_ale'],
+                'mean_entropy_gt': h['val']['mean_entropy_gt'],
+                'gradient_conflict_rate': h['train']['gradient_conflict_rate'],
+                'gradient_alignment_rate': h['train']['gradient_alignment_rate'],
+            }
+            for h in history
+        ])
+        csv_path = save_dir / "training_history.csv"
+        epoch_df.to_csv(csv_path, index=False)
+        print(f"  ✓ Training history CSV saved: {csv_path}")
+    except ImportError:
+        print("  ⚠ pandas not available, skipping CSV export")
+
+    return results
+
+
 # ============================================================================
 # MAIN
 # ============================================================================
@@ -898,7 +1084,7 @@ def main():
     """Main training function."""
     parser = argparse.ArgumentParser(description='Train Hybrid Credal CBM on multiple datasets')
     parser.add_argument('--dataset', type=str, default='cebab',
-                       choices=['cebab', 'hatexplain', 'goemotions'],
+                       choices=['cebab', 'hatexplain', 'goemotions', 'maqa'],
                        help='Dataset to train on')
     parser.add_argument('--encoder', type=str, default='distilbert',
                        help='Encoder model (short name or full HF name)')
@@ -1017,6 +1203,160 @@ def main():
     if 'concept_names' in metadata:
         print(f"  Concepts: {metadata['concept_names']}")
     print(f"  Classes: {metadata['num_classes']}")
+
+    # ========================================================================
+    # MAQA-SPECIFIC TRAINING PATH
+    # ========================================================================
+    if config.get('use_maqa_model', False):
+        if not HAS_MAQA:
+            raise ImportError("MAQA components not available. Please install required dependencies.")
+
+        print("\n" + "="*80)
+        print("MAQA-SPECIFIC TRAINING PATH")
+        print("="*80)
+
+        # Load encoder
+        print(f"\nLoading encoder: {encoder_name}")
+        encoder, tokenizer = load_encoder_with_quantization(
+            encoder_name,
+            quantization="none",
+            device_map=device
+        )
+
+        # Load MAQA data
+        print(f"\nLoading MAQA data...")
+        maqa_data = load_maqa_direct()
+        max_answers = max(
+            max([d['num_answers'] for d in maqa_data['train']]),
+            max([d['num_answers'] for d in maqa_data['validation']]),
+            max([d['num_answers'] for d in maqa_data['test']])
+        )
+
+        print(f"  Max answers: {max_answers}")
+
+        # Create datasets
+        train_dataset = MAQADataset(
+            maqa_data['train'],
+            tokenizer,
+            max_length=loader_kwargs['max_length'],
+            use_paired=config.get('use_paired', True)
+        )
+        val_dataset = MAQADataset(
+            maqa_data['validation'],
+            tokenizer,
+            max_length=loader_kwargs['max_length'],
+            use_paired=False  # No pairing for validation
+        )
+        test_dataset = MAQADataset(
+            maqa_data['test'],
+            tokenizer,
+            max_length=loader_kwargs['max_length'],
+            use_paired=False  # No pairing for test
+        )
+
+        # Create dataloaders
+        from torch.utils.data import DataLoader
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=loader_kwargs['batch_size'],
+            shuffle=True,
+            collate_fn=maqa_collate_fn,
+            num_workers=loader_kwargs.get('num_workers', 0)
+        )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=loader_kwargs['batch_size'],
+            shuffle=False,
+            collate_fn=maqa_collate_fn,
+            num_workers=loader_kwargs.get('num_workers', 0)
+        )
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=loader_kwargs['batch_size'],
+            shuffle=False,
+            collate_fn=maqa_collate_fn,
+            num_workers=loader_kwargs.get('num_workers', 0)
+        )
+
+        print(f"  Train batches: {len(train_loader)}")
+        print(f"  Val batches: {len(val_loader)}")
+        print(f"  Test batches: {len(test_loader)}")
+
+        # Create model
+        print(f"\nCreating CredalMAQA model...")
+        model = CredalMAQA(
+            encoder=encoder,
+            hidden_size=encoder_config['hidden_size'],
+            num_answers=max_answers,
+            projection_dim=config.get('projection_dim', 256),
+            dropout=config.get('dropout', 0.1)
+        )
+
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"  Total params: {total_params:,}")
+        print(f"  Trainable params: {trainable_params:,}")
+
+        # Create trainer
+        trainer = MAQACredalTrainer(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            device=device,
+            learning_rate=config.get('learning_rate', 1e-3),
+            weight_decay=0.01
+        )
+
+        # Training parameters
+        num_epochs = args.num_epochs if args.num_epochs is not None else config['num_epochs']
+
+        # Prepare metadata
+        run_metadata = {
+            'dataset': config['name'],
+            'encoder': encoder_name,
+            'encoder_type': 'encoder',
+            'device': device,
+            'command_line_args': vars(args),
+            'dataset_metadata': {
+                'dataset_name': 'maqa',
+                'train_size': len(maqa_data['train']),
+                'val_size': len(maqa_data['validation']),
+                'test_size': len(maqa_data['test']),
+                'max_answers': max_answers,
+                'use_paired': config.get('use_paired', True),
+            },
+            'model_config': {
+                'num_answers': max_answers,
+                'projection_dim': config.get('projection_dim', 256),
+                'dropout': config.get('dropout', 0.1),
+            },
+        }
+
+        # Train
+        print(f"\nStarting MAQA training for {num_epochs} epochs...")
+        results = train_maqa_model(
+            trainer=trainer,
+            num_epochs=num_epochs,
+            save_dir=config['save_dir'],
+            run_metadata=run_metadata,
+            test_loader=test_loader
+        )
+
+        print("\n" + "="*80)
+        print("Training Complete!")
+        print("="*80)
+        print(f"\nFinal Results:")
+        print(f"  Test Loss: {results['test_metrics']['val_loss']:.4f}")
+        print(f"  Mean σ_epi: {results['test_metrics']['mean_sigma_epi']:.4f}")
+        print(f"  Mean σ_ale: {results['test_metrics']['mean_sigma_ale']:.4f}")
+        if 'rho_eu_au' in results['test_metrics']:
+            print(f"  ρ(EU, AU): {results['test_metrics']['rho_eu_au']:.4f}")
+
+        return
+
+    # ========================================================================
+    # STANDARD HYBRID CREDAL CBM PATH
+    # ========================================================================
 
     # Determine freeze setting
     freeze_encoder = args.freeze_encoder and not args.unfreeze_encoder
