@@ -111,14 +111,14 @@ DATASET_CONFIGS = {
     },
     'goemotions': {
         'name': 'GoEmotions',
-        'num_concepts': 27,  # Use emotions as concepts (excluding neutral)
+        'num_concepts': 28,  # Use all emotions as concepts (including neutral)
         'concept_names': [
             'admiration', 'amusement', 'anger', 'annoyance', 'approval',
             'caring', 'confusion', 'curiosity', 'desire', 'disappointment',
             'disapproval', 'disgust', 'embarrassment', 'excitement', 'fear',
             'gratitude', 'grief', 'joy', 'love', 'nervousness',
             'optimism', 'pride', 'realization', 'relief', 'remorse',
-            'sadness', 'surprise'
+            'sadness', 'surprise', 'neutral'
         ],
         'num_classes': 28,
         'save_dir': './checkpoints/hybrid_credal_goemotions',
