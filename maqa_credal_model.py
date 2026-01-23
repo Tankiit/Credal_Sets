@@ -560,10 +560,8 @@ class MAQACredalTrainer:
         total_loss = 0.0
         num_batches = 0
 
-        all_mu = []
         all_sigma_epi = []
         all_sigma_ale = []
-        all_p_star = []
         all_entropy_gt = []
 
         with torch.no_grad():
@@ -591,18 +589,14 @@ class MAQACredalTrainer:
                 total_loss += loss.item()
                 num_batches += 1
 
-                # Collect predictions
-                all_mu.append(params.mu.cpu())
+                # Collect predictions (flatten batches)
                 all_sigma_epi.append(params.sigma_epi.cpu())
                 all_sigma_ale.append(params.sigma_ale.cpu())
-                all_p_star.append(batch['p_star'].cpu())
                 all_entropy_gt.append(batch['entropy'].cpu())
 
-        # Compute metrics
-        all_mu = torch.cat(all_mu, dim=0)
+        # Compute metrics (concatenate batches)
         all_sigma_epi = torch.cat(all_sigma_epi, dim=0)
         all_sigma_ale = torch.cat(all_sigma_ale, dim=0)
-        all_p_star = torch.cat(all_p_star, dim=0)
         all_entropy_gt = torch.cat(all_entropy_gt, dim=0)
 
         metrics = {

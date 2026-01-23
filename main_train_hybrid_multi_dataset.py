@@ -153,6 +153,7 @@ DATASET_CONFIGS = {
         'save_dir': './checkpoints/maqa_credal',
         'use_multi_loader': False,
         'use_maqa_model': True,  # Flag to use CredalMAQA instead of HybridCredalCBM
+        'data_loader': None,  # MAQA uses special loading path
         'loader_kwargs': {
             'batch_size': 16,
             'max_length': 128,
@@ -1173,39 +1174,8 @@ def main():
         encoder_config['max_length']
     )
 
-    # Choose loading method
-    use_multi = config.get('use_multi_loader', False) and HAS_MULTI_LOADER
-
-    if use_multi:
-        print(f"Using multi-dataset loader for {config['name']}")
-        # Convert to DatasetConfig
-        ds_config = DatasetConfig(
-            max_length=loader_kwargs.get('max_length', 128),
-            batch_size=loader_kwargs.get('batch_size', 16),
-            tokenizer_name=encoder_name,
-            num_workers=loader_kwargs.get('num_workers', 0),
-        )
-        train_loader, val_loader, test_loader, tokenizer, metadata = load_dataset_splits(
-            dataset_name=args.dataset,
-            config=ds_config
-        )
-    else:
-        print(f"Using dedicated loader for {config['name']}")
-        train_loader, val_loader, test_loader, tokenizer, metadata = config['data_loader'](
-            tokenizer=tokenizer,
-            **loader_kwargs
-        )
-
-    print(f"\nDataset loaded:")
-    print(f"  Train: {metadata['train_size']}")
-    print(f"  Val: {metadata['val_size']}")
-    print(f"  Test: {metadata['test_size']}")
-    if 'concept_names' in metadata:
-        print(f"  Concepts: {metadata['concept_names']}")
-    print(f"  Classes: {metadata['num_classes']}")
-
     # ========================================================================
-    # MAQA-SPECIFIC TRAINING PATH
+    # MAQA-SPECIFIC TRAINING PATH (bypasses standard data loading)
     # ========================================================================
     if config.get('use_maqa_model', False):
         if not HAS_MAQA:
@@ -1353,6 +1323,41 @@ def main():
             print(f"  ρ(EU, AU): {results['test_metrics']['rho_eu_au']:.4f}")
 
         return
+
+    # ========================================================================
+    # STANDARD DATA LOADING PATH (for non-MAQA datasets)
+    # ========================================================================
+
+    # Choose loading method
+    use_multi = config.get('use_multi_loader', False) and HAS_MULTI_LOADER
+
+    if use_multi:
+        print(f"Using multi-dataset loader for {config['name']}")
+        # Convert to DatasetConfig
+        ds_config = DatasetConfig(
+            max_length=loader_kwargs.get('max_length', 128),
+            batch_size=loader_kwargs.get('batch_size', 16),
+            tokenizer_name=encoder_name,
+            num_workers=loader_kwargs.get('num_workers', 0),
+        )
+        train_loader, val_loader, test_loader, tokenizer, metadata = load_dataset_splits(
+            dataset_name=args.dataset,
+            config=ds_config
+        )
+    else:
+        print(f"Using dedicated loader for {config['name']}")
+        train_loader, val_loader, test_loader, tokenizer, metadata = config['data_loader'](
+            tokenizer=tokenizer,
+            **loader_kwargs
+        )
+
+    print(f"\nDataset loaded:")
+    print(f"  Train: {metadata['train_size']}")
+    print(f"  Val: {metadata['val_size']}")
+    print(f"  Test: {metadata['test_size']}")
+    if 'concept_names' in metadata:
+        print(f"  Concepts: {metadata['concept_names']}")
+    print(f"  Classes: {metadata['num_classes']}")
 
     # ========================================================================
     # STANDARD HYBRID CREDAL CBM PATH
