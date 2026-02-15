@@ -1,0 +1,22 @@
+# Core dependencies
+torch>=2.0.0
+torchvision>=0.15.0
+
+# For scientific computing
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Optional: For visualization and analysis
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Optional: For notebooks
+jupyter>=1.0.0
+ipywidgets>=8.0.0
+
+# Optional: For progress bars
+tqdm>=4.65.0
+
+# For Hugging Face datasets
+datasets>=2.14.0
+huggingface_hub>=0.16.0

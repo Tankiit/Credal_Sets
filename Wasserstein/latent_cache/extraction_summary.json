@@ -1,0 +1,9 @@
+[
+  {
+    "dataset": "sst2",
+    "status": "success",
+    "train_dim": 64,
+    "train_size": 67349,
+    "method": "low_rank"
+  }
+]

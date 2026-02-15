@@ -1,0 +1,23 @@
+{
+  "encoder_name": "roberta-base",
+  "freeze_encoder": false,
+  "num_concepts": 4,
+  "concept_names": [
+    "food",
+    "service",
+    "ambiance",
+    "noise"
+  ],
+  "concept_classes": 3,
+  "num_classes": 2,
+  "covariance_family": "mean_field",
+  "low_rank_dim": 5,
+  "prior_std": 1.0,
+  "num_mc_samples": 10,
+  "credal_confidence": 0.95,
+  "kl_weight": 1e-05,
+  "concept_weight": 0.5,
+  "aleatoric_weight": 0.1,
+  "epistemic_threshold": 0.15,
+  "aleatoric_threshold": 0.35
+}

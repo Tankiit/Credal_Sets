@@ -1,0 +1,83 @@
+{
+  "architecture": {
+    "num_concepts": 4,
+    "num_classes": 3,
+    "hidden_dim": 768,
+    "head_hidden_dim": 256,
+    "pooling": "cls",
+    "n_heads": 5,
+    "dropout_min": 0.05,
+    "dropout_max": 0.3,
+    "use_pooling_diversity": true
+  },
+  "pgd": {
+    "pgd_steps": 10,
+    "pgd_lr": 0.01
+  },
+  "loss_weights": {
+    "lambda_rob": 0.1,
+    "beta_width": 0.01,
+    "concept_weight": 1.0,
+    "aleatoric_weight": 0.5
+  },
+  "width_penalty": {
+    "width_penalty": "log_det"
+  },
+  "sigma": {
+    "sigma_min": 0.0001,
+    "sigma_max": 2.0,
+    "stop_grad_sigma": true
+  },
+  "robust_loss": {
+    "robust_loss": "none",
+    "tau": 5.0,
+    "kappa": 1.0
+  },
+  "training": {
+    "lr": 0.0001,
+    "weight_decay": 0.01,
+    "epochs": 40,
+    "batch_size": 16,
+    "seed": 42,
+    "optimizer": "adamw",
+    "betas": [
+      0.9,
+      0.999
+    ],
+    "eps": 1e-08,
+    "use_scheduler": true,
+    "scheduler_type": "cosine",
+    "warmup_ratio": 0.1,
+    "max_grad_norm": 1.0,
+    "patience": 5,
+    "min_delta": 0.0001
+  },
+  "encoder": {
+    "encoder_name": "distilbert-base-uncased",
+    "freeze_encoder": true,
+    "max_length": 128,
+    "latent_method": "cls",
+    "latent_rank": null,
+    "latent_layer": "last"
+  },
+  "dataset": {
+    "dataset": "cebab",
+    "label_type": "ternary",
+    "max_train_samples": null,
+    "max_val_samples": null,
+    "max_test_samples": null
+  },
+  "experiment_name": "credence_dro_cebab",
+  "output_dir": "./results",
+  "log_interval": 10,
+  "eval_interval": 1,
+  "seed": 42,
+  "deterministic": false,
+  "device": "cpu",
+  "use_amp": false,
+  "amp_dtype": "float16",
+  "enable_profiler": false,
+  "profiler_warmup": 1,
+  "profiler_active": 3,
+  "profiler_repeat": 1
+}

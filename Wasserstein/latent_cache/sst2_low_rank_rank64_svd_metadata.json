@@ -1,0 +1,62 @@
+{
+  "dataset_name": "sst2",
+  "extraction_config": {
+    "method": "low_rank",
+    "rank": 64,
+    "svd": true,
+    "layer": "last",
+    "aggregate": "cls"
+  },
+  "metadata": {
+    "dataset_name": "sst2",
+    "task": "sentiment",
+    "num_classes": 2,
+    "num_concepts": 0,
+    "concept_names": [],
+    "class_names": [
+      "negative",
+      "positive"
+    ],
+    "has_concepts": false,
+    "has_multi_annotator": false,
+    "is_ordinal": false,
+    "train_size": 67349,
+    "val_size": 872,
+    "test_size": 872,
+    "label_distribution": {
+      "0": 29780,
+      "1": 37569
+    }
+  },
+  "shapes": {
+    "train_latents": [
+      67349,
+      64
+    ],
+    "train_labels": [
+      67349
+    ],
+    "val_latents": [
+      872,
+      64
+    ],
+    "val_labels": [
+      872
+    ],
+    "test_latents": [
+      872,
+      64
+    ],
+    "test_labels": [
+      872
+    ]
+  },
+  "dtypes": {
+    "train_latents": "float32",
+    "train_labels": "int64",
+    "val_latents": "float32",
+    "val_labels": "int64",
+    "test_latents": "float32",
+    "test_labels": "int64"
+  }
+}
