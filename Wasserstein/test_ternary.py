@@ -13,19 +13,38 @@ from credal_sets import CredalDROConfig, CredalDROModule, cebab_joint_config, go
 from dataloader import load_dataset_splits, DatasetConfig
 from encoder import FrozenDistilBERTEncoder
 import os
+import argparse
 
 print("=" * 70)
 print("TERNARY CONCEPT TEST WITH REAL DATA")
 print("=" * 70)
 
+# CLI args
+def parse_args():
+    parser = argparse.ArgumentParser(description="Test/train ternary concepts with configurable settings.")
+    parser.add_argument("--dataset", type=str, default="cebab", choices=["cebab", "goemotions", "snli"], help="Dataset to use")
+    parser.add_argument("--batch_size", type=int, default=16, help="Per-device batch size")
+    parser.add_argument("--max_length", type=int, default=128, help="Tokenizer max length")
+    parser.add_argument("--num_workers", type=int, default=0, help="DataLoader workers")
+    parser.add_argument("--epochs", type=int, default=50, help="Training epochs")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument("--grad_accum_steps", type=int, default=1, help="Gradient accumulation steps")
+    parser.add_argument("--max_train_samples", type=int, default=None, help="Limit train samples")
+    parser.add_argument("--max_val_samples", type=int, default=None, help="Limit val samples")
+    parser.add_argument("--max_test_samples", type=int, default=None, help="Limit test samples")
+    return parser.parse_args()
+
+args = parse_args()
+
 # Dataset selection
-DATASET_NAME = "snli"  # Change to "cebab", "goemotions", or "snli"
+DATASET_NAME = args.dataset  # "cebab", "goemotions", or "snli"
 CHECKPOINT_DIR = "checkpoints"
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
-# Force CPU to avoid MPS issues with HuggingFace models
+# Prefer MPS on Apple Silicon, else CUDA, else CPU
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
-print(f"\nDevice: {device} (forced to avoid MPS issues)")
+print(f"\nDevice: {device}")
 
 # 1. Load encoder
 print("\nLoading encoder...")
@@ -36,7 +55,15 @@ print("Encoder loaded: distilbert-base-uncased")
 
 # 2. Load dataset
 print(f"\nLoading {DATASET_NAME} dataset...")
-train_loader, val_loader, test_loader, tokenizer, metadata = load_dataset_splits(DATASET_NAME)
+ds_config = DatasetConfig(
+    batch_size=args.batch_size,
+    max_length=args.max_length,
+    num_workers=args.num_workers,
+    max_train_samples=args.max_train_samples,
+    max_val_samples=args.max_val_samples,
+    max_test_samples=args.max_test_samples,
+)
+train_loader, val_loader, test_loader, tokenizer, metadata = load_dataset_splits(DATASET_NAME, ds_config)
 print(f"Dataset loaded:")
 print(f"  Train samples: {len(train_loader.dataset)}")
 print(f"  Val samples: {len(val_loader.dataset)}")
@@ -156,16 +183,17 @@ if 'a_hat' in outputs and outputs['a_hat'].numel() > 1:
 
 # 6. Training loop
 print("\n" + "="*70)
-print("TRAINING LOOP (5 epochs)")
+print("TRAINING LOOP")
 print("="*70)
 
-optimizer = Adam(model.parameters(), lr=1e-3)
-num_epochs = 50
+optimizer = Adam(model.parameters(), lr=args.lr)
+num_epochs = args.epochs
 
 print(f"\nTraining configuration:")
-print(f"  Optimizer: Adam (lr=1e-3)")
+print(f"  Optimizer: Adam (lr={args.lr})")
 print(f"  Epochs: {num_epochs}")
 print(f"  Device: {device}")
+print(f"  Grad Accum Steps: {args.grad_accum_steps}")
 print("-" * 70)
 
 history = {
@@ -189,7 +217,8 @@ for epoch in range(num_epochs):
     train_losses = {'total': [], 'concept': [], 'task': [], 'robust': [], 'aleatoric': [], 'diversity': []}
 
     train_pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs} [Train]")
-    for batch in train_pbar:
+    optimizer.zero_grad(set_to_none=True)
+    for batch_idx, batch in enumerate(train_pbar):
         # Get inputs
         input_ids = batch['input_ids'].to(device)
         attention_mask = batch['attention_mask'].to(device)
@@ -209,7 +238,6 @@ for epoch in range(num_epochs):
             )
 
         # Forward pass
-        optimizer.zero_grad()
         output = model(features, labels, concept_labels, is_unknown, concept_entropy=concept_entropy)
 
         # Extract losses
@@ -219,9 +247,12 @@ for epoch in range(num_epochs):
         loss_robust = output.get('loss_robust', torch.tensor(0.0).to(device))
         loss_ale = output.get('loss_ale', torch.tensor(0.0).to(device))
 
-        # Backward pass
-        loss_total.backward()
-        optimizer.step()
+        # Backward with gradient accumulation
+        accum = max(1, args.grad_accum_steps)
+        (loss_total / accum).backward()
+        if ((batch_idx + 1) % accum == 0) or ((batch_idx + 1) == len(train_loader)):
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
 
         # Track losses
         train_losses['total'].append(loss_total.item())
@@ -448,5 +479,3 @@ print(f"Final validation accuracy: {history['val_acc'][-1]:.4f}")
 print(f"\nFinal train loss: {history['train_loss'][-1]:.4f}")
 print(f"Final val loss: {history['val_loss'][-1]:.4f}")
 print(f"Loss improvement: {history['train_loss'][0] - history['train_loss'][-1]:.4f}")
-
-
