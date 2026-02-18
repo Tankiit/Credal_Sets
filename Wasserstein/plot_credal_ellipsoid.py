@@ -123,38 +123,23 @@ for level in np.linspace(0, 0.3, 4):
     ax.plot([0, 0], [0, 1], [level]*2, color='#cccccc', alpha=0.15, linewidth=0.5)
     ax.plot([0, 1], [1-level, 1-level], [level]*2, color='#cccccc', alpha=0.15, linewidth=0.5)
 
-# ── Annotations ───────────────────────────────────────────────
+# ── Annotations (kept) ────────────────────────────────────────
 ax.text2D(0.50, 0.92,
-          r'Credal Ellipsoid $\mathcal{C}(\mathbf{x})$ $\equiv$ DRO Ambiguity Set $\mathcal{B}_\varepsilon$',
+          'Credal Ellipsoid C(x) ≡ DRO Ambiguity Set B_ε',
           transform=ax.transAxes, fontsize=14, fontweight='bold',
           color='black', ha='center')
 
-# Ellipsoid label
-ax.text2D(0.72, 0.72,
-          r'$\mathcal{C}(\mathbf{x}) = \{\mathbf{p} : (\mathbf{p}-\boldsymbol{\mu})^\top \Sigma^{-1} (\mathbf{p}-\boldsymbol{\mu}) \leq 1\}$',
-          transform=ax.transAxes, fontsize=10, color='#B30000')
-
-# DRO equivalence
-ax.text2D(0.72, 0.66,
-          r'$\equiv \mathcal{B}_\varepsilon = \{\mathbf{p} : W_2(\mathbf{p}, \boldsymbol{\mu}) \leq \varepsilon\}$',
-          transform=ax.transAxes, fontsize=10, color='#006666')
-
-# ε label
-ax.text2D(0.72, 0.58,
-          r'$\varepsilon(\mathbf{x}) = \sqrt{\mathrm{Tr}(\Sigma_{\mathrm{epi}})}$',
-          transform=ax.transAxes, fontsize=10, color='#D45500')
-
 # Sigma annotations
 ax.text2D(0.15, 0.18,
-          r'$\sigma_1$ (neg)',
+          'σ1 (neg)',
           transform=ax.transAxes, fontsize=9, color='#006666')
 ax.text2D(0.42, 0.13,
-          r'$\sigma_2$ (pos) — widest: most uncertain',
+          'σ2 (pos) — widest: most uncertain',
           transform=ax.transAxes, fontsize=9, color='#006666')
 
 # ε arrow label
 ax.text2D(0.55, 0.22,
-          r'$\varepsilon$',
+          'ε',
           transform=ax.transAxes, fontsize=14, fontweight='bold',
           color='#D45500')
 

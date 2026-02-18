@@ -57,7 +57,7 @@ def extract_classifier_weights(model) -> Tuple[torch.Tensor, torch.Tensor]:
     Tries common paths: model.W, model.classifier.weight, model.label_head.weight
     """
     for w_path in ["W", "classifier.weight", "label_head.weight",
-                    "task_head.weight"]:
+                    "task_head.weight", "label_head.linear.weight"]:
         try:
             obj = model
             for p in w_path.split("."):
@@ -70,7 +70,7 @@ def extract_classifier_weights(model) -> Tuple[torch.Tensor, torch.Tensor]:
         raise ValueError("Cannot find classifier weight W in model")
 
     for b_path in ["b", "classifier.bias", "label_head.bias",
-                    "task_head.bias"]:
+                    "task_head.bias", "label_head.linear.bias"]:
         try:
             obj = model
             for p in b_path.split("."):
@@ -316,73 +316,73 @@ def _pgd_worst_case_loss(
 ) -> torch.Tensor:
     """
     PGD inner maximization: find p* = argmax_{p ∈ C(x)} ℓ(p; y)
-    
+
     The credal ellipsoid constraint is:
       (p - μ)^T Σ_epi^{-1} (p - μ) ≤ 1
-    
+
     which in our diagonal case (Σ_epi = diag(σ²)) simplifies to:
       Σ_k (p_k - μ_k)² / σ²_k ≤ 1
-    
+
     We also enforce p ∈ [0, 1]^K.
-    
+
     Returns: [B] worst-case loss per example
     """
     B, K = mu.shape
-    device = mu.device
-    
-    # Initialize at μ (the center of the ellipsoid)
-    delta = torch.zeros_like(mu, requires_grad=True)
-    
+    orig_device = mu.device
+
+    # Move to CPU to avoid MPS gradient issues
+    mu = mu.detach().cpu().float()
+    sigma_sq = sigma_sq.detach().cpu().float()
+    W = W.detach().cpu().float()
+    b = b.detach().cpu().float()
+    labels = labels.detach().cpu()
+
     # Inverse variances for projection (avoid div by zero)
     inv_sigma_sq = 1.0 / sigma_sq.clamp(min=1e-8)  # [B, K]
-    
+
+    # Initialize p at mu (the center of the ellipsoid)
+    # Use p.data for in-place updates to avoid gradient tracking issues
+    p = mu.clone()
+
     for step in range(steps):
-        p = mu + delta
-        logits = F.linear(p, W, b)
-        loss = F.cross_entropy(logits, labels, reduction="none")  # [B]
-        
-        # We want to MAXIMIZE loss, so we compute gradient of loss w.r.t. delta
-        grad = torch.autograd.grad(loss.sum(), delta, create_graph=False)[0]
-        
-        # Gradient ascent step
-        with torch.no_grad():
-            delta.data += lr * grad
-            
-            # Project back onto ellipsoid:
-            # Σ_k delta_k² / σ_k² ≤ 1
-            mahal_sq = (delta ** 2 * inv_sigma_sq).sum(dim=-1, keepdim=True)  # [B, 1]
-            # If outside ellipsoid, scale delta to lie on the boundary
-            scale = torch.where(
-                mahal_sq > 1.0,
-                1.0 / torch.sqrt(mahal_sq.clamp(min=1e-8)),
-                torch.ones_like(mahal_sq),
-            )
-            delta.data *= scale
-            
-            # Also enforce p = μ + δ ∈ [0, 1]^K
-            p_clamped = (mu + delta).clamp(0.0, 1.0)
-            delta.data = p_clamped - mu
-            
-            # Re-project onto ellipsoid after clamping (may have moved outside)
-            mahal_sq = (delta ** 2 * inv_sigma_sq).sum(dim=-1, keepdim=True)
-            scale = torch.where(
-                mahal_sq > 1.0,
-                1.0 / torch.sqrt(mahal_sq.clamp(min=1e-8)),
-                torch.ones_like(mahal_sq),
-            )
-            delta.data *= scale
-        
-        # Reset grad
-        if delta.grad is not None:
-            delta.grad.zero_()
-    
+        # Compute logits: z = p @ W^T + b
+        logits = torch.matmul(p, W.t()) + b  # [B, C]
+
+        # Compute softmax and gradient of cross-entropy w.r.t. logits
+        # For cross-entropy: ℓ = -log(softmax[z_y])
+        # ∂ℓ/∂z_i = softmax(z_i) - 1{i=y}
+        probs = F.softmax(logits, dim=-1)  # [B, C]
+        grad_logits = probs.clone()
+        grad_logits[torch.arange(B), labels] -= 1.0  # [B, C]
+
+        # Gradient w.r.t. p: ∂ℓ/∂p = ∂ℓ/∂z @ W
+        grad_p = torch.matmul(grad_logits, W)  # [B, K]
+
+        # Gradient ascent step (maximize loss)
+        p = p + lr * grad_p
+
+        # Project back onto [0,1]^K and ellipsoid
+        # Enforce p ∈ [0, 1]^K first
+        p = p.clamp(0.0, 1.0)
+
+        # Project onto ellipsoid: Σ_k (p_k - μ_k)² / σ_k² ≤ 1
+        delta = p - mu
+        mahal_sq = (delta ** 2 * inv_sigma_sq).sum(dim=-1, keepdim=True)  # [B, 1]
+        # If outside ellipsoid, scale delta to lie on the boundary
+        scale = torch.where(
+            mahal_sq > 1.0,
+            1.0 / torch.sqrt(mahal_sq.clamp(min=1e-8)),
+            torch.ones_like(mahal_sq),
+        )
+        p = mu + delta * scale
+
     # Final worst-case loss
     with torch.no_grad():
-        p_star = (mu + delta).clamp(0.0, 1.0)
-        logits_star = F.linear(p_star, W, b)
+        p_star = p.clamp(0.0, 1.0)
+        logits_star = torch.matmul(p_star, W.t()) + b
         loss_star = F.cross_entropy(logits_star, labels, reduction="none")
-    
-    return loss_star
+
+    return loss_star.to(orig_device)
 
 
 # ============================================================================

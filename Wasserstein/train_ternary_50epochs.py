@@ -2,6 +2,8 @@
 Train ternary concept model with aleatoric head for 50 epochs and plot results.
 """
 
+import os
+import argparse
 import torch
 from torch.optim import Adam
 from torch.utils.data import DataLoader
@@ -13,13 +15,49 @@ from tqdm import tqdm
 from credal_sets import CredalDROConfig, CredalDROModule
 from dataloader import load_dataset_splits, DatasetConfig
 from encoder import FrozenDistilBERTEncoder
+from utils.metrics import collect_eval_outputs, save_eval_outputs
 
 print("=" * 70)
 print("TERNARY CONCEPT TRAINING - 50 EPOCHS WITH PLOTTING")
 print("=" * 70)
 
-# Force CPU to avoid MPS issues
-device = "cpu"
+# CLI args for eval saving and quadrants
+parser = argparse.ArgumentParser(add_help=False)
+parser.add_argument('--dataset', type=str, default='cebab')
+parser.add_argument('--model_name', type=str, default='credal')
+parser.add_argument('--seed', type=int, default=-1, help='Set to -1 for auto')
+parser.add_argument('--eval_outdir', type=str, default='eval_outputs')
+parser.add_argument('--eval_template', type=str, default='{dataset}_{model}_{seed}_epoch{epoch}.pt')
+parser.add_argument('--save_eval', action='store_true', help='Enable saving eval outputs at end')
+parser.add_argument('--quad_method', type=str, default='median', choices=['median','quantile','fixed'])
+parser.add_argument('--quad_q', type=float, default=0.5)
+parser.add_argument('--quad_eu_thr', type=float, default=None)
+parser.add_argument('--quad_au_thr', type=float, default=None)
+
+try:
+    args, _ = parser.parse_known_args()
+except SystemExit:
+    # In notebooks or environments that parse argv, just use defaults
+    class _A: pass
+    args = _A()
+    args.dataset = 'cebab'
+    args.model_name = 'credal'
+    args.seed = -1
+    args.eval_outdir = 'eval_outputs'
+    args.eval_template = '{dataset}_{model}_{seed}_epoch{epoch}.pt'
+    args.save_eval = False
+    args.quad_method = 'median'
+    args.quad_q = 0.5
+    args.quad_eu_thr = None
+    args.quad_au_thr = None
+
+# Prefer MPS on Apple Silicon, else CUDA, else CPU
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+device = (
+    "mps" if torch.backends.mps.is_available() else
+    "cuda" if torch.cuda.is_available() else
+    "cpu"
+)
 print(f"\nDevice: {device}")
 
 # 1. Load encoder
@@ -38,7 +76,7 @@ dataset_config = DatasetConfig(
 )
 
 train_loader, val_loader, test_loader, tokenizer, metadata = load_dataset_splits(
-    "cebab",
+    args.dataset,
     dataset_config,
 )
 
@@ -365,3 +403,39 @@ if len(all_aleatoric_np) > 0:
 print("\n" + "="*70)
 print("✅ TRAINING AND EVALUATION COMPLETE!")
 print("="*70)
+
+# 9. Save detailed evaluation outputs (optional)
+if args.save_eval:
+    print("\nSaving detailed evaluation outputs...")
+    # seed handling
+    if args.seed is not None and args.seed >= 0:
+        seed = int(args.seed)
+    else:
+        seed = int(torch.initial_seed() % (2**32))
+
+    eval_payload = collect_eval_outputs(
+        model, encoder, test_loader, device,
+        quad_method=args.quad_method,
+        quad_q=args.quad_q,
+        quad_eu_thr=args.quad_eu_thr,
+        quad_au_thr=args.quad_au_thr,
+    )
+
+    # Conform to requested keys
+    eval_payload.update({
+        'eu_per_sample': eval_payload.get('epsilon'),            # [N]
+        'au_per_sample': eval_payload.get('aleatoric_mean'),     # [N]
+        'seed': seed,
+        'epoch': num_epochs,
+    })
+
+    os.makedirs(args.eval_outdir, exist_ok=True)
+    filename = args.eval_template.format(
+        dataset=args.dataset,
+        model=args.model_name,
+        seed=seed,
+        epoch=num_epochs,
+    )
+    out_path = os.path.join(args.eval_outdir, filename)
+    saved_path = save_eval_outputs(eval_payload, model, config, out_path)
+    print(f"✅ Saved eval outputs: {saved_path}")

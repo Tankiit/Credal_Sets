@@ -3,6 +3,7 @@ Simple end-to-end training example with ternary concepts.
 This demonstrates how to use the ternary concept implementation.
 """
 
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -15,8 +16,13 @@ print("=" * 70)
 print("TERNARY CONCEPT TRAINING EXAMPLE")
 print("=" * 70)
 
-# Set device
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Set device (prefer MPS on Apple Silicon)
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+device = (
+    "mps" if torch.backends.mps.is_available() else
+    "cuda" if torch.cuda.is_available() else
+    "cpu"
+)
 print(f"\nUsing device: {device}")
 
 # 1. Create synthetic data (simulating CEBaB)

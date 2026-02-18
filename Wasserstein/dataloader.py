@@ -412,6 +412,8 @@ class DatasetConfig:
     max_train_samples: Optional[int] = None
     max_val_samples: Optional[int] = None
     max_test_samples: Optional[int] = None
+    # If True, Dataset.__getitem__ returns raw text fields; tokenization occurs in collate_fn (batched, dynamic padding)
+    defer_tokenization: bool = False
 
 # =============================================================================
 # DATASET CLASS
@@ -886,6 +888,8 @@ class CredenceDataset(Dataset):
 
             self.examples.append({
                 "text": text,
+                "premise": premise,
+                "hypothesis": hypothesis,
                 "label": label,
                 "concepts": concepts,
                 "is_unknown": is_unknown,
@@ -950,19 +954,29 @@ class CredenceDataset(Dataset):
     def __getitem__(self, idx):
         ex = self.examples[idx]
 
-        encoding = self.tokenizer(
-            ex["text"],
-            truncation=True,
-            max_length=self.config.max_length,
-            padding='max_length',
-            return_tensors='pt'
-        )
+        # If deferring tokenization, just return raw fields (handled by collate_fn)
+        if self.config.defer_tokenization:
+            item = {
+                'text': ex.get('text', None),
+                'premise': ex.get('premise', None),
+                'hypothesis': ex.get('hypothesis', None),
+                'labels': torch.tensor(ex["label"], dtype=torch.long),
+            }
+        else:
+            # Tokenize per-item (legacy path)
+            encoding = self.tokenizer(
+                ex["text"],
+                truncation=True,
+                max_length=self.config.max_length,
+                padding='max_length',
+                return_tensors='pt'
+            )
 
-        item = {
-            'input_ids': encoding['input_ids'].squeeze(0),
-            'attention_mask': encoding['attention_mask'].squeeze(0),
-            'labels': torch.tensor(ex["label"], dtype=torch.long),
-        }
+            item = {
+                'input_ids': encoding['input_ids'].squeeze(0),
+                'attention_mask': encoding['attention_mask'].squeeze(0),
+                'labels': torch.tensor(ex["label"], dtype=torch.long),
+            }
 
         # Add concepts if available
         if len(ex["concepts"]) > 0:
@@ -1007,14 +1021,32 @@ def load_dataset_splits(
     print(f"  HF path: {info['hf_path']}")
 
     # Load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_name)
+    tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_name, use_fast=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     # Load splits
-    train_ds = CredenceDataset(dataset_name, "train", tokenizer, config)
-    val_ds = CredenceDataset(dataset_name, "val", tokenizer, config)
-    test_ds = CredenceDataset(dataset_name, "test", tokenizer, config)
+    # Enable batched, dynamic padding tokenization for SNLI to speed up training significantly.
+    use_batched_collate = dataset_name in ("snli", "chaosnli")
+    if use_batched_collate:
+        # Make a shallow copy-like config enabling deferred tokenization
+        cfg = DatasetConfig(
+            label_type=config.label_type,
+            max_length=config.max_length,
+            tokenizer_name=config.tokenizer_name,
+            batch_size=config.batch_size,
+            num_workers=config.num_workers if config.num_workers > 0 else 2,
+            max_train_samples=config.max_train_samples,
+            max_val_samples=config.max_val_samples,
+            max_test_samples=config.max_test_samples,
+            defer_tokenization=True,
+        )
+    else:
+        cfg = config
+
+    train_ds = CredenceDataset(dataset_name, "train", tokenizer, cfg)
+    val_ds = CredenceDataset(dataset_name, "val", tokenizer, cfg)
+    test_ds = CredenceDataset(dataset_name, "test", tokenizer, cfg)
 
     # Apply sample limits
     if config.max_train_samples and len(train_ds.examples) > config.max_train_samples:
@@ -1078,15 +1110,63 @@ def load_dataset_splits(
             f"Dataset '{dataset_name}' has no training examples. Cannot proceed with training."
         )
 
+    # Collate function for dynamic, batched tokenization (speeds up SNLI)
+    def build_collate(tokenizer, max_length):
+        def collate_fn(batch):
+            if batch and (batch[0].get('premise') is not None and batch[0].get('hypothesis') is not None):
+                premises = [b['premise'] for b in batch]
+                hyps = [b['hypothesis'] for b in batch]
+                enc = tokenizer(
+                    premises,
+                    hyps,
+                    truncation=True,
+                    max_length=max_length,
+                    padding=True,
+                    return_tensors='pt',
+                )
+            else:
+                texts = [b['text'] for b in batch]
+                enc = tokenizer(
+                    texts,
+                    truncation=True,
+                    max_length=max_length,
+                    padding=True,
+                    return_tensors='pt',
+                )
+
+            out = {
+                'input_ids': enc['input_ids'],
+                'attention_mask': enc['attention_mask'],
+                'labels': torch.stack([b['labels'] for b in batch], dim=0),
+            }
+
+            # Optional concept fields
+            if 'concept_labels' in batch[0]:
+                out['concept_labels'] = torch.stack([b['concept_labels'] for b in batch], dim=0)
+            if 'is_unknown' in batch[0]:
+                out['is_unknown'] = torch.stack([b['is_unknown'] for b in batch], dim=0)
+
+            return out
+        return collate_fn
+
     # Create loaders
+    if use_batched_collate:
+        collate = build_collate(tokenizer, cfg.max_length)
+        nw = cfg.num_workers
+        bs = cfg.batch_size
+    else:
+        collate = None
+        nw = config.num_workers
+        bs = config.batch_size
+
     train_loader = DataLoader(
-        train_ds, batch_size=config.batch_size, shuffle=True, num_workers=config.num_workers
+        train_ds, batch_size=bs, shuffle=True, num_workers=nw, collate_fn=collate
     )
     val_loader = DataLoader(
-        val_ds, batch_size=config.batch_size, shuffle=False, num_workers=config.num_workers
+        val_ds, batch_size=bs, shuffle=False, num_workers=nw, collate_fn=collate
     )
     test_loader = DataLoader(
-        test_ds, batch_size=config.batch_size, shuffle=False, num_workers=config.num_workers
+        test_ds, batch_size=bs, shuffle=False, num_workers=nw, collate_fn=collate
     )
 
     return train_loader, val_loader, test_loader, tokenizer, metadata
