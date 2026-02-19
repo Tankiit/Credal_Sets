@@ -25,7 +25,17 @@ print("=" * 70)
 parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument('--dataset', type=str, default='cebab')
 parser.add_argument('--model_name', type=str, default='credal')
+parser.add_argument('--encoder_model', type=str, default='distilbert-base-uncased')
 parser.add_argument('--seed', type=int, default=-1, help='Set to -1 for auto')
+parser.add_argument('--epochs', type=int, default=50)
+parser.add_argument('--batch_size', type=int, default=16)
+parser.add_argument('--max_length', type=int, nargs='?', const=128, default=128)
+parser.add_argument('--num_workers', type=int, default=0)
+parser.add_argument('--max_train_samples', type=int, default=None)
+parser.add_argument('--max_val_samples', type=int, default=None)
+parser.add_argument('--max_test_samples', type=int, default=None)
+parser.add_argument('--grad_accum_steps', type=int, default=1)
+parser.add_argument('--skip_plots', action='store_true', help='Skip plotting to save time')
 parser.add_argument('--eval_outdir', type=str, default='eval_outputs')
 parser.add_argument('--eval_template', type=str, default='{dataset}_{model}_{seed}_epoch{epoch}.pt')
 parser.add_argument('--save_eval', action='store_true', help='Enable saving eval outputs at end')
@@ -33,6 +43,8 @@ parser.add_argument('--quad_method', type=str, default='median', choices=['media
 parser.add_argument('--quad_q', type=float, default=0.5)
 parser.add_argument('--quad_eu_thr', type=float, default=None)
 parser.add_argument('--quad_au_thr', type=float, default=None)
+parser.add_argument('--checkpoint_dir', type=str, default='checkpoints')
+parser.add_argument('--save_ckpt_every', type=int, default=10)
 
 try:
     args, _ = parser.parse_known_args()
@@ -42,7 +54,17 @@ except SystemExit:
     args = _A()
     args.dataset = 'cebab'
     args.model_name = 'credal'
+    args.encoder_model = 'distilbert-base-uncased'
     args.seed = -1
+    args.epochs = 50
+    args.batch_size = 16
+    args.max_length = 128
+    args.num_workers = 0
+    args.max_train_samples = None
+    args.max_val_samples = None
+    args.max_test_samples = None
+    args.grad_accum_steps = 1
+    args.skip_plots = False
     args.eval_outdir = 'eval_outputs'
     args.eval_template = '{dataset}_{model}_{seed}_epoch{epoch}.pt'
     args.save_eval = False
@@ -50,6 +72,8 @@ except SystemExit:
     args.quad_q = 0.5
     args.quad_eu_thr = None
     args.quad_au_thr = None
+    args.checkpoint_dir = 'checkpoints'
+    args.save_ckpt_every = 10
 
 # Prefer MPS on Apple Silicon, else CUDA, else CPU
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
@@ -59,10 +83,11 @@ device = (
     "cpu"
 )
 print(f"\nDevice: {device}")
+os.makedirs(args.checkpoint_dir, exist_ok=True)
 
 # 1. Load encoder
 print("\nLoading encoder...")
-encoder = FrozenDistilBERTEncoder(model_name="distilbert-base-uncased", freeze=True)
+encoder = FrozenDistilBERTEncoder(model_name=args.encoder_model, freeze=True)
 encoder = encoder.to(device)
 encoder.eval()
 
@@ -70,9 +95,13 @@ encoder.eval()
 print("\nLoading CEBaB dataset...")
 dataset_config = DatasetConfig(
     label_type="ternary",
-    batch_size=16,
-    max_train_samples=500,  # Use more samples for meaningful training
-    max_val_samples=200,
+    batch_size=args.batch_size,
+    max_length=args.max_length,
+    tokenizer_name=args.encoder_model,
+    num_workers=args.num_workers,
+    max_train_samples=args.max_train_samples,
+    max_val_samples=args.max_val_samples,
+    max_test_samples=args.max_test_samples,
 )
 
 train_loader, val_loader, test_loader, tokenizer, metadata = load_dataset_splits(
@@ -118,7 +147,8 @@ config = CredalDROConfig(
 model = CredalDROModule(config).to(device)
 
 optimizer = Adam(model.parameters(), lr=1e-3)
-num_epochs = 50
+num_epochs = int(args.epochs)
+grad_accum = max(1, int(args.grad_accum_steps))
 
 print(f"\nTraining configuration:")
 print(f"  Optimizer: Adam (lr=1e-3)")
@@ -151,7 +181,8 @@ for epoch in range(num_epochs):
     train_losses = {'total': [], 'concept': [], 'task': [], 'robust': [], 'aleatoric': []}
 
     train_pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs} [Train]", leave=False)
-    for batch in train_pbar:
+    optimizer.zero_grad()
+    for step, batch in enumerate(train_pbar, start=1):
         input_ids = batch['input_ids'].to(device)
         attention_mask = batch['attention_mask'].to(device)
         labels = batch['labels'].to(device)
@@ -170,7 +201,6 @@ for epoch in range(num_epochs):
             )
 
         # Forward pass
-        optimizer.zero_grad()
         output = model(features, labels, concept_labels, is_unknown, concept_entropy=concept_entropy)
 
         loss_total = output['loss_total']
@@ -179,8 +209,10 @@ for epoch in range(num_epochs):
         loss_robust = output.get('loss_robust', torch.tensor(0.0).to(device))
         loss_ale = output.get('loss_ale', torch.tensor(0.0).to(device))
 
-        loss_total.backward()
-        optimizer.step()
+        (loss_total / grad_accum).backward()
+        if (step % grad_accum) == 0:
+            optimizer.step()
+            optimizer.zero_grad()
 
         train_losses['total'].append(loss_total.item())
         train_losses['concept'].append(loss_concept.item())
@@ -192,6 +224,11 @@ for epoch in range(num_epochs):
             'loss': f"{loss_total.item():.4f}",
             'ale': f"{loss_ale.item():.4f}",
         })
+
+    # Flush remaining grads if any
+    if (step % grad_accum) != 0:
+        optimizer.step()
+        optimizer.zero_grad()
 
     # Validation phase
     model.eval()
@@ -258,73 +295,92 @@ for epoch in range(num_epochs):
         print(f"  Val   - Loss: {val_avg_loss:.4f} | Acc: {val_acc:.4f} | Ale Mean: {val_ale_mean:.4f}")
         print(f"  Best Val Acc: {best_val_acc:.4f} (epoch {best_epoch+1})")
 
+    # Checkpointing
+    base_name = f"{args.dataset}_{args.model_name}"
+    is_best = (val_acc >= best_val_acc)
+    if is_best:
+        best_val_acc = val_acc
+        best_epoch = epoch
+    if (epoch + 1) % int(args.save_ckpt_every) == 0 or is_best:
+        ckpt = {
+            'epoch': epoch + 1,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'val_acc': val_acc,
+            'config': config,
+        }
+        torch.save(ckpt, os.path.join(args.checkpoint_dir, f"{base_name}_epoch{epoch+1}.pt"))
+        if is_best:
+            torch.save(ckpt, os.path.join(args.checkpoint_dir, f"{base_name}_best.pt"))
+
 print("\n" + "="*70)
 print("TRAINING COMPLETE")
 print("="*70)
 
 # 6. Plot results
-print("\nGenerating plots...")
+if not args.skip_plots:
+    print("\nGenerating plots...")
 
-fig, axes = plt.subplots(2, 3, figsize=(18, 10))
-fig.suptitle('Ternary Concept Training with Aleatoric Head - 50 Epochs', fontsize=16, fontweight='bold')
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    fig.suptitle('Ternary Concept Training with Aleatoric Head - 50 Epochs', fontsize=16, fontweight='bold')
 
-epochs = range(1, num_epochs + 1)
+    epochs = range(1, num_epochs + 1)
 
-# Plot 1: Total Loss
-axes[0, 0].plot(epochs, history['train_loss'], label='Train Loss', linewidth=2)
-axes[0, 0].plot(epochs, history['val_loss'], label='Val Loss', linewidth=2)
-axes[0, 0].set_xlabel('Epoch', fontsize=12)
-axes[0, 0].set_ylabel('Loss', fontsize=12)
-axes[0, 0].set_title('Total Loss', fontsize=14, fontweight='bold')
-axes[0, 0].legend()
-axes[0, 0].grid(True, alpha=0.3)
+    # Plot 1: Total Loss
+    axes[0, 0].plot(epochs, history['train_loss'], label='Train Loss', linewidth=2)
+    axes[0, 0].plot(epochs, history['val_loss'], label='Val Loss', linewidth=2)
+    axes[0, 0].set_xlabel('Epoch', fontsize=12)
+    axes[0, 0].set_ylabel('Loss', fontsize=12)
+    axes[0, 0].set_title('Total Loss', fontsize=14, fontweight='bold')
+    axes[0, 0].legend()
+    axes[0, 0].grid(True, alpha=0.3)
 
-# Plot 2: Task Loss
-axes[0, 1].plot(epochs, history['train_task_loss'], label='Task Loss', color='orange', linewidth=2)
-axes[0, 1].set_xlabel('Epoch', fontsize=12)
-axes[0, 1].set_ylabel('Loss', fontsize=12)
-axes[0, 1].set_title('Task Loss (Cross-Entropy)', fontsize=14, fontweight='bold')
-axes[0, 1].legend()
-axes[0, 1].grid(True, alpha=0.3)
+    # Plot 2: Task Loss
+    axes[0, 1].plot(epochs, history['train_task_loss'], label='Task Loss', color='orange', linewidth=2)
+    axes[0, 1].set_xlabel('Epoch', fontsize=12)
+    axes[0, 1].set_ylabel('Loss', fontsize=12)
+    axes[0, 1].set_title('Task Loss (Cross-Entropy)', fontsize=14, fontweight='bold')
+    axes[0, 1].legend()
+    axes[0, 1].grid(True, alpha=0.3)
 
-# Plot 3: Concept Loss
-axes[0, 2].plot(epochs, history['train_concept_loss'], label='Concept Loss', color='green', linewidth=2)
-axes[0, 2].set_xlabel('Epoch', fontsize=12)
-axes[0, 2].set_ylabel('Loss', fontsize=12)
-axes[0, 2].set_title('Concept Loss (Ternary CE)', fontsize=14, fontweight='bold')
-axes[0, 2].legend()
-axes[0, 2].grid(True, alpha=0.3)
+    # Plot 3: Concept Loss
+    axes[0, 2].plot(epochs, history['train_concept_loss'], label='Concept Loss', color='green', linewidth=2)
+    axes[0, 2].set_xlabel('Epoch', fontsize=12)
+    axes[0, 2].set_ylabel('Loss', fontsize=12)
+    axes[0, 2].set_title('Concept Loss (Ternary CE)', fontsize=14, fontweight='bold')
+    axes[0, 2].legend()
+    axes[0, 2].grid(True, alpha=0.3)
 
-# Plot 4: Aleatoric Loss
-axes[1, 0].plot(epochs, history['train_aleatoric_loss'], label='Aleatoric Loss', color='red', linewidth=2)
-axes[1, 0].set_xlabel('Epoch', fontsize=12)
-axes[1, 0].set_ylabel('Loss', fontsize=12)
-axes[1, 0].set_title('Aleatoric Loss (MSE)', fontsize=14, fontweight='bold')
-axes[1, 0].legend()
-axes[1, 0].grid(True, alpha=0.3)
+    # Plot 4: Aleatoric Loss
+    axes[1, 0].plot(epochs, history['train_aleatoric_loss'], label='Aleatoric Loss', color='red', linewidth=2)
+    axes[1, 0].set_xlabel('Epoch', fontsize=12)
+    axes[1, 0].set_ylabel('Loss', fontsize=12)
+    axes[1, 0].set_title('Aleatoric Loss (MSE)', fontsize=14, fontweight='bold')
+    axes[1, 0].legend()
+    axes[1, 0].grid(True, alpha=0.3)
 
-# Plot 5: Robust Loss
-axes[1, 1].plot(epochs, history['train_robust_loss'], label='Robust Loss', color='purple', linewidth=2)
-axes[1, 1].set_xlabel('Epoch', fontsize=12)
-axes[1, 1].set_ylabel('Loss', fontsize=12)
-axes[1, 1].set_title('DRO Robust Loss', fontsize=14, fontweight='bold')
-axes[1, 1].legend()
-axes[1, 1].grid(True, alpha=0.3)
+    # Plot 5: Robust Loss
+    axes[1, 1].plot(epochs, history['train_robust_loss'], label='Robust Loss', color='purple', linewidth=2)
+    axes[1, 1].set_xlabel('Epoch', fontsize=12)
+    axes[1, 1].set_ylabel('Loss', fontsize=12)
+    axes[1, 1].set_title('DRO Robust Loss', fontsize=14, fontweight='bold')
+    axes[1, 1].legend()
+    axes[1, 1].grid(True, alpha=0.3)
 
-# Plot 6: Validation Accuracy
-axes[1, 2].plot(epochs, history['val_acc'], label='Val Accuracy', color='blue', linewidth=2)
-axes[1, 2].axhline(y=best_val_acc, color='r', linestyle='--', label=f'Best: {best_val_acc:.4f}')
-axes[1, 2].set_xlabel('Epoch', fontsize=12)
-axes[1, 2].set_ylabel('Accuracy', fontsize=12)
-axes[1, 2].set_title('Validation Accuracy', fontsize=14, fontweight='bold')
-axes[1, 2].legend()
-axes[1, 2].grid(True, alpha=0.3)
+    # Plot 6: Validation Accuracy
+    axes[1, 2].plot(epochs, history['val_acc'], label='Val Accuracy', color='blue', linewidth=2)
+    axes[1, 2].axhline(y=best_val_acc, color='r', linestyle='--', label=f'Best: {best_val_acc:.4f}')
+    axes[1, 2].set_xlabel('Epoch', fontsize=12)
+    axes[1, 2].set_ylabel('Accuracy', fontsize=12)
+    axes[1, 2].set_title('Validation Accuracy', fontsize=14, fontweight='bold')
+    axes[1, 2].legend()
+    axes[1, 2].grid(True, alpha=0.3)
 
-plt.tight_layout()
-plt.savefig('training_results_50epochs.png', dpi=300, bbox_inches='tight')
-print("✅ Saved plot: training_results_50epochs.png")
+    plt.tight_layout()
+    plt.savefig('training_results_50epochs.png', dpi=300, bbox_inches='tight')
+    print("✅ Saved plot: training_results_50epochs.png")
 
-plt.show()
+    plt.show()
 
 # 7. Final statistics
 print("\n" + "="*70)

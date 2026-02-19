@@ -1,0 +1,4 @@
+Dataset,Task,Classes,Concepts,Train_Samples,Val_Samples,Test_Samples,Best_Epoch,Best_Val_Acc,Test_Acc,Total_Epochs,Encoder,Training_Mode
+CEBaB,Sentiment,3,4,9848,1673,1689,38,0.7866,0.7679,50,DistilBERT,Joint_Ternary_Concepts
+SNLI,NLI,3,3,549367,9842,9824,45,0.6664,N/A,50,DistilBERT,Joint_Ternary_Concepts
+GoEmotions,Emotion,28,28,43410,5426,5427,34,0.4937,0.4710,50,DistilBERT,Joint_Ternary_Concepts
