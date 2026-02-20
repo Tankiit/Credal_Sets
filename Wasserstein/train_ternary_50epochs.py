@@ -45,6 +45,8 @@ parser.add_argument('--quad_eu_thr', type=float, default=None)
 parser.add_argument('--quad_au_thr', type=float, default=None)
 parser.add_argument('--checkpoint_dir', type=str, default='checkpoints')
 parser.add_argument('--save_ckpt_every', type=int, default=10)
+parser.add_argument('--dro_mode', type=str, default='joint', choices=['post_hoc','fixed_eps','joint'])
+parser.add_argument('--fixed_eps', type=float, default=0.1)
 
 try:
     args, _ = parser.parse_known_args()
@@ -74,6 +76,8 @@ except SystemExit:
     args.quad_au_thr = None
     args.checkpoint_dir = 'checkpoints'
     args.save_ckpt_every = 10
+    args.dro_mode = 'joint'
+    args.fixed_eps = 0.1
 
 # Prefer MPS on Apple Silicon, else CUDA, else CPU
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
@@ -143,6 +147,18 @@ config = CredalDROConfig(
     use_aleatoric=True,
     lambda_ale=1.0,
 )
+
+# Apply DRO mode overrides (A/B/C)
+from credal_sets import DROMode
+if args.dro_mode == 'post_hoc':
+    config.mode = DROMode.POST_HOC
+    config.lambda_dro = 0.0
+    config.beta_width = 0.0
+elif args.dro_mode == 'fixed_eps':
+    config.mode = DROMode.FIXED_EPS
+    config.fixed_eps = float(args.fixed_eps)
+else:
+    config.mode = DROMode.JOINT
 
 model = CredalDROModule(config).to(device)
 

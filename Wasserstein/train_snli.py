@@ -31,6 +31,8 @@ parser.add_argument('--max_test_samples', type=int, default=None)
 parser.add_argument('--grad_accum_steps', type=int, default=1)
 parser.add_argument('--checkpoint_dir', type=str, default='checkpoints')
 parser.add_argument('--save_ckpt_every', type=int, default=5)
+parser.add_argument('--dro_mode', type=str, default='joint', choices=['post_hoc','fixed_eps','joint'])
+parser.add_argument('--fixed_eps', type=float, default=0.1)
 parser.add_argument('--seed', type=int, default=-1, help='Set to -1 for auto')
 parser.add_argument('--eval_outdir', type=str, default='eval_outputs')
 parser.add_argument('--eval_template', type=str, default='{dataset}_{model}_{seed}_epoch{epoch}.pt')
@@ -59,6 +61,8 @@ except SystemExit:
     args.grad_accum_steps = 1
     args.checkpoint_dir = 'checkpoints'
     args.save_ckpt_every = 5
+    args.dro_mode = 'joint'
+    args.fixed_eps = 0.1
     args.eval_outdir = 'eval_outputs'
     args.eval_template = '{dataset}_{model}_{seed}_epoch{epoch}.pt'
     args.save_eval = False
@@ -111,6 +115,18 @@ config = snli_joint_config(
     warmup_epochs=5,
     dro_ramp_epochs=5,
 )
+from credal_sets import DROMode
+# Override config based on requested DRO mode
+if args.dro_mode == 'post_hoc':
+    config.mode = DROMode.POST_HOC
+    config.lambda_dro = 0.0
+    config.beta_width = 0.0
+elif args.dro_mode == 'fixed_eps':
+    config.mode = DROMode.FIXED_EPS
+    config.fixed_eps = float(args.fixed_eps)
+else:
+    config.mode = DROMode.JOINT
+
 model = CredalDROModule(config).to(device)
 print(config.describe())
 
