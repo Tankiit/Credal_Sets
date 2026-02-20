@@ -47,6 +47,9 @@ parser.add_argument('--checkpoint_dir', type=str, default='checkpoints')
 parser.add_argument('--save_ckpt_every', type=int, default=10)
 parser.add_argument('--dro_mode', type=str, default='joint', choices=['post_hoc','fixed_eps','joint'])
 parser.add_argument('--fixed_eps', type=float, default=0.1)
+parser.add_argument('--ckpt_save_per_sample', action='store_true', help='Save per-sample mu/sigma/epsilon in checkpoints (can be large)')
+parser.add_argument('--ckpt_per_sample_split', type=str, default='val', choices=['train','val','both'], help='Which split to store per-sample tensors for')
+parser.add_argument('--ckpt_per_sample_limit', type=int, default=None, help='Limit number of samples saved per checkpoint')
 
 try:
     args, _ = parser.parse_known_args()
@@ -78,6 +81,9 @@ except SystemExit:
     args.save_ckpt_every = 10
     args.dro_mode = 'joint'
     args.fixed_eps = 0.1
+    args.ckpt_save_per_sample = False
+    args.ckpt_per_sample_split = 'val'
+    args.ckpt_per_sample_limit = None
 
 # Prefer MPS on Apple Silicon, else CUDA, else CPU
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
@@ -200,6 +206,14 @@ for epoch in range(num_epochs):
     model.train()
     train_losses = {'total': [], 'concept': [], 'task': [], 'robust': [], 'aleatoric': []}
 
+    # Train-time epistemic summaries
+    tr_mu_sum = None
+    tr_sigma_sum = None
+    tr_eps_sum = 0.0
+    tr_eps_sqsum = 0.0
+    tr_count = 0
+    tr_mu_list, tr_sigma_list, tr_eps_list = [], [], []
+
     train_pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs} [Train]", leave=False)
     optimizer.zero_grad()
     for step, batch in enumerate(train_pbar, start=1):
@@ -240,6 +254,26 @@ for epoch in range(num_epochs):
         train_losses['robust'].append(loss_robust.item() if isinstance(loss_robust, torch.Tensor) else loss_robust)
         train_losses['aleatoric'].append(loss_ale.item() if isinstance(loss_ale, torch.Tensor) else loss_ale)
 
+        # Accumulate train-time mu/sigma/epsilon summaries
+        with torch.no_grad():
+            mu_b = output.get('mu')
+            sig_b = output.get('sigma_sq')
+            eps_b = output.get('epsilon')
+            if isinstance(mu_b, torch.Tensor) and isinstance(sig_b, torch.Tensor) and isinstance(eps_b, torch.Tensor):
+                if tr_mu_sum is None:
+                    tr_mu_sum = mu_b.detach().sum(dim=0).cpu()
+                    tr_sigma_sum = sig_b.detach().sum(dim=0).cpu()
+                else:
+                    tr_mu_sum += mu_b.detach().sum(dim=0).cpu()
+                    tr_sigma_sum += sig_b.detach().sum(dim=0).cpu()
+                tr_eps_sum += float(eps_b.detach().sum().item())
+                tr_eps_sqsum += float((eps_b.detach()**2).sum().item())
+                tr_count += mu_b.shape[0]
+                if args.ckpt_save_per_sample and args.ckpt_per_sample_split in ('train','both'):
+                    tr_mu_list.append(mu_b.detach().cpu())
+                    tr_sigma_list.append(sig_b.detach().cpu())
+                    tr_eps_list.append(eps_b.detach().cpu())
+
         train_pbar.set_postfix({
             'loss': f"{loss_total.item():.4f}",
             'ale': f"{loss_ale.item():.4f}",
@@ -256,6 +290,13 @@ for epoch in range(num_epochs):
     val_correct = 0
     val_total = 0
     val_aleatoric_preds = []
+    # Val-time epistemic summaries
+    va_mu_sum = None
+    va_sigma_sum = None
+    va_eps_sum = 0.0
+    va_eps_sqsum = 0.0
+    va_count = 0
+    va_mu_list, va_sigma_list, va_eps_list = [], [], []
 
     with torch.no_grad():
         val_pbar = tqdm(val_loader, desc=f"Epoch {epoch+1}/{num_epochs} [Val]", leave=False)
@@ -282,6 +323,25 @@ for epoch in range(num_epochs):
             preds = output['logits'].argmax(dim=1)
             val_correct += (preds == labels).sum().item()
             val_total += labels.size(0)
+
+            # Accumulate val mu/sigma/epsilon
+            mu_b = output.get('mu')
+            sig_b = output.get('sigma_sq')
+            eps_b = output.get('epsilon')
+            if isinstance(mu_b, torch.Tensor) and isinstance(sig_b, torch.Tensor) and isinstance(eps_b, torch.Tensor):
+                if va_mu_sum is None:
+                    va_mu_sum = mu_b.detach().sum(dim=0).cpu()
+                    va_sigma_sum = sig_b.detach().sum(dim=0).cpu()
+                else:
+                    va_mu_sum += mu_b.detach().sum(dim=0).cpu()
+                    va_sigma_sum += sig_b.detach().sum(dim=0).cpu()
+                va_eps_sum += float(eps_b.detach().sum().item())
+                va_eps_sqsum += float((eps_b.detach()**2).sum().item())
+                va_count += mu_b.shape[0]
+                if args.ckpt_save_per_sample and args.ckpt_per_sample_split in ('val','both'):
+                    va_mu_list.append(mu_b.detach().cpu())
+                    va_sigma_list.append(sig_b.detach().cpu())
+                    va_eps_list.append(eps_b.detach().cpu())
 
             # Collect aleatoric predictions
             if 'a_hat' in output and output['a_hat'].numel() > 1:
@@ -322,12 +382,62 @@ for epoch in range(num_epochs):
         best_val_acc = val_acc
         best_epoch = epoch
     if (epoch + 1) % int(args.save_ckpt_every) == 0 or is_best:
+        # Build metrics summary for checkpoint
+        metrics = {}
+        if tr_count > 0:
+            tr_eps_mean = tr_eps_sum / tr_count
+            tr_eps_std = max(tr_eps_sqsum / tr_count - tr_eps_mean**2, 0.0) ** 0.5
+            metrics['train'] = {
+                'mu_mean': tr_mu_sum / tr_count,
+                'sigma_sq_mean': tr_sigma_sum / tr_count,
+                'epsilon_mean': tr_eps_mean,
+                'epsilon_std': tr_eps_std,
+            }
+            if args.ckpt_save_per_sample and args.ckpt_per_sample_split in ('train','both') and len(tr_mu_list) > 0:
+                tr_mu_cat = torch.cat(tr_mu_list, dim=0)
+                tr_sig_cat = torch.cat(tr_sigma_list, dim=0)
+                tr_eps_cat = torch.cat(tr_eps_list, dim=0)
+                if args.ckpt_per_sample_limit:
+                    L = int(args.ckpt_per_sample_limit)
+                    tr_mu_cat = tr_mu_cat[:L]
+                    tr_sig_cat = tr_sig_cat[:L]
+                    tr_eps_cat = tr_eps_cat[:L]
+                metrics['train_per_sample'] = {
+                    'mu': tr_mu_cat,
+                    'sigma_sq': tr_sig_cat,
+                    'epsilon': tr_eps_cat,
+                }
+        if va_count > 0:
+            va_eps_mean = va_eps_sum / va_count
+            va_eps_std = max(va_eps_sqsum / va_count - va_eps_mean**2, 0.0) ** 0.5
+            metrics['val'] = {
+                'mu_mean': va_mu_sum / va_count,
+                'sigma_sq_mean': va_sigma_sum / va_count,
+                'epsilon_mean': va_eps_mean,
+                'epsilon_std': va_eps_std,
+            }
+            if args.ckpt_save_per_sample and args.ckpt_per_sample_split in ('val','both') and len(va_mu_list) > 0:
+                va_mu_cat = torch.cat(va_mu_list, dim=0)
+                va_sig_cat = torch.cat(va_sigma_list, dim=0)
+                va_eps_cat = torch.cat(va_eps_list, dim=0)
+                if args.ckpt_per_sample_limit:
+                    L = int(args.ckpt_per_sample_limit)
+                    va_mu_cat = va_mu_cat[:L]
+                    va_sig_cat = va_sig_cat[:L]
+                    va_eps_cat = va_eps_cat[:L]
+                metrics['val_per_sample'] = {
+                    'mu': va_mu_cat,
+                    'sigma_sq': va_sig_cat,
+                    'epsilon': va_eps_cat,
+                }
+
         ckpt = {
             'epoch': epoch + 1,
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'val_acc': val_acc,
             'config': config,
+            'metrics': metrics,
         }
         torch.save(ckpt, os.path.join(args.checkpoint_dir, f"{base_name}_epoch{epoch+1}.pt"))
         if is_best:

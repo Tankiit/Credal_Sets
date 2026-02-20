@@ -215,6 +215,12 @@ for epoch in range(num_epochs):
     # Training phase
     model.train()
     train_losses = {'total': [], 'concept': [], 'task': [], 'robust': [], 'aleatoric': [], 'diversity': []}
+    # Train-time epistemic summaries
+    tr_mu_sum = None
+    tr_sigma_sum = None
+    tr_eps_sum = 0.0
+    tr_eps_sqsum = 0.0
+    tr_count = 0
 
     train_pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs} [Train]")
     optimizer.zero_grad(set_to_none=True)
@@ -261,6 +267,22 @@ for epoch in range(num_epochs):
         train_losses['robust'].append(loss_robust.item() if isinstance(loss_robust, torch.Tensor) else loss_robust)
         train_losses['aleatoric'].append(loss_ale.item() if isinstance(loss_ale, torch.Tensor) else loss_ale)
 
+        # Accumulate train-time mu/sigma/epsilon summaries
+        with torch.no_grad():
+            mu_b = output.get('mu')
+            sig_b = output.get('sigma_sq')
+            eps_b = output.get('epsilon')
+            if isinstance(mu_b, torch.Tensor) and isinstance(sig_b, torch.Tensor) and isinstance(eps_b, torch.Tensor):
+                if tr_mu_sum is None:
+                    tr_mu_sum = mu_b.detach().sum(dim=0).cpu()
+                    tr_sigma_sum = sig_b.detach().sum(dim=0).cpu()
+                else:
+                    tr_mu_sum += mu_b.detach().sum(dim=0).cpu()
+                    tr_sigma_sum += sig_b.detach().sum(dim=0).cpu()
+                tr_eps_sum += float(eps_b.detach().sum().item())
+                tr_eps_sqsum += float((eps_b.detach()**2).sum().item())
+                tr_count += mu_b.shape[0]
+
         train_pbar.set_postfix({
             'loss': f"{loss_total.item():.4f}",
             'concept': f"{loss_concept.item():.4f}",
@@ -273,6 +295,12 @@ for epoch in range(num_epochs):
     val_losses = []
     val_correct = 0
     val_total = 0
+    # Val-time epistemic summaries
+    va_mu_sum = None
+    va_sigma_sum = None
+    va_eps_sum = 0.0
+    va_eps_sqsum = 0.0
+    va_count = 0
 
     with torch.no_grad():
         val_pbar = tqdm(val_loader, desc=f"Epoch {epoch+1}/{num_epochs} [Val]")
@@ -299,6 +327,20 @@ for epoch in range(num_epochs):
             preds = output['logits'].argmax(dim=1)
             val_correct += (preds == labels).sum().item()
             val_total += labels.size(0)
+            # Accumulate val-time mu/sigma/epsilon
+            mu_b = output.get('mu')
+            sig_b = output.get('sigma_sq')
+            eps_b = output.get('epsilon')
+            if isinstance(mu_b, torch.Tensor) and isinstance(sig_b, torch.Tensor) and isinstance(eps_b, torch.Tensor):
+                if va_mu_sum is None:
+                    va_mu_sum = mu_b.detach().sum(dim=0).cpu()
+                    va_sigma_sum = sig_b.detach().sum(dim=0).cpu()
+                else:
+                    va_mu_sum += mu_b.detach().sum(dim=0).cpu()
+                    va_sigma_sum += sig_b.detach().sum(dim=0).cpu()
+                va_eps_sum += float(eps_b.detach().sum().item())
+                va_eps_sqsum += float((eps_b.detach()**2).sum().item())
+                va_count += mu_b.shape[0]
 
     # Compute averages
     train_avg = {k: sum(v)/len(v) if len(v) > 0 else 0.0 for k, v in train_losses.items()}
@@ -327,6 +369,27 @@ for epoch in range(num_epochs):
         best_val_acc = val_acc
 
     if (epoch + 1) % 10 == 0 or is_best:
+        # Build metrics summary for checkpoint
+        metrics = {}
+        if tr_count > 0:
+            tr_eps_mean = tr_eps_sum / tr_count
+            tr_eps_std = max(tr_eps_sqsum / tr_count - tr_eps_mean**2, 0.0) ** 0.5
+            metrics['train'] = {
+                'mu_mean': tr_mu_sum / tr_count,
+                'sigma_sq_mean': tr_sigma_sum / tr_count,
+                'epsilon_mean': tr_eps_mean,
+                'epsilon_std': tr_eps_std,
+            }
+        if va_count > 0:
+            va_eps_mean = va_eps_sum / va_count
+            va_eps_std = max(va_eps_sqsum / va_count - va_eps_mean**2, 0.0) ** 0.5
+            metrics['val'] = {
+                'mu_mean': va_mu_sum / va_count,
+                'sigma_sq_mean': va_sigma_sum / va_count,
+                'epsilon_mean': va_eps_mean,
+                'epsilon_std': va_eps_std,
+            }
+
         checkpoint = {
             'epoch': epoch + 1,
             'model_state_dict': model.state_dict(),
@@ -336,6 +399,7 @@ for epoch in range(num_epochs):
             'train_loss': train_avg['total'],
             'config': config,
             'history': history,
+            'metrics': metrics,
         }
         checkpoint_path = os.path.join(CHECKPOINT_DIR, f"{DATASET_NAME}_epoch{epoch+1}.pt")
         torch.save(checkpoint, checkpoint_path)

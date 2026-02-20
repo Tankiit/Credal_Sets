@@ -82,11 +82,16 @@ def collect_eval_outputs(
     all_concepts: List[torch.Tensor] = []
     all_preds: List[torch.Tensor] = []
     all_eps: List[torch.Tensor] = []
-    all_ale: List[torch.Tensor] = []  # per-sample scalar AU
-    all_ale_full: List[torch.Tensor] = []  # per-concept AU [B,K]
+    all_mu: List[torch.Tensor] = []         # per-sample concept means [B, K]
+    all_sigma: List[torch.Tensor] = []      # per-sample epistemic variances [B, K]
+    all_ale: List[torch.Tensor] = []        # per-sample scalar AU
+    all_ale_full: List[torch.Tensor] = []   # per-concept AU [B, K]
 
     # Optional: per-head predictions [N, B, K] aggregated later
     head_probs_accum: List[torch.Tensor] = []
+
+    all_au_target_full: List[torch.Tensor] = []  # ground-truth AU per-concept if provided
+    all_au_target_mean: List[torch.Tensor] = []  # ground-truth AU per-sample mean if provided
 
     for batch in loader:
         input_ids = batch['input_ids'].to(device)
@@ -106,15 +111,21 @@ def collect_eval_outputs(
         out = model(features, labels, concept_labels, is_unknown,
                     concept_entropy=concept_entropy)
 
-        logits = out['logits']  # [B, J]
+        logits = out['logits']          # [B, J]
         preds = logits.argmax(dim=1)
-        eps_b = out['epsilon']  # [B]
+        eps_b = out['epsilon']          # [B]
+        mu_b = out.get('mu', None)      # [B, K]
+        sig_b = out.get('sigma_sq', None)  # [B, K]
 
         all_logits.append(logits)
         all_labels.append(labels)
         all_concepts.append(concept_labels)
         all_preds.append(preds)
         all_eps.append(eps_b)
+        if isinstance(mu_b, torch.Tensor):
+            all_mu.append(mu_b)
+        if isinstance(sig_b, torch.Tensor):
+            all_sigma.append(sig_b)
 
         # Aleatoric per-sample summary: mean across concepts if available
         a_hat = out.get('a_hat', None)
@@ -128,12 +139,19 @@ def collect_eval_outputs(
             _, _, all_probs, _ = model.concept_ensemble(features)
             head_probs_accum.append(all_probs)  # [N, B, K]
 
+        # Accumulate AU targets if present (e.g., CEBaB)
+        if isinstance(concept_entropy, torch.Tensor):
+            all_au_target_full.append(concept_entropy)
+            all_au_target_mean.append(concept_entropy.mean(dim=1))
+
     # Stack across batches
     logits = torch.cat(all_logits, dim=0)
     labels = torch.cat(all_labels, dim=0)
     concepts = torch.cat(all_concepts, dim=0)
     preds = torch.cat(all_preds, dim=0)
     epsilon = torch.cat(all_eps, dim=0)
+    mu = torch.cat(all_mu, dim=0) if len(all_mu) > 0 else None
+    sigma_sq = torch.cat(all_sigma, dim=0) if len(all_sigma) > 0 else None
     ale = torch.cat(all_ale, dim=0) if len(all_ale) > 0 else torch.full_like(epsilon, fill_value=torch.nan)
     ale_full = torch.cat(all_ale_full, dim=0) if len(all_ale_full) > 0 else None
 
@@ -153,11 +171,24 @@ def collect_eval_outputs(
         'aleatoric_mean': _to_cpu_detached(ale),          # [N]
     }
 
+    # Add epistemic summaries if available
+    if mu is not None:
+        result['mu'] = _to_cpu_detached(mu)               # [N, K]
+    if sigma_sq is not None:
+        result['sigma_sq'] = _to_cpu_detached(sigma_sq)   # [N, K]
+
     if head_predictions is not None:
         result['head_predictions'] = _to_cpu_detached(head_predictions)  # [N, H, K]
 
     if ale_full is not None:
         result['aleatoric_preds'] = _to_cpu_detached(ale_full)          # [N, K]
+
+    # Add AU targets if available
+    if len(all_au_target_full) > 0:
+        au_t_full = torch.cat(all_au_target_full, dim=0)                # [N, K]
+        au_t_mean = torch.cat(all_au_target_mean, dim=0)               # [N]
+        result['aleatoric_target'] = _to_cpu_detached(au_t_full)
+        result['aleatoric_target_mean'] = _to_cpu_detached(au_t_mean)
 
     if compute_quadrants:
         try:
