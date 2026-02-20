@@ -76,6 +76,10 @@ device = "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is
 print(f"Device: {device}")
 
 os.makedirs(args.checkpoint_dir, exist_ok=True)
+import platform as _pt
+if _pt.system() == 'Darwin' and args.num_workers and int(args.num_workers) > 0:
+    print("[Info] macOS detected — forcing num_workers=0 to avoid multiprocessing spawn issues.")
+    args.num_workers = 0
 
 # Load encoder
 print("\nLoading encoder...")

@@ -87,6 +87,10 @@ device = (
     "cpu"
 )
 print(f"\nDevice: {device}")
+import platform as _pt
+if _pt.system() == 'Darwin' and args.num_workers and int(args.num_workers) > 0:
+    print("[Info] macOS detected — forcing num_workers=0 to avoid multiprocessing spawn issues.")
+    args.num_workers = 0
 os.makedirs(args.checkpoint_dir, exist_ok=True)
 
 # 1. Load encoder
