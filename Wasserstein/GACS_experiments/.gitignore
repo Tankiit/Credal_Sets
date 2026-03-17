@@ -1,0 +1,11 @@
+# Keep only source scripts in this subtree
+*
+!*/
+!*.py
+!*.sh
+!.gitignore
+
+# Never include nested repos or generated artifacts
+medmnistc-api/
+outputs/
+__pycache__/
