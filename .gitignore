@@ -1,0 +1,16 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local training artifacts
+logs/
+outputs/
+
+# Large model / data files
+checkpoints/**/*.pt
+checkpoints/**/*.jsonl
+data/hatexplain/dataset.json
+data/hatexplain/post_id_divisions.json
+
+# OS/editor artifacts
+.DS_Store

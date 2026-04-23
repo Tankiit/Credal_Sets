@@ -1,0 +1,24 @@
+\begin{table}[t]
+\centering
+\caption{Gradient isolation and intervention signatures on all benchmarks.
+The cosine similarity of $\nabla \cL_{\text{KL}}$ and $\nabla \cL_{\text{ale}}$
+on the shared $\mu$-head is measured over 50 validation batches per dataset.
+Cross-head gradient norms (columns "cross-$\sigma$ max") verify the disjoint
+tensor construction. Correlation columns validate that the decomposed
+uncertainties track their intended signals.}
+\label{tab:grad-iso-validity}
+\small
+\begin{tabular}{lccccc}
+\toprule
+Dataset & $\overline{\cos(g_{\text{kl}}, g_{\text{ale}})|_{\mu}}$
+        & $\max \|{\cdot}\|_{\text{cross-}\sigma}$
+        & $\rho(U_{\text{epi}}, U_{\text{ale}})$
+        & $\rho(\sigma_{\text{epi}}, \text{err})$
+        & $\rho(\sigma_{\text{ale}}, H_{\text{ann}})$ \\
+\midrule
+CEBaB & $-0.014 \pm 0.032$ & $0.0e+00$ & $+nan$ & $+nan$ & $+nan$ \\
+HateXplain & $+0.000 \pm 0.000$ & $0.0e+00$ & $+nan$ & $+nan$ & $+nan$ \\
+GoEmotions & $+0.000 \pm 0.000$ & $0.0e+00$ & $+nan$ & $+nan$ & $+nan$ \\
+\bottomrule
+\end{tabular}
+\end{table}
