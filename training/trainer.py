@@ -70,6 +70,26 @@ class HybridCredalCBMTrainer:
         self._forward_arg_names = set(inspect.signature(self.model.forward).parameters)
         self._forward_arg_names.discard("self")
 
+    def _log_loss_components(self, outputs: Dict, phase: str, step: int) -> None:
+        """Per-component loss breakdown; emitted at first step and every 50 steps."""
+        components = {
+            "task_loss": ("task_loss", "ce_loss"),
+            "concept_bce": ("concept_bce", "concept_loss"),
+            "error_supervision": ("error_supervision",),
+            "credal_kl": ("credal_kl", "kl_loss"),
+            "aleatoric_loss": ("aleatoric_loss",),
+            "aleatoric_unknown": ("aleatoric_unknown",),
+            "orth_penalty": ("orth_penalty",),
+        }
+        parts = []
+        for label, aliases in components.items():
+            for key in aliases:
+                if key in outputs:
+                    parts.append(f"{label}={float(outputs[key]):.4f}")
+                    break
+        if parts:
+            print(f"  [{phase} step {step}] " + "  ".join(parts))
+
     def _log_metrics(self, metrics: Dict, step: int, prefix: str = "") -> None:
         if getattr(self, "logger", None) is not None and self.logger.enabled:
             self.logger.log_metrics(metrics, step=step, prefix=prefix)
@@ -97,7 +117,7 @@ class HybridCredalCBMTrainer:
         total = 0
 
         pbar = tqdm(train_loader, desc=f"Epoch {self.current_epoch} [Train]")
-        for batch in pbar:
+        for batch_idx, batch in enumerate(pbar):
             inputs = self._batch_to_device(batch)
             outputs = self.model(**self._forward_inputs(inputs))
             loss = outputs["loss"]
@@ -108,6 +128,9 @@ class HybridCredalCBMTrainer:
             optimizer.step()
             if scheduler is not None:
                 scheduler.step()
+
+            if batch_idx == 0 or (batch_idx + 1) % 50 == 0:
+                self._log_loss_components(outputs, "train", batch_idx)
 
             total_loss += float(loss)
             preds = outputs["predictions"].detach()
@@ -175,6 +198,15 @@ class HybridCredalCBMTrainer:
             rho_eu_au=corr["rho_eu_au"], p_eu_au=corr["p_eu_au"],
             rho_eu_error=corr["rho_eu_error"], p_eu_error=corr["p_eu_error"],
             rho_ale_entropy=corr["rho_ale_entropy"], p_ale_entropy=corr["p_ale_entropy"],
+        )
+
+        print(
+            f"  [eval σ_ale] mean={sigma_ale_arr.mean():.4f}  std={sigma_ale_arr.std():.4f}  "
+            f"range=[{sigma_ale_arr.min():.4f}, {sigma_ale_arr.max():.4f}]"
+        )
+        print(
+            f"  [eval σ_epi] mean={sigma_epi_arr.mean():.4f}  std={sigma_epi_arr.std():.4f}  "
+            f"range=[{sigma_epi_arr.min():.4f}, {sigma_epi_arr.max():.4f}]"
         )
         return m
 
@@ -351,6 +383,9 @@ class InstrumentedTrainer(GradientIsolationMixin, HybridCredalCBMTrainer):
             optimizer.step()
             if scheduler is not None:
                 scheduler.step()
+
+            if batch_idx == 0 or (batch_idx + 1) % 50 == 0:
+                self._log_loss_components(outputs, "train", batch_idx)
 
             self._grad_iso_global_step += 1
             total_loss += float(outputs["loss"])

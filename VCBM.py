@@ -40,8 +40,8 @@ class CovarianceFamily(Enum):
 
 
 @dataclass
-class VariationalCredalConfig:
-    """Configuration for Variational Credal CBM"""
+class HybridCredalConfig:
+    """Configuration for Hybrid Credal CBM"""
 
     # Encoder
     encoder_name: str = "distilbert-base-uncased"
@@ -68,6 +68,12 @@ class VariationalCredalConfig:
     kl_weight: float = 1e-5
     concept_weight: float = 0.5
     aleatoric_weight: float = 0.1
+    error_supervision_weight: float = 1.0
+    aleatoric_unknown_weight: float = 0.0
+    orth_weight: float = 0.001
+
+    # AU supervision defaults
+    aleatoric_prior: float = 0.05
 
     # Quadrant thresholds (for routing)
     epistemic_threshold: float = 0.15
@@ -103,6 +109,10 @@ class VariationalCredalConfig:
         if "covariance_family" in filtered and isinstance(filtered["covariance_family"], str):
             filtered["covariance_family"] = CovarianceFamily(filtered["covariance_family"])
         return cls(**filtered)
+
+
+# Backward-compatible alias used throughout the repo.
+VariationalCredalConfig = HybridCredalConfig
 
 
 # ============================================================================
@@ -443,7 +453,7 @@ class AleatoricHead(nn.Module):
     This ensures gradients flow separately, enabling true decomposition
     """
 
-    def __init__(self, hidden_size: int, num_concepts: int, hidden_dim: int = 64):
+    def __init__(self, hidden_size: int, num_concepts: int, hidden_dim: int = 64, prior_mean: float = 0.05):
         super().__init__()
 
         self.net = nn.Sequential(
@@ -455,6 +465,11 @@ class AleatoricHead(nn.Module):
             nn.Linear(hidden_dim, num_concepts),
             nn.Softplus()  # Ensure positive
         )
+
+        final_linear = self.net[-2]
+        if isinstance(final_linear, nn.Linear):
+            nn.init.zeros_(final_linear.weight)
+            nn.init.constant_(final_linear.bias, torch.log(torch.expm1(torch.tensor(prior_mean))).item())
 
     def forward(self, hidden: torch.Tensor) -> torch.Tensor:
         """Returns aleatoric uncertainty [batch, num_concepts]"""
@@ -589,7 +604,8 @@ class VariationalCredalCBM(nn.Module):
         # Aleatoric pathway: Separate network
         self.aleatoric_head = AleatoricHead(
             hidden_size=self.hidden_size,
-            num_concepts=config.num_concepts
+            num_concepts=config.num_concepts,
+            prior_mean=config.aleatoric_prior,
         )
 
         # Concept supervision: K-class classifier
@@ -622,6 +638,7 @@ class VariationalCredalCBM(nn.Module):
         attention_mask: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
         concept_labels: Optional[torch.Tensor] = None,
+        annotator_entropy: Optional[torch.Tensor] = None,
         n_samples: int = None
     ) -> Dict[str, torch.Tensor]:
         """
@@ -699,9 +716,9 @@ class VariationalCredalCBM(nn.Module):
         }
 
         # === LOSSES ===
-        if labels is not None or concept_labels is not None:
+        if labels is not None or concept_labels is not None or annotator_entropy is not None:
             losses = self._compute_losses(
-                result, labels, concept_labels, kl_loss, concept_class_out
+                result, labels, concept_labels, annotator_entropy, kl_loss, concept_class_out
             )
             result.update(losses)
 
@@ -712,6 +729,7 @@ class VariationalCredalCBM(nn.Module):
         result: Dict,
         labels: Optional[torch.Tensor],
         concept_labels: Optional[torch.Tensor],
+        annotator_entropy: Optional[torch.Tensor],
         kl_loss: torch.Tensor,
         concept_class_out: Dict
     ) -> Dict[str, torch.Tensor]:
@@ -729,21 +747,44 @@ class VariationalCredalCBM(nn.Module):
         if concept_class_out.get('loss') is not None:
             losses['concept_loss'] = concept_class_out['loss']
 
-        # Aleatoric supervision
-        if concept_labels is not None:
+        # Error supervision on epistemic uncertainty
+        if labels is not None:
+            task_error = (result['predictions'].detach() != labels).float()
+            losses['error_supervision'] = F.mse_loss(
+                result['sigma_epi'],
+                task_error * self.config.error_scale,
+            )
+
+        # Aleatoric supervision from annotator entropy (H-supervision)
+        if annotator_entropy is not None:
+            losses['aleatoric_loss'] = F.mse_loss(result['aleatoric'], annotator_entropy)
+
+        # Aleatoric supervision from unknown-rate ablation (U-supervision)
+        if self.config.aleatoric_unknown_weight > 0 and concept_labels is not None:
             # Train aleatoric to predict "unknown" probability
-            unknown_ratio = (concept_labels == 1).float()  # unknown_class = 1
-            losses['aleatoric_loss'] = F.mse_loss(result['aleatoric'], unknown_ratio)
+            unknown_mask = (concept_labels == 1)
+            if unknown_mask.any():
+                losses['aleatoric_unknown'] = F.mse_loss(
+                    result['aleatoric'][unknown_mask],
+                    torch.ones_like(result['aleatoric'][unknown_mask])
+                )
 
         # Total loss
         total = losses.get('ce_loss', 0.0)
         total = total + self.config.kl_weight * losses.get('kl_loss', 0.0)
         total = total + self.config.concept_weight * losses.get('concept_loss', 0.0)
         total = total + self.config.aleatoric_weight * losses.get('aleatoric_loss', 0.0)
+        total = total + self.config.error_supervision_weight * losses.get('error_supervision', 0.0)
+        if 'aleatoric_unknown' in losses:
+            total = total + self.config.aleatoric_unknown_weight * losses['aleatoric_unknown']
 
         losses['loss'] = total
 
         return losses
+
+
+# Backward-compatible alias for the hybrid training entrypoints.
+HybridCredalCBM = VariationalCredalCBM
 
 
 # ============================================================================

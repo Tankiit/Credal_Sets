@@ -1,5 +1,5 @@
 """
-Train VariationalCredalCBM on a dataset. Optionally instrument with gradient
+Train a HybridCredalSLVM on a dataset. Optionally instrument with gradient
 isolation probes.
 
 Usage:
@@ -20,9 +20,11 @@ from pathlib import Path
 import torch
 
 from loaders import LOADERS
+from models.cbm_body import CBMBody
+from models.protop_body import ProtoPBody
+from models.senn_body import SENNBody
+from models.slvm_base import HybridCredalSLVM, SLVMConfig
 from training.trainer import HybridCredalCBMTrainer, InstrumentedTrainer
-
-from VCBM import VariationalCredalCBM, VariationalCredalConfig
 
 
 # Per-dataset hyperparameter defaults. Override with CLI flags.
@@ -34,10 +36,44 @@ DATASET_DEFAULTS = {
 }
 
 
+def build_body(model_type: str, config: SLVMConfig):
+    """Factory for SLVM body based on model_type."""
+    if model_type == "cbm":
+        return CBMBody(
+            proj_dim=config.projection_dim,
+            num_concepts=config.num_concepts,
+            num_classes=config.num_classes,
+            hidden_dim=config.hidden_dim,
+        )
+    elif model_type == "senn":
+        return SENNBody(
+            proj_dim=config.projection_dim,
+            num_concepts=config.num_concepts,
+            num_classes=config.num_classes,
+            hidden_dim=config.hidden_dim,
+            stability_weight=2e-4,
+            stability_epsilon=0.01,
+        )
+    elif model_type == "protop":
+        return ProtoPBody(
+            proj_dim=config.projection_dim,
+            num_concepts=config.num_concepts,
+            num_classes=config.num_classes,
+            proto_dim=128,
+            num_protos_per_concept=1,
+            hidden_dim=config.hidden_dim,
+        )
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
+
+
 def main():
-    p = argparse.ArgumentParser(description="Train VariationalCredalCBM.")
+    p = argparse.ArgumentParser(description="Train HybridCredalSLVM.")
     p.add_argument("--dataset", required=True,
                    choices=["cebab", "hatexplain", "goemotions", "sst2"])
+    p.add_argument("--model", type=str, default="cbm",
+                   choices=["cbm", "senn", "protop"],
+                   help="Which SLVM architecture to train.")
     p.add_argument("--encoder", default="distilbert-base-uncased")
     p.add_argument("--epochs", type=int, default=None)
     p.add_argument("--lr", type=float, default=None)
@@ -47,6 +83,12 @@ def main():
                    help="DataLoader worker count. Increase for faster batch loading.")
     p.add_argument("--mc_samples", type=int, default=None,
                    help="MC samples for the variational concept encoder. Lower values are faster.")
+    p.add_argument("--aleatoric_weight", type=float, default=None,
+                   help="Weight on H-supervision (annotator entropy). Default from DATASET_DEFAULTS.")
+    p.add_argument("--aleatoric_unknown_weight", type=float, default=0.0,
+                   help="Weight on U-supervision (unknown-rate). Default 0 (main text).")
+    p.add_argument("--aleatoric_prior", type=float, default=None,
+                   help="AleatoricHead prior mean. Default 0.05.")
 
     p.add_argument("--grad_iso", action="store_true",
                    help="Log per-step gradient isolation records.")
@@ -95,33 +137,38 @@ def main():
           f"concepts={bundle.num_concepts}  classes={bundle.num_classes}")
 
     # Build model
-    cfg = VariationalCredalConfig(
+    config = SLVMConfig(
         encoder_name=args.encoder,
         freeze_encoder=(not args.unfreeze),
         num_concepts=bundle.num_concepts,
         concept_names=list(bundle.concept_names),
         num_classes=bundle.num_classes,
         prior_sigma=defaults["prior_sigma"],
+        aleatoric_weight=(args.aleatoric_weight if args.aleatoric_weight is not None else 2.0),
+        aleatoric_unknown_weight=args.aleatoric_unknown_weight,
+        aleatoric_prior=(args.aleatoric_prior if args.aleatoric_prior is not None else 0.05),
+        model_type=args.model,
     )
     if args.mc_samples is not None:
-        cfg.num_mc_samples = args.mc_samples
-    model = VariationalCredalCBM(cfg)
+        config.num_mc_samples = args.mc_samples
+    body = build_body(args.model, config)
+    model = HybridCredalSLVM(config, body)
 
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())
     print(f"[model] {total:,} params ({trainable:,} trainable, "
-          f"freeze_encoder={cfg.freeze_encoder})")
+          f"freeze_encoder={config.freeze_encoder})")
 
     # Save dir
     if args.save_dir is None:
         tag = "unfrozen" if args.unfreeze else "frozen"
-        args.save_dir = Path(f"checkpoints/hybrid_credal_{args.dataset}_{tag}")
+        args.save_dir = Path(f"checkpoints/hybrid_credal_{args.model}_{args.dataset}_{tag}")
 
     # Trainer
     TrainerCls = InstrumentedTrainer if args.grad_iso else HybridCredalCBMTrainer
     trainer = TrainerCls(
         model=model,
-        config=cfg,
+        config=config,
         bundle=bundle,
         device=args.device,
         save_dir=args.save_dir,

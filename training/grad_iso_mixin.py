@@ -14,7 +14,7 @@ from typing import Dict, List, Optional
 import torch
 
 
-EU_LOSS_KEYS_DEFAULT: List[str] = ["ce_loss", "kl_loss", "concept_loss"]
+EU_LOSS_KEYS_DEFAULT: List[str] = ["ce_loss", "kl_loss", "concept_loss", "task_loss", "credal_kl", "concept_bce"]
 AU_LOSS_KEYS_DEFAULT: List[str] = ["aleatoric_loss"]
 
 
@@ -75,9 +75,30 @@ class GradientIsolationMixin:
         if hasattr(m, "encoder"):
             self._encoder_params = [p for p in m.encoder.parameters() if p.requires_grad]
 
-        self._concept_encoder_params = list(m.concept_encoder.parameters()) if hasattr(m, "concept_encoder") else []
-        self._concept_classifier_params = list(m.concept_classifier.parameters()) if hasattr(m, "concept_classifier") else []
-        self._task_classifier_params = list(m.task_classifier.parameters()) if hasattr(m, "task_classifier") else []
+        if hasattr(m, "concept_encoder"):
+            self._concept_encoder_params = list(m.concept_encoder.parameters())
+        elif hasattr(m, "body") and hasattr(m.body, "concept_net"):
+            self._concept_encoder_params = list(m.body.concept_net.parameters())
+        else:
+            self._concept_encoder_params = []
+
+        if hasattr(m, "concept_classifier"):
+            self._concept_classifier_params = list(m.concept_classifier.parameters())
+        elif hasattr(m, "body") and hasattr(m.body, "relevance_net"):
+            self._concept_classifier_params = list(m.body.relevance_net.parameters())
+        elif hasattr(m, "body") and hasattr(m.body, "task_classifier"):
+            self._concept_classifier_params = list(m.body.task_classifier.parameters())
+        else:
+            self._concept_classifier_params = []
+
+        if hasattr(m, "task_classifier"):
+            self._task_classifier_params = list(m.task_classifier.parameters())
+        elif hasattr(m, "body") and hasattr(m.body, "task_classifier"):
+            self._task_classifier_params = list(m.body.task_classifier.parameters())
+        elif hasattr(m, "body") and hasattr(m.body, "relevance_net"):
+            self._task_classifier_params = list(m.body.relevance_net.parameters())
+        else:
+            self._task_classifier_params = []
         self._aleatoric_head_params = list(m.aleatoric_head.parameters()) if hasattr(m, "aleatoric_head") else []
 
         self._grad_iso_ready = True

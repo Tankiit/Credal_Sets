@@ -286,13 +286,33 @@ class HybridCredalCBMTrainer:
         self.best_val_acc = 0.0
         self.current_epoch = 0
 
+    def _log_loss_components(self, outputs: dict, phase: str, step: int) -> None:
+        """Per-component loss breakdown; emitted at first step and every 50 steps."""
+        components = {
+            "loss": ("loss",),
+            "task_loss": ("task_loss", "ce_loss"),
+            "concept_bce": ("concept_bce", "concept_loss"),
+            "error_supervision": ("error_supervision",),
+            "credal_kl": ("credal_kl", "kl_loss"),
+            "aleatoric_loss": ("aleatoric_loss",),
+            "aleatoric_unknown": ("aleatoric_unknown",),
+        }
+        parts = []
+        for label, aliases in components.items():
+            for key in aliases:
+                if key in outputs:
+                    parts.append(f"{label}={float(outputs[key]):.4f}")
+                    break
+        if parts:
+            print(f"  [{phase} step {step}] " + "  ".join(parts))
+
     def train_epoch(self, train_loader, optimizer, scheduler=None, **kwargs):
         """Single training epoch."""
         self.model.train()
         total_loss = 0.0
         all_preds, all_labels = [], []
 
-        for batch in tqdm(train_loader, desc=f"Epoch {self.current_epoch} [Train]"):
+        for batch_idx, batch in enumerate(tqdm(train_loader, desc=f"Epoch {self.current_epoch} [Train]")):
             input_ids = batch['input_ids'].to(self.device)
             attention_mask = batch['attention_mask'].to(self.device)
             labels = batch['labels'].to(self.device)
@@ -316,6 +336,9 @@ class HybridCredalCBMTrainer:
             optimizer.step()
             if scheduler:
                 scheduler.step()
+
+            if batch_idx == 0 or (batch_idx + 1) % 50 == 0:
+                self._log_loss_components(outputs, "train", batch_idx)
 
             total_loss += loss.item()
             all_preds.extend(outputs['predictions'].cpu().numpy())
@@ -398,6 +421,15 @@ class HybridCredalCBMTrainer:
         metrics.p_eu_error = p_eu_err
         metrics.rho_ale_entropy = rho_ale_ent
         metrics.p_ale_entropy = p_ale_ent
+
+        print(
+            f"  [eval σ_ale] mean={all_aleatoric.mean():.4f}  std={all_aleatoric.std():.4f}  "
+            f"range=[{all_aleatoric.min():.4f}, {all_aleatoric.max():.4f}]"
+        )
+        print(
+            f"  [eval σ_epi] mean={all_sigma_epi.mean():.4f}  std={all_sigma_epi.std():.4f}  "
+            f"range=[{all_sigma_epi.min():.4f}, {all_sigma_epi.max():.4f}]"
+        )
 
         return metrics
 
@@ -598,6 +630,14 @@ def main():
     parser.add_argument('--quantization', type=str, default='none', choices=['none', '4bit', '8bit'])
     parser.add_argument('--loss_version', type=str, default='v7b',
                        choices=['v3', 'v4', 'v5', 'v6', 'v7b'])
+    parser.add_argument('--aleatoric_weight', type=float, default=None,
+                       help='Weight on H-supervision (annotator entropy). Default from dataset config.')
+    parser.add_argument('--aleatoric_unknown_weight', type=float, default=0.0,
+                       help='Weight on U-supervision (unknown-rate). Default 0 (main text).')
+    parser.add_argument('--aleatoric_prior', type=float, default=None,
+                       help='AleatoricHead prior mean. Default 0.05.')
+    parser.add_argument('--unfreeze', action='store_true',
+                       help='Train with the encoder unfrozen.')
     args = parser.parse_args()
 
     config = DATASET_CONFIGS[args.dataset]
@@ -798,12 +838,15 @@ def main():
     # Create model
     model_config = HybridCredalConfig(
         encoder_name=encoder_name,
-        freeze_encoder=True,
+        freeze_encoder=(not args.unfreeze),
         num_concepts=config['num_concepts'],
         concept_names=config['concept_names'],
         num_classes=config['num_classes'],
         prior_sigma=config['prior_sigma'],
         error_scale=config['error_scale'],
+        aleatoric_weight=(args.aleatoric_weight if args.aleatoric_weight is not None else 2.0),
+        aleatoric_unknown_weight=args.aleatoric_unknown_weight,
+        aleatoric_prior=(args.aleatoric_prior if args.aleatoric_prior is not None else 0.05),
     )
     model = HybridCredalCBM(model_config)
 
