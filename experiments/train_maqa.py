@@ -1,5 +1,5 @@
 """
-Train a credal QA model on MAQA/AmbigQA-style datasets.
+GPU training entry-point for MAQA / AmbigQA.
 """
 from __future__ import annotations
 
@@ -7,84 +7,144 @@ import argparse
 import json
 from pathlib import Path
 
+import numpy as np
 import torch
+from torch.utils.data import DataLoader
 from transformers import AutoModel, AutoTokenizer
 
-from load_ambigqa_dataset import load_combined_maqa_ambigqa
-from maqa_credal_model import CredalMAQA, MAQADataset, MAQACredalTrainer, maqa_collate_fn
-
-
-DEFAULTS = {
-    "ambigqa": {"batch_size": 16, "max_length": 256, "epochs": 10, "lr": 1e-4},
-    "maqa": {"batch_size": 16, "max_length": 256, "epochs": 10, "lr": 1e-4},
-}
-
-
-def _build_loaders(raw_splits, tokenizer, batch_size: int, max_length: int, num_workers: int):
-    from torch.utils.data import DataLoader
-
-    train_dataset = MAQADataset(raw_splits["train"], tokenizer, max_length=max_length, use_paired=True)
-    val_key = "validation" if "validation" in raw_splits else "val" if "val" in raw_splits else "train"
-    test_key = "test" if "test" in raw_splits else val_key
-    val_dataset = MAQADataset(raw_splits[val_key], tokenizer, max_length=max_length, use_paired=False)
-    test_dataset = MAQADataset(raw_splits[test_key], tokenizer, max_length=max_length, use_paired=False)
-
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=maqa_collate_fn)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=maqa_collate_fn)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=maqa_collate_fn)
-    return train_loader, val_loader, test_loader
+from loaders.maqa_preprocess import load_maqa_direct
+from models.maqa_credal_model import (
+    MAQADataset,
+    CredalMAQA,
+    MAQACredalLoss,
+    MAQACredalTrainer,
+    maqa_collate_fn,
+)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train a credal QA model.")
-    parser.add_argument("--dataset", choices=["ambigqa", "maqa"], default="ambigqa")
-    parser.add_argument("--hf_dataset", default="ttomov/ambigqa_star")
-    parser.add_argument("--encoder", default="distilbert-base-uncased")
-    parser.add_argument("--epochs", type=int, default=None)
-    parser.add_argument("--lr", type=float, default=None)
-    parser.add_argument("--batch_size", type=int, default=None)
-    parser.add_argument("--max_length", type=int, default=None)
-    parser.add_argument("--num_workers", type=int, default=0)
-    parser.add_argument("--device", default="auto", choices=["auto", "cuda", "mps", "cpu"])
-    parser.add_argument("--save_dir", type=Path, default=None)
-    parser.add_argument("--eval_dump_dir", type=Path, default=None)
-    parser.add_argument("--eval_every", type=int, default=1)
-    parser.add_argument("--seed", type=int, default=42)
-    args = parser.parse_args()
-
-    defaults = DEFAULTS[args.dataset]
-    batch_size = args.batch_size or defaults["batch_size"]
-    max_length = args.max_length or defaults["max_length"]
-    epochs = args.epochs or defaults["epochs"]
-    lr = args.lr or defaults["lr"]
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dataset", default="maqa")
+    ap.add_argument("--hf_dataset", default="ttomov/ambigqa_star")
+    ap.add_argument("--encoder", default="distilbert-base-uncased")
+    ap.add_argument("--epochs", type=int, default=50)
+    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--device", default="cuda")
+    ap.add_argument("--eval_every", type=int, default=1)
+    ap.add_argument("--num_workers", type=int, default=4)
+    ap.add_argument("--save_dir", required=True)
+    ap.add_argument("--eval_dump_dir", required=True)
+    ap.add_argument("--batch_size", type=int, default=32)
+    ap.add_argument("--max_length", type=int, default=128)
+    ap.add_argument("--use_paired", action="store_true")
+    args = ap.parse_args()
 
     torch.manual_seed(args.seed)
-    raw_splits = load_combined_maqa_ambigqa(dataset_name=args.hf_dataset)
+    np.random.seed(args.seed)
+
+    save_dir = Path(args.save_dir)
+    eval_dump_dir = Path(args.eval_dump_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    eval_dump_dir.mkdir(parents=True, exist_ok=True)
+
+    train_raw = load_maqa_direct(args.hf_dataset, split="train")
+    val_raw = load_maqa_direct(args.hf_dataset, split="validation")
+    test_raw = load_maqa_direct(args.hf_dataset, split="test")
+
     tokenizer = AutoTokenizer.from_pretrained(args.encoder, use_fast=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    train_loader, val_loader, test_loader = _build_loaders(raw_splits, tokenizer, batch_size, max_length, args.num_workers)
+
+    train_ds = MAQADataset(train_raw, tokenizer, args.max_length, use_paired=args.use_paired)
+    val_ds = MAQADataset(val_raw, tokenizer, args.max_length, use_paired=args.use_paired)
+    test_ds = MAQADataset(test_raw, tokenizer, args.max_length, use_paired=False)
+
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        collate_fn=maqa_collate_fn,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        collate_fn=maqa_collate_fn,
+    )
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        collate_fn=maqa_collate_fn,
+    )
 
     encoder = AutoModel.from_pretrained(args.encoder)
-    hidden_size = encoder.config.hidden_size
-    max_answers = max(
-        max((len(item["p_star"]) for item in raw_splits["train"]), default=0),
-        max((len(item["p_star"]) for item in raw_splits.get("validation", raw_splits["train"])), default=0),
-        max((len(item["p_star"]) for item in raw_splits.get("test", raw_splits["train"])), default=0),
+    model = CredalMAQA(
+        encoder=encoder,
+        hidden_size=encoder.config.hidden_size,
+        num_answers=10,
     )
-    model = CredalMAQA(encoder=encoder, hidden_size=hidden_size, num_answers=max(1, max_answers))
-    save_dir = args.save_dir or Path(f"checkpoints/{args.dataset}_credal")
-    trainer = MAQACredalTrainer(model, train_loader, val_loader, device=args.device, learning_rate=lr)
-    trainer.fit(num_epochs=epochs, save_dir=save_dir, eval_every=args.eval_every)
+    trainer = MAQACredalTrainer(
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        device=args.device,
+    )
+    trainer.criterion = MAQACredalLoss(
+        alpha_kl=1.0,
+        alpha_reg=0.0,
+        alpha_cal=1.0,
+        alpha_cont=0.0,
+    )
 
-    ckpt = torch.load(save_dir / "best_model.pt", map_location=trainer.device, weights_only=False)
-    trainer.model.load_state_dict(ckpt["model_state_dict"])
+    history = []
+    best_val_loss = float("inf")
+    for epoch in range(1, args.epochs + 1):
+        train_metrics = trainer.train_epoch()
+        record = {"epoch": epoch, "split": "train", **train_metrics}
+        history.append(record)
+        print(f"[epoch {epoch}] train: {record}")
+
+        if epoch % args.eval_every == 0:
+            val_metrics = trainer.evaluate(val_loader)
+            history.append({"epoch": epoch, "split": "val", **val_metrics})
+            print(f"[epoch {epoch}] val:   {val_metrics}")
+            if val_metrics["loss"] < best_val_loss:
+                best_val_loss = val_metrics["loss"]
+                torch.save(model.state_dict(), save_dir / "best.pt")
+
     test_metrics = trainer.evaluate(test_loader)
-    dump_dir = args.eval_dump_dir or (save_dir / "eval_dumps")
-    trainer.dump_eval_arrays(test_loader, dump_dir)
-    with (save_dir / "test_metrics.json").open("w") as f:
-        json.dump(test_metrics, f, indent=2, default=float)
-    print(test_metrics)
+    print(f"[test] {test_metrics}")
+
+    with (save_dir / "history.json").open("w") as f:
+        json.dump(history, f, indent=2)
+
+    with (eval_dump_dir / "test_metrics.json").open("w") as f:
+        json.dump(test_metrics, f, indent=2)
+
+    trainer.model.eval()
+    sig_epi, sig_ale, ent_gt = [], [], []
+    with torch.no_grad():
+        for batch in test_loader:
+            b = {k: v.to(args.device) for k, v in batch.items()}
+            if "amb" in b:
+                b = b["amb"]
+            params = trainer.model(b["input_ids"], b["attention_mask"])
+            sig_epi.append(params.sigma_epi.cpu().numpy())
+            sig_ale.append(params.sigma_ale.cpu().numpy())
+            ent_gt.append(b["entropy"].cpu().numpy())
+
+    np.savez(
+        eval_dump_dir / "test_arrays.npz",
+        sigma_epi=np.concatenate(sig_epi),
+        sigma_ale=np.concatenate(sig_ale),
+        entropy_gt=np.concatenate(ent_gt),
+    )
+
+    print(f"[done] saved to {save_dir} and {eval_dump_dir}")
 
 
 if __name__ == "__main__":
