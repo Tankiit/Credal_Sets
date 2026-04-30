@@ -346,7 +346,8 @@ def get_hatexplain_dataloaders(
     batch_size: int = 16,
     max_length: int = 128,
     save_dir: str = "./data/hatexplain",
-    num_workers: int = 4
+    num_workers: int = 4,
+    subset_fraction: float = 1.0,
 ):
     """
     Get PyTorch DataLoaders for HateXplain.
@@ -358,10 +359,17 @@ def get_hatexplain_dataloaders(
 
     # Load data
     processed_data = load_hatexplain_direct(save_dir)
+    train_data = processed_data["train"]
+    if subset_fraction < 1.0:
+        import random
+        subset_size = max(1, int(len(train_data) * subset_fraction))
+        random.shuffle(train_data)
+        train_data = train_data[:subset_size]
+        print(f"  Using subset of {subset_size} samples from training set")
 
     # Create datasets
     train_dataset = DirectHateXplainDataset(
-        processed_data["train"], tokenizer, max_length
+        train_data, tokenizer, max_length
     )
     val_dataset = DirectHateXplainDataset(
         processed_data["validation"], tokenizer, max_length

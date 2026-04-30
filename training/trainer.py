@@ -94,6 +94,73 @@ class HybridCredalCBMTrainer:
         if getattr(self, "logger", None) is not None and self.logger.enabled:
             self.logger.log_metrics(metrics, step=step, prefix=prefix)
 
+    def _empty_concept_counts(self) -> tuple[torch.Tensor, torch.Tensor]:
+        correct = torch.zeros(self.bundle.num_concepts, dtype=torch.long)
+        total = torch.zeros(self.bundle.num_concepts, dtype=torch.long)
+        return correct, total
+
+    def _update_concept_counts(
+        self,
+        outputs: Dict,
+        inputs: Dict,
+        correct: torch.Tensor,
+        total: torch.Tensor,
+    ) -> None:
+        concept_labels = inputs.get("concept_labels")
+        concept_probs = outputs.get("concept_probs")
+        if concept_labels is None or concept_probs is None:
+            return
+        if concept_labels.numel() == 0 or concept_probs.shape != concept_labels.shape:
+            return
+
+        known = concept_labels != 1
+        if not known.any():
+            return
+
+        targets = concept_labels == 2
+        preds = concept_probs.detach() > 0.5
+        batch_correct = (preds == targets) & known
+
+        correct += batch_correct.sum(dim=0).cpu()
+        total += known.sum(dim=0).cpu()
+
+    def _concept_metrics(
+        self,
+        correct: torch.Tensor,
+        total: torch.Tensor,
+        dataset_size: int,
+    ) -> tuple[Dict[str, float], float, float]:
+        concept_accs = {}
+        valid = total > 0
+        for idx, name in enumerate(self.bundle.concept_names):
+            if idx >= len(total):
+                break
+            if total[idx] > 0:
+                concept_accs[name] = float(correct[idx].item() / total[idx].item())
+
+        mean_acc = 0.0
+        if valid.any():
+            mean_acc = float((correct[valid].float() / total[valid].float()).mean().item())
+
+        coverage = 0.0
+        if total.numel() > 0:
+            coverage = float(total.sum().item() / max(1, total.numel() * dataset_size))
+
+        return concept_accs, mean_acc, coverage
+
+    @staticmethod
+    def _normalize_annotator_entropy(
+        annotator_entropy: torch.Tensor,
+        concept_labels: torch.Tensor | None,
+    ) -> torch.Tensor:
+        if concept_labels is None:
+            return annotator_entropy
+        if annotator_entropy.dim() == 1 and concept_labels.dim() == 2:
+            return annotator_entropy.unsqueeze(-1).expand_as(concept_labels)
+        if annotator_entropy.shape != concept_labels.shape:
+            return annotator_entropy.reshape_as(concept_labels)
+        return annotator_entropy
+
     def close(self) -> None:
         if getattr(self, "logger", None) is not None:
             self.logger.close()
@@ -115,6 +182,7 @@ class HybridCredalCBMTrainer:
         total_loss = 0.0
         correct = 0
         total = 0
+        concept_correct, concept_total = self._empty_concept_counts()
 
         pbar = tqdm(train_loader, desc=f"Epoch {self.current_epoch} [Train]")
         for batch_idx, batch in enumerate(pbar):
@@ -137,11 +205,18 @@ class HybridCredalCBMTrainer:
             labels = inputs["labels"].detach()
             correct += int((preds == labels).sum().item())
             total += int(labels.numel())
+            self._update_concept_counts(outputs, inputs, concept_correct, concept_total)
             pbar.set_postfix({"loss": float(loss)})
 
+        concept_accs, mean_concept_acc, _ = self._concept_metrics(
+            concept_correct, concept_total, total
+        )
         return {
             "loss": total_loss / max(1, len(train_loader)),
+            "task_accuracy": float(correct / max(1, total)),
             "accuracy": float(correct / max(1, total)),
+            "concept_accs": concept_accs,
+            "mean_concept_accuracy": mean_concept_acc,
         }
 
     # ----------------------------------------------------------------------
@@ -155,6 +230,7 @@ class HybridCredalCBMTrainer:
         all_eu, all_au = [], []
         all_entropy = []
         total_loss = 0.0
+        concept_correct, concept_total = self._empty_concept_counts()
 
         for batch in tqdm(loader, desc=f"Epoch {self.current_epoch} [Val]"):
             inputs = self._batch_to_device(batch)
@@ -168,7 +244,12 @@ class HybridCredalCBMTrainer:
             all_eu.append(outputs["epistemic"].cpu().numpy())
             all_au.append(outputs["aleatoric"].cpu().numpy())
             if "annotator_entropy" in inputs:
-                all_entropy.append(inputs["annotator_entropy"].cpu().numpy())
+                entropy = self._normalize_annotator_entropy(
+                    inputs["annotator_entropy"],
+                    inputs.get("concept_labels"),
+                )
+                all_entropy.append(entropy.cpu().numpy())
+            self._update_concept_counts(outputs, inputs, concept_correct, concept_total)
 
         preds_arr = np.array(all_preds)
         labels_arr = np.array(all_labels)
@@ -183,9 +264,14 @@ class HybridCredalCBMTrainer:
 
         eu_sample = eu_arr.mean(axis=-1) if eu_arr.ndim > 1 else eu_arr
         au_sample = au_arr.mean(axis=-1) if au_arr.ndim > 1 else au_arr
+        task_accuracy = float((preds_arr == labels_arr).mean())
+        concept_accs, mean_concept_acc, concept_coverage = self._concept_metrics(
+            concept_correct, concept_total, labels_arr.shape[0]
+        )
 
         m = UncertaintyMetrics(
-            accuracy=float((preds_arr == labels_arr).mean()),
+            accuracy=task_accuracy,
+            task_accuracy=task_accuracy,
             loss=total_loss / max(1, len(loader)),
             mean_sigma_epi=float(sigma_epi_arr.mean()),
             std_sigma_epi=float(sigma_epi_arr.std()),
@@ -198,6 +284,9 @@ class HybridCredalCBMTrainer:
             rho_eu_au=corr["rho_eu_au"], p_eu_au=corr["p_eu_au"],
             rho_eu_error=corr["rho_eu_error"], p_eu_error=corr["p_eu_error"],
             rho_ale_entropy=corr["rho_ale_entropy"], p_ale_entropy=corr["p_ale_entropy"],
+            concept_accs=concept_accs,
+            mean_concept_accuracy=mean_concept_acc,
+            concept_coverage=concept_coverage,
         )
 
         print(
@@ -210,6 +299,77 @@ class HybridCredalCBMTrainer:
         )
         return m
 
+    @torch.inference_mode()
+    def dump_eval_arrays(self, loader, dump_dir: str | Path) -> None:
+        """Persist raw test-time arrays for downstream plotting/diagnostics."""
+        self.model.eval()
+        dump_dir = Path(dump_dir)
+        dump_dir.mkdir(parents=True, exist_ok=True)
+
+        arrays = {
+            "y_true": [],
+            "y_pred": [],
+            "sigma_epi": [],
+            "sigma_ale": [],
+            "epistemic": [],
+            "aleatoric": [],
+            "concept_probs": [],
+            "concept_labels": [],
+            "annotator_entropy": [],
+        }
+
+        for batch in tqdm(loader, desc=f"Epoch {self.current_epoch} [Dump]"):
+            inputs = self._batch_to_device(batch)
+            outputs = self.model(**self._forward_inputs(inputs))
+
+            arrays["y_true"].append(inputs["labels"].cpu().numpy())
+            arrays["y_pred"].append(outputs["predictions"].cpu().numpy())
+            arrays["sigma_epi"].append(outputs["sigma_epi"].cpu().numpy())
+            arrays["sigma_ale"].append(outputs["aleatoric"].cpu().numpy())
+            arrays["epistemic"].append(outputs["epistemic"].cpu().numpy())
+            arrays["aleatoric"].append(outputs["aleatoric"].cpu().numpy())
+            if "concept_probs" in outputs:
+                arrays["concept_probs"].append(outputs["concept_probs"].cpu().numpy())
+            if "concept_labels" in inputs:
+                arrays["concept_labels"].append(inputs["concept_labels"].cpu().numpy())
+            if "annotator_entropy" in inputs:
+                entropy = self._normalize_annotator_entropy(
+                    inputs["annotator_entropy"],
+                    inputs.get("concept_labels"),
+                )
+                arrays["annotator_entropy"].append(entropy.cpu().numpy())
+
+        packed = {
+            key: np.concatenate(values, axis=0)
+            for key, values in arrays.items()
+            if values
+        }
+        eu = packed["epistemic"].mean(axis=-1) if packed["epistemic"].ndim > 1 else packed["epistemic"]
+        au = packed["aleatoric"].mean(axis=-1) if packed["aleatoric"].ndim > 1 else packed["aleatoric"]
+        packed["quadrant_assignments"] = (
+            (eu >= np.median(eu)).astype(np.int64) * 2
+            + (au >= np.median(au)).astype(np.int64)
+        )
+
+        np.savez_compressed(dump_dir / "test_arrays.npz", **packed)
+        with (dump_dir / "metadata.json").open("w") as f:
+            json.dump(
+                {
+                    "dataset": self.bundle.name,
+                    "num_concepts": self.bundle.num_concepts,
+                    "concept_names": list(self.bundle.concept_names),
+                    "num_classes": self.bundle.num_classes,
+                    "quadrant_encoding": {
+                        "0": "low_epistemic_low_aleatoric",
+                        "1": "low_epistemic_high_aleatoric",
+                        "2": "high_epistemic_low_aleatoric",
+                        "3": "high_epistemic_high_aleatoric",
+                    },
+                },
+                f,
+                indent=2,
+            )
+
     # ----------------------------------------------------------------------
     def fit(
         self,
@@ -218,8 +378,12 @@ class HybridCredalCBMTrainer:
         weight_decay: float = 0.01,
         warmup_steps: int = 100,
         save_every: int = 5,
+        eval_every: int = 1,
     ) -> Dict:
         """Full training loop. Saves best by val accuracy."""
+        if eval_every < 1:
+            raise ValueError("eval_every must be >= 1")
+
         optimizer = optim.AdamW(
             [p for p in self.model.parameters() if p.requires_grad],
             lr=lr, weight_decay=weight_decay,
@@ -252,6 +416,7 @@ class HybridCredalCBMTrainer:
                 "weight_decay": weight_decay,
                 "warmup_steps": warmup_steps,
                 "save_every": save_every,
+                "eval_every": eval_every,
             },
         })
 
@@ -266,6 +431,7 @@ class HybridCredalCBMTrainer:
                 "optimizer/weight_decay": weight_decay,
                 "scheduler/warmup_steps": warmup_steps,
                 "training/num_epochs": num_epochs,
+                "training/eval_every": eval_every,
             },
             step=0,
         )
@@ -273,26 +439,40 @@ class HybridCredalCBMTrainer:
         for epoch in range(1, num_epochs + 1):
             self.current_epoch = epoch
             train_metrics = self.train_epoch(self.bundle.train_loader, optimizer, scheduler)
-            val_metrics = self.evaluate(self.bundle.val_loader)
+            should_eval = epoch % eval_every == 0 or epoch == num_epochs
+            val_metrics = self.evaluate(self.bundle.val_loader) if should_eval else None
 
-            print(f"\nEpoch {epoch}: "
-                  f"train_loss={train_metrics['loss']:.4f}  "
-                  f"val_acc={val_metrics.accuracy:.4f}  "
-                  f"ρ(EU,AU)={val_metrics.rho_eu_au:+.3f}  "
-                  f"ρ(σ_epi,err)={val_metrics.rho_eu_error:+.3f}  "
-                  f"ρ(σ_ale,H)={val_metrics.rho_ale_entropy:+.3f}")
+            if val_metrics is None:
+                print(f"\nEpoch {epoch}: "
+                      f"train_loss={train_metrics['loss']:.4f}  "
+                      f"train_task_acc={train_metrics['task_accuracy']:.4f}  "
+                      f"train_concept_acc={train_metrics['mean_concept_accuracy']:.4f}  "
+                      f"val=skipped")
+            else:
+                print(f"\nEpoch {epoch}: "
+                      f"train_loss={train_metrics['loss']:.4f}  "
+                      f"train_task_acc={train_metrics['task_accuracy']:.4f}  "
+                      f"train_concept_acc={train_metrics['mean_concept_accuracy']:.4f}  "
+                      f"val_task_acc={val_metrics.task_accuracy:.4f}  "
+                      f"val_concept_acc={val_metrics.mean_concept_accuracy:.4f}  "
+                      f"ρ(EU,AU)={val_metrics.rho_eu_au:+.3f}  "
+                      f"ρ(σ_epi,err)={val_metrics.rho_eu_error:+.3f}  "
+                      f"ρ(σ_ale,H)={val_metrics.rho_ale_entropy:+.3f}")
 
             history.append({
                 "epoch": epoch,
                 "train": train_metrics,
-                "val": val_metrics.to_dict(),
+                "val": val_metrics.to_dict() if val_metrics is not None else None,
                 "timestamp": datetime.now().isoformat(),
             })
 
-            self._log_metrics({"train": train_metrics, "val": val_metrics.to_dict()}, step=epoch)
+            log_payload = {"train": train_metrics}
+            if val_metrics is not None:
+                log_payload["val"] = val_metrics.to_dict()
+            self._log_metrics(log_payload, step=epoch)
 
-            if val_metrics.accuracy > self.best_val_acc:
-                self.best_val_acc = val_metrics.accuracy
+            if val_metrics is not None and val_metrics.task_accuracy > self.best_val_acc:
+                self.best_val_acc = val_metrics.task_accuracy
                 best_metrics = val_metrics
                 torch.save({
                     "epoch": epoch,
@@ -301,10 +481,11 @@ class HybridCredalCBMTrainer:
                     "metrics": val_metrics.to_dict(),
                     "dataset": self.bundle.name,
                 }, self.save_dir / "best_model.pt")
-                print(f"  ✓ new best (acc={val_metrics.accuracy:.4f})")
-                self._log_metrics({"val_accuracy": self.best_val_acc}, step=epoch, prefix="best/")
+                print(f"  ✓ new best (task_acc={val_metrics.task_accuracy:.4f}, "
+                      f"concept_acc={val_metrics.mean_concept_accuracy:.4f})")
+                self._log_metrics({"val_task_accuracy": self.best_val_acc}, step=epoch, prefix="best/")
 
-            if epoch % save_every == 0:
+            if save_every > 0 and epoch % save_every == 0:
                 torch.save({
                     "epoch": epoch,
                     "model_state_dict": self.model.state_dict(),
@@ -360,6 +541,7 @@ class InstrumentedTrainer(GradientIsolationMixin, HybridCredalCBMTrainer):
         total_loss = 0.0
         correct = 0
         total = 0
+        concept_correct, concept_total = self._empty_concept_counts()
 
         pbar = tqdm(train_loader,
                     desc=f"Epoch {self.current_epoch} [Train+GradIso]")
@@ -393,9 +575,16 @@ class InstrumentedTrainer(GradientIsolationMixin, HybridCredalCBMTrainer):
             labels = model_inputs["labels"].detach()
             correct += int((preds == labels).sum().item())
             total += int(labels.numel())
+            self._update_concept_counts(outputs, inputs, concept_correct, concept_total)
             pbar.set_postfix({"loss": float(outputs["loss"])})
 
+        concept_accs, mean_concept_acc, _ = self._concept_metrics(
+            concept_correct, concept_total, total
+        )
         return {
             "loss": total_loss / max(1, len(train_loader)),
+            "task_accuracy": float(correct / max(1, total)),
             "accuracy": float(correct / max(1, total)),
+            "concept_accs": concept_accs,
+            "mean_concept_accuracy": mean_concept_acc,
         }

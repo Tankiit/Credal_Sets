@@ -79,6 +79,10 @@ def main():
     p.add_argument("--lr", type=float, default=None)
     p.add_argument("--batch_size", type=int, default=None)
     p.add_argument("--max_length", type=int, default=None)
+    p.add_argument("--eval_every", type=int, default=1,
+                   help="Run full validation every N epochs. Higher values speed up long runs.")
+    p.add_argument("--save_every", type=int, default=5,
+                   help="Save periodic checkpoints every N epochs. Use 0 to keep only best_model.pt.")
     p.add_argument("--num_workers", type=int, default=None,
                    help="DataLoader worker count. Increase for faster batch loading.")
     p.add_argument("--mc_samples", type=int, default=None,
@@ -89,6 +93,12 @@ def main():
                    help="Weight on U-supervision (unknown-rate). Default 0 (main text).")
     p.add_argument("--aleatoric_prior", type=float, default=None,
                    help="AleatoricHead prior mean. Default 0.05.")
+    p.add_argument("--kl_weight", type=float, default=None,
+                   help="Weight on the credal KL regularizer.")
+    p.add_argument("--eval_dump_dir", type=Path, default=None,
+                   help="If set, dump test arrays and eval metadata here.")
+    p.add_argument("--train_fraction", type=float, default=1.0,
+                   help="Fraction of training data to use for data-scaling tests.")
 
     p.add_argument("--grad_iso", action="store_true",
                    help="Log per-step gradient isolation records.")
@@ -115,6 +125,8 @@ def main():
                    help="Default: checkpoints/hybrid_credal_<dataset>[_unfrozen].")
     p.add_argument("--seed", type=int, default=42)
     args = p.parse_args()
+    if not (0.0 < args.train_fraction <= 1.0):
+        raise ValueError("--train_fraction must be in (0, 1].")
 
     # Resolve hyperparameters
     defaults = DATASET_DEFAULTS[args.dataset]
@@ -131,6 +143,7 @@ def main():
         batch_size=batch_size,
         max_length=max_length,
         num_workers=args.num_workers if args.num_workers is not None else 0,
+        subset_fraction=args.train_fraction,
     )
     print(f"[bundle] {bundle.name}: "
           f"train={bundle.train_size} val={bundle.val_size} test={bundle.test_size}  "
@@ -147,6 +160,7 @@ def main():
         aleatoric_weight=(args.aleatoric_weight if args.aleatoric_weight is not None else 2.0),
         aleatoric_unknown_weight=args.aleatoric_unknown_weight,
         aleatoric_prior=(args.aleatoric_prior if args.aleatoric_prior is not None else 0.05),
+        kl_weight=(args.kl_weight if args.kl_weight is not None else 0.01),
         model_type=args.model,
     )
     if args.mc_samples is not None:
@@ -181,7 +195,7 @@ def main():
     )
 
     # Train
-    trainer.fit(num_epochs=epochs, lr=lr)
+    trainer.fit(num_epochs=epochs, lr=lr, eval_every=args.eval_every, save_every=args.save_every)
 
     # Final test
     print("\n[test] evaluating best checkpoint on test split...")
@@ -189,16 +203,20 @@ def main():
                       map_location=trainer.device, weights_only=False)
     trainer.model.load_state_dict(ckpt["model_state_dict"])
     test_metrics = trainer.evaluate(bundle.test_loader)
-    print(f"  test acc:      {test_metrics.accuracy:.4f}")
-    print(f"  ρ(EU, AU):     {test_metrics.rho_eu_au:+.3f}")
-    print(f"  ρ(σ_epi, err): {test_metrics.rho_eu_error:+.3f}")
-    print(f"  ρ(σ_ale, H):   {test_metrics.rho_ale_entropy:+.3f}")
+    print(f"  test task acc:    {test_metrics.task_accuracy:.4f}")
+    print(f"  test concept acc: {test_metrics.mean_concept_accuracy:.4f}")
+    print(f"  ρ(EU, AU):        {test_metrics.rho_eu_au:+.3f}")
+    print(f"  ρ(σ_epi, err):    {test_metrics.rho_eu_error:+.3f}")
+    print(f"  ρ(σ_ale, H):      {test_metrics.rho_ale_entropy:+.3f}")
     trainer._log_metrics({"test": test_metrics.to_dict()}, step=epochs)
 
     # Persist test metrics alongside the checkpoint
     import json
     with (args.save_dir / "test_metrics.json").open("w") as f:
         json.dump(test_metrics.to_dict(), f, indent=2, default=float)
+
+    if args.eval_dump_dir is not None:
+        trainer.dump_eval_arrays(bundle.test_loader, args.eval_dump_dir)
 
     trainer.close()
 

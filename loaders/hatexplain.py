@@ -34,10 +34,11 @@ class _HateXplainLoader:
                 batch_size=batch_size,
                 max_length=max_length,
                 num_workers=num_workers,
+                subset_fraction=subset_fraction,
             )
 
         if subset_fraction < 1.0:
-            raise NotImplementedError("subset_fraction < 1.0 not yet wired")
+            metadata["train_size"] = len(train_loader.dataset)
 
         return DatasetBundle(
             name="hatexplain",

@@ -45,15 +45,11 @@ class _CEBaBLoader:
                 batch_size=batch_size,
                 max_length=max_length,
                 num_workers=num_workers,
-                # TODO(PR1): confirm the current get_cebab_dataloaders signature
-                # accepts these; add subset_fraction / seed if it does, or plumb
-                # them through by truncating the dataset after loading.
+                subset_fraction=subset_fraction,
             )
 
         if subset_fraction < 1.0:
-            # TODO(PR1): implement subset via torch.utils.data.Subset wrapping
-            # the underlying datasets. Needed for data-scaling smoking-gun expt.
-            raise NotImplementedError("subset_fraction < 1.0 not yet wired")
+            metadata["train_size"] = len(train_loader.dataset)
 
         return DatasetBundle(
             name="cebab",

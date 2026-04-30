@@ -362,6 +362,10 @@ class HybridCredalSLVM(nn.Module):
         if annotator_entropy is not None and concept_labels is not None:
             known_mask = (concept_labels != 1)
             if known_mask.any():
+                if annotator_entropy.dim() == 1 and concept_labels.dim() == 2:
+                    annotator_entropy = annotator_entropy.unsqueeze(-1).expand_as(concept_labels)
+                elif annotator_entropy.shape != concept_labels.shape:
+                    annotator_entropy = annotator_entropy.reshape_as(concept_labels)
                 targets = annotator_entropy[known_mask]
                 preds = result["aleatoric"][known_mask]
                 losses["aleatoric_loss"] = F.mse_loss(preds, targets)

@@ -9,6 +9,8 @@ outputs/
 # Large model / data files
 checkpoints/**/*.pt
 checkpoints/**/*.jsonl
+checkpoints_from_modal/
+results_all_*.json
 data/hatexplain/dataset.json
 data/hatexplain/post_id_divisions.json
 

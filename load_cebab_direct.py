@@ -508,7 +508,8 @@ def get_cebab_dataloaders(
     max_length: int = 256,
     num_workers: int = 4,
     include_edits: bool = True,
-    subset_size: Optional[int] = None
+    subset_size: Optional[int] = None,
+    subset_fraction: float = 1.0,
 ):
     """
     Get PyTorch DataLoaders for CEBaB.
@@ -525,6 +526,8 @@ def get_cebab_dataloaders(
 
     # Create datasets
     train_data = processed_data["train"]
+    if subset_fraction < 1.0:
+        subset_size = max(1, int(len(train_data) * subset_fraction))
     if subset_size is not None and subset_size < len(train_data):
         import random
         random.shuffle(train_data)

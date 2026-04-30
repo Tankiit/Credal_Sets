@@ -14,7 +14,9 @@ from scipy import stats
 @dataclass
 class UncertaintyMetrics:
     """Single-pass evaluation metrics for a HybridCredalCBM checkpoint."""
+    # `accuracy` is kept as a backward-compatible alias for task_accuracy.
     accuracy: float = 0.0
+    task_accuracy: float = 0.0
     loss: float = 0.0
 
     # Sigma summary statistics
@@ -39,6 +41,8 @@ class UncertaintyMetrics:
 
     # Per-concept breakdown
     concept_accs: Dict[str, float] = field(default_factory=dict)
+    mean_concept_accuracy: float = 0.0
+    concept_coverage: float = 0.0
 
     def to_dict(self) -> dict:
         return {k: (float(v) if not isinstance(v, dict) else v)

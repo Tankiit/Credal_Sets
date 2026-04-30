@@ -32,6 +32,7 @@ class _GoEmotionsLoader:
             max_length=max_length,
             batch_size=batch_size,
             tokenizer_name=tokenizer_name,
+            num_workers=num_workers,
         )
 
         train_loader, val_loader, test_loader, tokenizer, metadata = \
