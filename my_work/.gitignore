@@ -1,0 +1,13 @@
+data/
+.venv/
+features/
+__pycache__
+old/
+
+dataset_cifar10h/
+features_cifar10h/
+results_cifar10h/
+
+dataset_cub/
+features_cub/
+results_cub/

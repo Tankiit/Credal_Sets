@@ -1,0 +1,18 @@
+Need to look into why spearman_rho_AU_vs_1minusModelPurity and spearman_p_AU are returning NaN
+
+{
+  "mode": "multi-label",
+  "n_images": 11788,
+  "num_attributes": 312,
+  "k": 10,
+  "spearman_rho_EU_vs_modelDistance": 0.08894054567978288,
+  "spearman_p_EU": 3.863907705133921e-22,
+  "spearman_rho_AU_vs_1minusModelPurity": NaN,
+  "spearman_p_AU": NaN,
+  "quadrant_counts": {
+    "high_humanEU_low_modelDist": 2727,
+    "low_humanEU_low_modelDist": 3167,
+    "low_humanEU_high_modelDist": 2727,
+    "high_humanEU_high_modelDist": 3167
+  }
+}

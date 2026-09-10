@@ -20,3 +20,11 @@ SKILL.md
 *.skill.md
 *.instructions.md
 *.prompt.md
+
+dataset_cifar10h/
+dataset_cub/
+features_cifar10h/
+features_cub/
+old/
+results_cifar10h/
+results_cub/
