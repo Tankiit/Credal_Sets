@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "concept-audit"
+version = "0.1.0"
+description = "Library-independent supervised concept models and equivalence audits"
+requires-python = ">=3.10"
+dependencies = ["torch>=2.2", "torchvision>=0.17", "transformers>=4.56.0", "timm>=1.0", "numpy", "scipy", "scikit-learn", "pandas"]
+
+[project.optional-dependencies]
+concepts = ["pytorch-concepts==1.0.0a5"]
+
+[project.scripts]
+concept-audit = "concept_audit.experiment:main"
+
+[tool.setuptools.packages.find]
+include = ["concept_audit*", "models*", "dataloaders*"]

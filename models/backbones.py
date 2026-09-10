@@ -3,6 +3,8 @@
 This module is intentionally independent from the downstream uncertainty / CBM code.
 It exposes one small contract:
 
+    from models import build_backbone
+
     backbone = build_backbone(kind="hf", model_name="facebook/dinov2-base", device="cuda")
     features = backbone.encode_pil(images)  # (B, D)
 
@@ -16,6 +18,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 import torch
+import torch.nn.functional as F
 
 
 @dataclass(frozen=True)
@@ -55,6 +58,11 @@ def _freeze(module: torch.nn.Module) -> torch.nn.Module:
     return module
 
 
+def _finalize_features(features: torch.Tensor) -> torch.Tensor:
+    features = features.float()
+    return F.normalize(features, dim=-1)
+
+
 class HuggingFaceBackbone(FrozenVisualBackbone):
     """Frozen Hugging Face vision encoder using its native image processor.
 
@@ -89,18 +97,32 @@ class HuggingFaceBackbone(FrozenVisualBackbone):
             outputs = self.model(**batch)
 
         pooled = getattr(outputs, "pooler_output", None)
-        if pooled is not None:
-            return pooled.float()
-
         hidden = getattr(outputs, "last_hidden_state", None)
+        if pooled is not None:
+            if hidden is not None and hidden.ndim == 3:
+                cls_token = hidden[:, 0]
+                if hidden.shape[1] > 1:
+                    patch_mean = hidden[:, 1:].mean(dim=1)
+                else:
+                    patch_mean = cls_token
+                pooled = 0.5 * (pooled + patch_mean)
+            return _finalize_features(pooled)
+
         if hidden is None:
             raise RuntimeError(
                 f"{self.model_name} returned neither pooler_output nor last_hidden_state"
             )
         if hidden.ndim == 3:
-            return hidden[:, 0].float()
+            cls_token = hidden[:, 0]
+            if hidden.shape[1] > 1:
+                patch_mean = hidden[:, 1:].mean(dim=1)
+            else:
+                patch_mean = cls_token
+            return _finalize_features(0.5 * (cls_token + patch_mean))
         if hidden.ndim == 4:
-            return hidden.flatten(2).mean(-1).float()
+            avg_pool = hidden.flatten(2).mean(-1)
+            max_pool = hidden.flatten(2).amax(-1)
+            return _finalize_features(0.5 * (avg_pool + max_pool))
         raise RuntimeError(f"Unsupported hidden-state shape: {tuple(hidden.shape)}")
 
     @property
@@ -141,8 +163,9 @@ class TimmBackbone(FrozenVisualBackbone):
         if isinstance(features, (tuple, list)):
             features = features[0]
         if features.ndim > 2:
-            features = features.flatten(2).mean(-1)
-        return features.float()
+            flat = features.flatten(2)
+            features = 0.5 * (flat.mean(-1) + flat.amax(-1))
+        return _finalize_features(features)
 
     @property
     def feature_dim(self) -> int | None:

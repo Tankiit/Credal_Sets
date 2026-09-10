@@ -1,4 +1,6 @@
 data/
 .venv/
 features/
-results
+results/
+__pycache__/
+*.py[cod]

@@ -1,124 +1,171 @@
-# DINOv3 vs. Human Perceptual Uncertainty on CIFAR-10H
+# Replaceable image backbones for uncertainty and supervised LVMs
 
-Frozen DINOv3 (ViT-L/16) embeddings of the CIFAR-10 test set, compared against
-the CIFAR-10H human soft labels, to find where the model's embedding
-geometry and human perception disagree ("blind spots").
+This branch extracts frozen, global image embeddings behind one provider-independent
+interface. Downstream uncertainty, concept-bottleneck, and supervised-LVM code always
+receives a matrix `z` with shape `(num_images, feature_dim)`. The extractor now
+produces L2-normalized embeddings, which makes cosine-based nearest-neighbor
+analysis more stable.
 
-Run this on your own machine with a GPU and internet access — it will **not**
-run inside a sandboxed/offline environment, because it needs to:
-1. Download CIFAR-10 test images (torchvision → cs.toronto.edu)
-2. Download the DINOv3 checkpoint from Hugging Face (gated — see below)
+```python
+from models import build_backbone
 
-## 0. Get access to DINOv3 weights (one-time)
+backbone = build_backbone(
+    kind="hf",
+    model_name="facebook/dinov2-base",
+    device="cuda",
+)
 
-The checkpoint used here, `facebook/dinov3-vitl16-pretrain-lvd1689m`, is
-**gated** on Hugging Face. Before running:
-1. Go to https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m and
-   accept the license (Meta DINOv3 License).
-2. Run `huggingface-cli login` (or `hf auth login`) locally with a token
-   that has access, or set `HF_TOKEN` in your environment.
+z = backbone.encode_pil(images)  # shape: (B, D)
+```
 
-## 1. Setup
+## Repository layout
+
+```text
+.
+├── models/
+│   ├── __init__.py
+│   └── backbones.py          # shared Hugging Face/timm backbone interface
+├── dataloaders/
+│   ├── __init__.py
+│   └── cifar10.py            # ordered PIL-image CIFAR-10 test loader
+├── feature_extraction.py     # CIFAR-10 -> frozen global embeddings
+├── blindspot_analysis.py     # CIFAR-10H entropy vs embedding-space purity
+├── main.py                   # original exploratory entry point
+├── requirements.txt          # Python dependencies, including timm
+└── ReadMe.md
+```
+
+After downloading data and extracting one or more backbones, generated files have
+this layout:
+
+```text
+.
+├── data/
+│   ├── cifar10/              # torchvision CIFAR-10 files
+│   └── cifar-10h/
+│       └── data/
+│           ├── cifar10h-probs.npy   # 10,000 x 10 human soft labels
+│           └── cifar10h-counts.npy  # raw human vote counts
+├── features/
+│   ├── dinov2/
+│   │   ├── embeddings.npy    # shape: (10,000, D)
+│   │   ├── labels.npy        # shape: (10,000,)
+│   │   └── meta.json
+│   ├── dinov3/
+│   │   └── ...               # same three-file contract
+│   └── resnet50/
+│       └── ...               # same three-file contract
+└── results/                  # blind-spot analysis outputs
+```
+
+Generated `data/`, `features/`, and `results/` directories are ignored by Git.
+
+## Setup and data
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Needs `transformers>=4.56.0` (DINOv3 support landed in that release).
+Download CIFAR-10 and CIFAR-10H using your preferred workflow before running the
+feature extraction or blind-spot analysis scripts.
 
-## 2. Download data
+The extraction loader is deliberately not shuffled. Consequently,
+`embeddings.npy[i]`, `labels.npy[i]`, and CIFAR-10H row `i` stay aligned.
+When CUDA is available, the loader also uses pinned memory to speed up transfer
+into the backbone.
 
-```bash
-python download_data_cifar.py
-```
+## Extract features
 
-This downloads:
-- CIFAR-10 test set (10,000 images) via `torchvision.datasets.CIFAR10`
-- `cifar10h-probs.npy` (10000×10 soft labels, human classification
-  probabilities per image) and `cifar10h-counts.npy` (raw vote counts)
-  directly from the CIFAR-10H GitHub repo
-
-Both land in `./data/`. **Order matters**: the CIFAR-10H labels are in the
-same order as `torchvision`'s default (unshuffled) CIFAR-10 test set, so
-`cifar10h-probs.npy[i]` corresponds to `CIFAR10(train=False)[i]`. The
-scripts never shuffle this order — don't add `shuffle=True` to any loader
-here or the alignment breaks silently.
-
-## 3. Extract frozen DINOv3 features
+DINOv2 is the default supervised-LVM baseline:
 
 ```bash
-python feature_extraction.py --model facebook/dinov3-vitl16-pretrain-lvd1689m --batch-size 128
+python feature_extraction.py \
+  --backbone hf \
+  --model facebook/dinov2-base \
+  --out-dir features/dinov2
 ```
 
-- Loads DINOv3 ViT-L/16 frozen (`requires_grad_(False)`, `eval()` mode,
-  `torch.inference_mode()` — no gradients, no fine-tuning).
-- Upsamples CIFAR's native 32×32 images to 224×224 (DINOv3's expected input
-  size / patch-16 grid) using the model's own `AutoImageProcessor`, so
-  normalization matches training.
-- Extracts, per image: the **CLS token** (`pooler_output`, 1024-d for
-  ViT-L) as the global embedding, and optionally the **patch token grid**
-  for later dense-feature inspection (off by default — large, use
-  `--save-patch-tokens` to enable).
-- Saves everything to `./features/`:
-  - `embeddings.npy` — (10000, D) CLS embeddings
-  - `labels.npy` — (10000,) ground-truth CIFAR-10 integer labels
-  - `meta.json` — model name, dim, extraction settings
-
-This is the slow step (ViT-L over 10k images). On a single modern GPU
-expect low-single-digit minutes at batch size 128; CPU will take much
-longer — reduce `--batch-size` if you're memory constrained, or switch to
-`facebook/dinov3-vits16-pretrain-lvd1689m` for a quick end-to-end smoke
-test before committing to ViT-L.
-
-## 4. Analyze blind spots (no classifier trained)
+DINOv3 remains selectable:
 
 ```bash
-python blindspot_analysis.py
+python feature_extraction.py \
+  --backbone hf \
+  --model facebook/dinov3-vitl16-pretrain-lvd1689m \
+  --out-dir features/dinov3
 ```
 
-Since the goal is to probe the frozen embedding *geometry* itself rather
-than a trained classifier, "model confidence" is estimated in an
-unsupervised way:
+The DINOv3 checkpoint is gated. Accept its Hugging Face license and authenticate
+with `hf auth login` before running that command.
 
-- **Human uncertainty** per image: Shannon entropy of the CIFAR-10H soft
-  label vector (0 = every annotator agreed, log2(10)≈3.32 = uniform
-  disagreement across all 10 classes).
-- **Model structural confidence** per image: k-NN label purity in DINOv3
-  embedding space — for each image, look at its k nearest neighbors (cosine
-  distance) among the *other* 9,999 embeddings, using ground-truth CIFAR-10
-  labels, and compute the fraction that share the image's true class. High
-  purity = the image sits in a locally homogeneous, well-separated region of
-  DINOv3's feature space (structurally "easy" for the model, with no
-  classifier needed to say so). Low purity = the image's neighbors are
-  mixed in true class (structurally "confusable" region).
+Any compatible `timm` model uses the same output contract:
 
-These two signals are then cross-tabulated into four quadrants:
+```bash
+python feature_extraction.py \
+  --backbone timm \
+  --model resnet50 \
+  --out-dir features/resnet50
 
-| | Human confident (low entropy) | Human uncertain (high entropy) |
-|---|---|---|
-| **Model locally pure (high purity)** | Easy — both agree | *Human blind spot*: DINOv3 geometry cleanly separates the class but humans disagree (e.g. ambiguous photography, mislabeled-looking image) |
-| **Model locally impure (low purity)** | *Model blind spot*: humans agree confidently, but the image sits in a confused region of DINOv3's embedding space | Hard — both agree it's ambiguous |
-
-Outputs (in `./results/`):
-- `per_image_metrics.csv` — index, true label, human entropy, human top
-  choice, agreement with ground truth, k-NN purity, quadrant
-- `quadrant_scatter.png` — entropy vs. purity scatter, quadrant-colored
-- `correlation.txt` — Spearman correlation between human entropy and model
-  purity (+ p-value)
-- `blind_spots_model.csv` / `blind_spots_human.csv` — top-N images in each
-  "blind spot" quadrant, sorted by how extreme they are, with file paths to
-  the images (saved as PNGs in `./results/blind_spot_images/`) so you can
-  visually inspect them
-
-Tune `--k` (neighbors, default 10) and `--top-n` (images per report,
-default 30) as flags.
-
-## Files
-
+python feature_extraction.py \
+  --backbone timm \
+  --model convnext_tiny \
+  --out-dir features/convnext_tiny
 ```
-download_data.py          # CIFAR-10 test images + CIFAR-10H soft labels
-feature_extraction.py     # frozen DINOv3 embeddings -> features/
-blindspot_analysis.py     # entropy vs kNN-purity blind spot analysis -> results/
-requirements.txt
+
+The device is selected automatically (`cuda`, then `mps`, then `cpu`). Override it
+with `--device`. Use `--batch-size` and `--num-workers` to tune extraction.
+
+Every run writes exactly:
+
+```text
+features/<backbone>/
+├── embeddings.npy
+├── labels.npy
+└── meta.json
 ```
+
+The `meta.json` file records whether the embeddings were normalized.
+
+Downstream code therefore remains independent of the model provider:
+
+```python
+from pathlib import Path
+import numpy as np
+
+features_dir = Path("features/dinov2")
+embeddings = np.load(features_dir / "embeddings.npy")
+labels = np.load(features_dir / "labels.npy")
+```
+
+## Analyze CIFAR-10H blind spots
+
+```bash
+python blindspot_analysis.py --features-dir features/dinov2
+```
+
+Run `python blindspot_analysis.py --help` for all paths and analysis options. The
+analysis compares human-label entropy with local class purity in frozen embedding
+space; it does not train a classifier.
+
+## Supervised-LVM boundary
+
+```text
+PIL images
+    |
+    v
+models/backbones.py ── encode_pil(images) ──> z in R^(B x D)
+                                           |
+                                           v
+                                    ConceptEncoder(z)
+                                           |
+                                           v
+                                           c
+                                      /         \
+                                     v           v
+                         R(c): concept loss   h(c): task prediction
+```
+
+Future datasets such as CUB, CUB-S, and Shapes3D should adapt only their dataset
+loaders to supply PIL images. They should continue using `encode_pil`; the backbone
+and supervised-LVM layers do not need dataset-specific changes.

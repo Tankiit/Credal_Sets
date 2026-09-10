@@ -1,5 +1,5 @@
 """
-Compare human perceptual uncertainty (CIFAR-10H) against frozen DINOv3
+Compare human perceptual uncertainty (CIFAR-10H) against frozen visual
 embedding-space structure, with no classifier trained on top of the
 features.
 
@@ -7,18 +7,18 @@ Two per-image signals:
   - human_entropy: Shannon entropy (bits) of the CIFAR-10H soft label.
     0 = every annotator agreed; log2(10)=3.32 = maximal disagreement.
   - knn_purity: fraction of an image's k nearest neighbors (cosine
-    distance, in DINOv3 embedding space) that share its ground-truth
+    distance, in the selected backbone's embedding space) that share its ground-truth
     CIFAR-10 label. This needs no trained classifier -- it's a direct,
     unsupervised read of how locally separable the embedding space is
     around that image.
 
 These are cross-tabulated (median-split each axis) into four quadrants;
 the two "disagreement" quadrants are the blind spots:
-  - model_blind_spot: humans confident (low entropy), but DINOv3's local
+  - model_blind_spot: humans confident (low entropy), but the backbone's local
     neighborhood around the image is label-impure (low purity) -- the
     model's frozen geometry doesn't cleanly separate an image humans find
     obvious.
-  - human_blind_spot: DINOv3's neighborhood is label-pure (high purity),
+  - human_blind_spot: the backbone's neighborhood is label-pure (high purity),
     but humans disagreed a lot (high entropy) -- the embedding space
     separates the class cleanly even though the image confused annotators.
 """
@@ -97,7 +97,7 @@ def main():
     probs = np.load(Path(args.cifar10h_dir) / "cifar10h-probs.npy")
     assert embeddings.shape[0] == labels.shape[0] == probs.shape[0] == 10000, (
         "size mismatch between embeddings/labels/cifar10h-probs -- did you "
-        "run 01_download_data.py and 02_extract_features.py without shuffling?"
+        "prepare CIFAR-10/CIFAR-10H and run feature_extraction.py without shuffling?"
     )
 
     n = embeddings.shape[0]
@@ -115,11 +115,11 @@ def main():
     rho, pval = spearmanr(human_entropy, knn_purity)
     with open(out_dir / "correlation.txt", "w") as f:
         f.write(
-            "Spearman correlation between human label entropy and DINOv3 "
+            "Spearman correlation between human label entropy and backbone "
             f"kNN (k={args.k}) embedding purity\n"
             f"rho = {rho:.4f}, p = {pval:.3e}, n = {n}\n\n"
             f"Interpretation: {'negative' if rho < 0 else 'positive'} correlation "
-            f"means {'higher human disagreement tends to co-occur with less locally-pure DINOv3 embeddings (model and humans tend to agree on what is hard)' if rho < 0 else 'higher human disagreement does NOT track with less pure embeddings -- the two notions of difficulty diverge'}.\n"
+            f"means {'higher human disagreement tends to co-occur with less locally-pure backbone embeddings (model and humans tend to agree on what is hard)' if rho < 0 else 'higher human disagreement does NOT track with less pure embeddings -- the two notions of difficulty diverge'}.\n"
         )
     print(open(out_dir / "correlation.txt").read())
 
@@ -185,8 +185,8 @@ def main():
         ax.axvline(entropy_med, color="gray", linestyle="--", linewidth=0.8)
         ax.axhline(purity_med, color="gray", linestyle="--", linewidth=0.8)
         ax.set_xlabel("Human label entropy (bits)")
-        ax.set_ylabel(f"DINOv3 kNN (k={args.k}) label purity")
-        ax.set_title("Human uncertainty vs. frozen DINOv3 embedding purity")
+        ax.set_ylabel(f"Backbone kNN (k={args.k}) label purity")
+        ax.set_title("Human uncertainty vs. frozen backbone embedding purity")
         ax.legend(fontsize=8, loc="lower left")
         fig.tight_layout()
         fig.savefig(out_dir / "quadrant_scatter.png", dpi=150)

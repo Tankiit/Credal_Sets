@@ -1,8 +1,9 @@
 """Extract frozen global image embeddings for the CIFAR-10 test set.
 
-This script now delegates model loading and preprocessing to ``backbones.py`` so the
-same uncertainty / supervised-LVM pipeline can swap visual encoders without changing
-downstream code.
+This script delegates model loading to ``models/backbones.py`` and dataset loading
+to ``dataloaders/`` so the same uncertainty / supervised-LVM pipeline can swap
+visual encoders without changing downstream code. The extracted embeddings are
+L2-normalized so cosine-space analyses stay well-behaved.
 
 Examples:
     # DINOv2
@@ -26,17 +27,10 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
-from torchvision.datasets import CIFAR10
 from tqdm import tqdm
 
-from backbones import build_backbone
-
-
-def _pil_collate(batch):
-    """Keep PIL images untouched; the selected backbone owns preprocessing."""
-    images, labels = zip(*batch)
-    return list(images), torch.as_tensor(labels, dtype=torch.long)
+from dataloaders import build_cifar10_test_loader
+from models import build_backbone
 
 
 def main():
@@ -75,17 +69,11 @@ def main():
     print(f"[load] provider={args.backbone} model={args.model}")
     backbone = build_backbone(args.backbone, args.model, device)
 
-    # Keep raw PIL images here. Each backbone applies the preprocessing tied to
-    # its own pretrained weights.
-    ds = CIFAR10(root=args.images_dir, train=False, download=False, transform=None)
-    assert len(ds) == 10000, f"expected 10000 test images, got {len(ds)}"
-    loader = DataLoader(
-        ds,
+    loader = build_cifar10_test_loader(
+        images_dir=args.images_dir,
         batch_size=args.batch_size,
-        shuffle=False,
         num_workers=args.num_workers,
-        pin_memory=False,
-        collate_fn=_pil_collate,
+        pin_memory=device == "cuda",
     )
 
     all_embeddings = []
@@ -98,13 +86,15 @@ def main():
             raise RuntimeError(
                 f"Backbone must return (B, D) embeddings; got {tuple(embeddings.shape)}"
             )
-        all_embeddings.append(embeddings.detach().float().cpu().numpy())
+        all_embeddings.append(embeddings.detach().cpu().numpy())
         all_labels.append(labels.numpy())
 
     elapsed = time.time() - t0
     embeddings = np.concatenate(all_embeddings, axis=0)
     labels = np.concatenate(all_labels, axis=0)
     assert embeddings.shape[0] == 10000 and labels.shape[0] == 10000
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    embeddings = embeddings / np.clip(norms, a_min=1e-12, a_max=None)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -122,6 +112,7 @@ def main():
         "batch_size": args.batch_size,
         "extraction_seconds": elapsed,
         "frozen": info.frozen,
+        "normalized": True,
     }
     with open(out_dir / "meta.json", "w") as f:
         json.dump(meta, f, indent=2)
