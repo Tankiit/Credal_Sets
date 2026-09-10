@@ -4,3 +4,19 @@ features/
 results/
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+.DS_Store
+
+# Skill/prompt authoring artifacts
+skills/
+**/skills/
+SKILL.md
+*.skill.md
+*.instructions.md
+*.prompt.md

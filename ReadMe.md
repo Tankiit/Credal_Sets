@@ -37,8 +37,9 @@ z = backbone.encode_pil(images)  # shape: (B, D)
 │   └── backbones.py          # shared Hugging Face/timm backbone interface
 ├── dataloaders/
 │   ├── __init__.py
-│   └── cifar10.py            # ordered PIL-image CIFAR-10 test loader
-├── feature_extraction.py     # CIFAR-10 -> frozen global embeddings
+│   ├── huggingface.py        # shared HF load_dataset interface
+│   └── cifar10.py            # legacy torchvision CIFAR-10 loader
+├── feature_extraction.py     # HF CIFAR-10/100/CUB -> frozen embeddings
 ├── blindspot_analysis.py     # CIFAR-10H entropy vs embedding-space purity
 ├── main.py                   # original exploratory entry point
 ├── requirements.txt          # Python dependencies, including timm
@@ -78,15 +79,43 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Download CIFAR-10 and CIFAR-10H using your preferred workflow before running the
-feature extraction or blind-spot analysis scripts.
+Image extraction uses Hugging Face `datasets.load_dataset` and downloads/cache-manages
+CIFAR-10, CIFAR-100, or CUB automatically. Download CIFAR-10H separately for blind-spot
+analysis. `--cache-dir` controls the HF cache location; the old extraction
+`--images-dir` option is replaced by this HF cache option.
 
-The extraction loader is deliberately not shuffled. Consequently,
-`embeddings.npy[i]`, `labels.npy[i]`, and CIFAR-10H row `i` stay aligned.
-When CUDA is available, the loader also uses pinned memory to speed up transfer
-into the backbone.
+Extraction preserves the selected HF split order. Use the full CIFAR-10 test split
+for CIFAR-10H analysis and ensure its row order matches your CIFAR-10H annotations.
+The legacy torchvision loader remains available for code that uses local CIFAR files.
 
 ## Extract features
+
+Start with the existing local CIFAR-10 copy (no dataset download):
+
+```bash
+python feature_extraction.py --dataset cifar10 --data-dir /Users/cril/tanmoy/research/data --split test --out-dir features/cifar10/dinov2/test
+```
+
+Local Python batches are read with torchvision and exposed through the same HF
+dataset interface. The source files are unchanged. Use `--split train` and a
+separate output directory for training features.
+
+```python
+from dataloaders import load_dataset
+
+dataset = load_dataset("cifar100", split="train", cache_dir="data/huggingface")
+image, concepts, label = dataset[0]
+```
+
+```bash
+python feature_extraction.py --dataset cifar100 --split train --out-dir features/cifar100/train
+python feature_extraction.py --dataset cub --split test --out-dir features/cub/test
+```
+
+These HF mirrors have task labels but no concept vectors (`concepts=None`).
+Use `--concept-column` or an aligned `--concepts-file` for supervised concept
+experiments; details are in the [concept-audit guide](concept_audit/README.md).
+
 
 DINOv2 is the default supervised-LVM baseline:
 
@@ -126,7 +155,7 @@ python feature_extraction.py \
 The device is selected automatically (`cuda`, then `mps`, then `cpu`). Override it
 with `--device`. Use `--batch-size` and `--num-workers` to tune extraction.
 
-Every run writes exactly:
+Image-only runs write the files below. Annotated runs additionally write `concepts.npy`:
 
 ```text
 features/<backbone>/
@@ -176,6 +205,6 @@ models/backbones.py ── encode_pil(images) ──> z in R^(B x D)
                          R(c): concept loss   h(c): task prediction
 ```
 
-Future datasets such as CUB, CUB-S, and Shapes3D should adapt only their dataset
-loaders to supply PIL images. They should continue using `encode_pil`; the backbone
-and supervised-LVM layers do not need dataset-specific changes.
+CIFAR-10, CIFAR-100, and CUB share the HF loader. Other HF repositories can provide
+explicit image, label, and concept-column mappings. All use `encode_pil`; the
+backbone and supervised-LVM layers do not need dataset-specific changes.

@@ -23,37 +23,98 @@ data test the software, not the paper's scientific claims. Identity R admits onl
 the identity A, so the default coordinate readout includes unsupervised directions
 to exercise nontrivial equivalence.
 
-## Frozen image features
+## Hugging Face datasets and frozen features
 
-The existing `models.backbones` implementation is re-exported without modification:
+To start with the existing CIFAR-10 copy on this machine:
+
+```python
+from concept_audit.data import load_dataset
+
+dataset = load_dataset("cifar10", split="test",
+                       data_dir="/Users/cril/tanmoy/research/data")
+```
+
+```bash
+python feature_extraction.py --dataset cifar10 --data-dir /Users/cril/tanmoy/research/data --split test --out-dir features/cifar10/dinov2/test
+```
+
+`data_dir` reads the existing `cifar-10-batches-py` files with downloads disabled,
+then exposes them as an in-memory HF dataset. The shared row interface is unchanged.
+Local files are read only; feature outputs stay in this project. Use `train` for
+the training split, or `test[:8]` for a small extraction check. Local CIFAR-100 Python
+batches are also supported. HF `revision`/`config` options apply only to Hub loading.
+The visual backbone may still need downloading if its weights are not cached.
+
+Hub image datasets go through Hugging Face `datasets.load_dataset`, behind
+one wrapper shared with the existing extraction script:
+
+```python
+from concept_audit.data import load_dataset
+# Also available as: from dataloaders import load_dataset
+
+train = load_dataset("cifar10", split="train", cache_dir="data/huggingface")
+test = load_dataset("cifar100", split="test", cache_dir="data/huggingface")
+birds = load_dataset("cub", split="train", cache_dir="data/huggingface")
+image, concepts, task_label = birds[0]  # RGB PIL, vector or None, integer
+```
+
+| Alias | HF repository | Image / task label |
+| --- | --- | --- |
+| `cifar10` | [uoft-cs/cifar10](https://huggingface.co/datasets/uoft-cs/cifar10) | `img` / `label` |
+| `cifar100` | [uoft-cs/cifar100](https://huggingface.co/datasets/uoft-cs/cifar100) | `img` / `fine_label` |
+| `cub` | [bentrevett/caltech-ucsd-birds-200-2011](https://huggingface.co/datasets/bentrevett/caltech-ucsd-birds-200-2011) | `image` / `label` |
+
+HF handles downloads and caching. Pass `revision` (a commit hash for reproducible
+runs), `config`, and a split such as `train[:100]` when needed. Other HF repository
+IDs work with explicit `image_column`, `label_column`, and `concept_column`.
+Images retain their full frame; the wrapper applies no bounding-box cropping.
+
+```bash
+python feature_extraction.py --dataset cifar10 --split test --out-dir features/cifar10/test
+python feature_extraction.py --dataset cifar100 --split train --out-dir features/cifar100/train
+python feature_extraction.py --dataset cub --split test --out-dir features/cub/test
+```
+
+These default HF mirrors supply classification labels, **not concept vectors**.
+CUB's selected mirror has images, labels, and bounding boxes; its original 312
+attribute annotations are not included. The wrapper returns `concepts=None`
+unless annotations are explicitly provided. Image-only extraction writes
+`embeddings.npy`, `labels.npy`, and `meta.json`; these caches alone cannot train a
+supervised concept model. CIFAR-100 coarse class IDs are not silently treated as
+binary concept vectors.
+
+For concept-audit training, supply a HF vector column or an external `(N,K)`
+NumPy annotation matrix in exactly the selected HF split's row order:
 
 ```python
 from concept_audit.backbones import build_backbone
 from concept_audit.data.extraction import extract_cache
 
+train = load_dataset("cub", split="train", concepts_file="annotations/cub_train.npy",
+                     require_concepts=True, cache_dir="data/huggingface")
 backbone = build_backbone("hf", "facebook/dinov2-base", "cpu")
-# Each native dataset returns (PIL_image, binary_concept_vector, integer_task_label).
-extract_cache(train_dataset, backbone, "features/cub/train")
-extract_cache(test_dataset, backbone, "features/cub/test")
+extract_cache(train, backbone, "features/cub/train")
 ```
-
-Here `train_dataset` and `test_dataset` are user-supplied datasets, not included CUB
-loaders. For timm, use `build_backbone("timm", "resnet50", "cpu")`.
-Every split contains aligned `embeddings.npy` (N,D), `concepts.npy` (N,K), and
-`labels.npy` (N,). Binary concept targets may be soft values in [0,1]. Missing
-concept annotations are not supported by this first training runner.
 
 ```bash
-python -m concept_audit.experiment \
-  --features-dir features/cub/train \
-  --eval-features-dir features/cub/test \
-  --out results/cub_native.json
+python feature_extraction.py --dataset cub --split train --concepts-file annotations/cub_train.npy --require-concepts --out-dir features/cub/train
+python feature_extraction.py --dataset cub --split test --concepts-file annotations/cub_test.npy --require-concepts --out-dir features/cub/test
+python -m concept_audit.experiment --features-dir features/cub/train --eval-features-dir features/cub/test --out results/cub_native.json
 ```
 
-The caller must supply genuinely disjoint splits with identical concept/class
-ordering. The existing CIFAR-10H cache has no concept annotations and is not by
-itself a supervised concept dataset. Dataset-specific CUB, CUB-S, and Shapes3D
-loaders remain future additions; no attributes are fabricated from class labels.
+Alternatively use `--concept-column attributes` with a HF repository containing
+per-image binary/soft attribute vectors. Concept files must match the **requested
+slice**, not the unsliced full dataset. Shape checks cannot establish semantic
+alignment: the caller must join annotations correctly before supplying them.
+Targets must be finite and in [0,1]; missing labels are not supported yet.
+
+Extraction preserves HF order and records repository, split, requested revision,
+HF fingerprint, class names, and annotation-file checksum in `meta.json`.
+Use disjoint training/evaluation splits with the same concept and class ordering.
+The backbone and all audit code remain independent of HF dataset column names.
+`python -m concept_audit.data.extraction` exposes the same CLI as
+`feature_extraction.py`. CUB-S and Shapes3D can be supplied through compatible HF
+repositories with explicit column mappings; no aliases are defined for them yet.
 
 ## Model and readout contract
 
