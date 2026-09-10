@@ -1,10 +1,17 @@
 # Replaceable image backbones for uncertainty and supervised LVMs
 
+Experiment entry points and configs live in separate
+[`experiments/synthetic/`](experiments/synthetic/README.md) and
+[`experiments/real/`](experiments/real/README.md) folders. Outputs default to
+`results/synthetic/` and `results/real/`. The
+[ICLR experiment plan](experiments/README.md) records the ordered studies and
+decision checkpoint after synthetic step 4.
+
 The native concept-model and audit pipeline is now available in
 [`concept_audit/`](concept_audit/README.md), including optional PyC support:
 
 ```bash
-python -m concept_audit.experiment --out results/concept_audit.json
+python -m experiments.synthetic.run --out results/synthetic/concept_audit.json
 ```
 
 This default is a synthetic smoke experiment. See the package guide for frozen
@@ -93,7 +100,7 @@ The legacy torchvision loader remains available for code that uses local CIFAR f
 Start with the existing local CIFAR-10 copy (no dataset download):
 
 ```bash
-python feature_extraction.py --dataset cifar10 --data-dir /Users/cril/tanmoy/research/data --split test --out-dir features/cifar10/dinov2/test
+python feature_extraction.py --dataset cifar10 --data-dir /Users/cril/tanmoy/research/data --split test --out-dir features/real/cifar10/dinov2/test
 ```
 
 Local Python batches are read with torchvision and exposed through the same HF
@@ -108,8 +115,8 @@ image, concepts, label = dataset[0]
 ```
 
 ```bash
-python feature_extraction.py --dataset cifar100 --split train --out-dir features/cifar100/train
-python feature_extraction.py --dataset cub --split test --out-dir features/cub/test
+python feature_extraction.py --dataset cifar100 --split train --out-dir features/real/cifar100/train
+python feature_extraction.py --dataset cub --split test --out-dir features/real/cub/test
 ```
 
 These HF mirrors have task labels but no concept vectors (`concepts=None`).

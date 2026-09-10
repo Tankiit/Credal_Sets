@@ -14,6 +14,13 @@ concepts = ["pytorch-concepts==1.0.0a5"]
 
 [project.scripts]
 concept-audit = "concept_audit.experiment:main"
+concept-audit-synthetic = "experiments.synthetic.run:main"
+concept-audit-real = "experiments.real.run:main"
+concept-audit-extract = "experiments.real.extract:main"
 
 [tool.setuptools.packages.find]
-include = ["concept_audit*", "models*", "dataloaders*"]
+include = ["concept_audit*", "experiments*", "models*", "dataloaders*"]
+
+[tool.setuptools.package-data]
+"experiments.synthetic" = ["configs/*.json"]
+"experiments.real" = ["configs/*.json"]

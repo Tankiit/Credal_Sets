@@ -1,5 +1,14 @@
 # Supervised concept experiments
 
+Experiment entry points/configs are separated into
+[`experiments/synthetic`](../experiments/synthetic/README.md) and
+[`experiments/real`](../experiments/real/README.md). This package holds shared
+scientific objects and training mechanics. See the
+[ICLR execution plan](../experiments/README.md) for study order and current status.
+The old `concept_audit.experiment` command is retained as a compatibility dispatcher:
+explicit feature-cache flags route to real-data runs; otherwise it routes to synthetic.
+Use the new family-specific entry points when supplying JSON configs.
+
 The scientific core is native PyTorch: fixed supervision readout `R`, task head
 `h`, admissible transformations, and diagnostic audit runners. PyC implements an
 optional encoder and donor replacement utility. Probly and Tinker are not imported
@@ -11,10 +20,10 @@ From the repository root:
 
 ```bash
 pip install -e .
-python -m concept_audit.experiment --out results/native.json
-python -m concept_audit.experiment --readout identity --out results/identity.json
-python -m concept_audit.experiment --readout grouped --out results/grouped.json
-python -m concept_audit.experiment --backend cem --out results/cem.json
+python -m experiments.synthetic.run --out results/synthetic/native.json
+python -m experiments.synthetic.run --readout identity --out results/synthetic/identity.json
+python -m experiments.synthetic.run --readout grouped --out results/synthetic/grouped.json
+python -m experiments.synthetic.run --backend cem --out results/synthetic/cem.json
 ```
 
 These commands train on **synthetic features**, without downloading a backbone or
@@ -35,7 +44,7 @@ dataset = load_dataset("cifar10", split="test",
 ```
 
 ```bash
-python feature_extraction.py --dataset cifar10 --data-dir /Users/cril/tanmoy/research/data --split test --out-dir features/cifar10/dinov2/test
+python feature_extraction.py --dataset cifar10 --data-dir /Users/cril/tanmoy/research/data --split test --out-dir features/real/cifar10/dinov2/test
 ```
 
 `data_dir` reads the existing `cifar-10-batches-py` files with downloads disabled,
@@ -70,9 +79,9 @@ IDs work with explicit `image_column`, `label_column`, and `concept_column`.
 Images retain their full frame; the wrapper applies no bounding-box cropping.
 
 ```bash
-python feature_extraction.py --dataset cifar10 --split test --out-dir features/cifar10/test
-python feature_extraction.py --dataset cifar100 --split train --out-dir features/cifar100/train
-python feature_extraction.py --dataset cub --split test --out-dir features/cub/test
+python feature_extraction.py --dataset cifar10 --split test --out-dir features/real/cifar10/test
+python feature_extraction.py --dataset cifar100 --split train --out-dir features/real/cifar100/train
+python feature_extraction.py --dataset cub --split test --out-dir features/real/cub/test
 ```
 
 These default HF mirrors supply classification labels, **not concept vectors**.
@@ -93,13 +102,13 @@ from concept_audit.data.extraction import extract_cache
 train = load_dataset("cub", split="train", concepts_file="annotations/cub_train.npy",
                      require_concepts=True, cache_dir="data/huggingface")
 backbone = build_backbone("hf", "facebook/dinov2-base", "cpu")
-extract_cache(train, backbone, "features/cub/train")
+extract_cache(train, backbone, "features/real/cub/train")
 ```
 
 ```bash
-python feature_extraction.py --dataset cub --split train --concepts-file annotations/cub_train.npy --require-concepts --out-dir features/cub/train
-python feature_extraction.py --dataset cub --split test --concepts-file annotations/cub_test.npy --require-concepts --out-dir features/cub/test
-python -m concept_audit.experiment --features-dir features/cub/train --eval-features-dir features/cub/test --out results/cub_native.json
+python feature_extraction.py --dataset cub --split train --concepts-file annotations/cub_train.npy --require-concepts --out-dir features/real/cub/train
+python feature_extraction.py --dataset cub --split test --concepts-file annotations/cub_test.npy --require-concepts --out-dir features/real/cub/test
+python -m experiments.real.run --features-dir features/real/cub/train --eval-features-dir features/real/cub/test --out results/real/cub_native.json
 ```
 
 Alternatively use `--concept-column attributes` with a HF repository containing
@@ -189,7 +198,7 @@ Real-data claims need repeated seeds and a dataset-specific intervention protoco
 
 ```bash
 pip install -e '.[concepts]'
-python -m concept_audit.experiment --backend pyc --out results/pyc.json
+python -m experiments.synthetic.run --backend pyc --out results/synthetic/pyc.json
 python -m unittest discover -s tests -v
 ```
 

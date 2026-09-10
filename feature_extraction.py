@@ -2,7 +2,7 @@
 
 Run python feature_extraction.py --help for dataset, split, and annotation options.
 """
-from concept_audit.data.extraction import main
+from experiments.real.extract import main
 
 
 if __name__ == "__main__":

@@ -1,0 +1,1 @@
+{"backend": "native", "readout": "grouped", "epochs": 100, "seed": 0, "out": "results/synthetic/grouped/audit.json"}
