@@ -11,6 +11,7 @@ def add_training_arguments(parser, output):
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", type=Path, default=Path(output))
+    parser.add_argument("--log-dir", type=Path, help="TensorBoard root; default: output directory/tensorboard")
 
 
 def parse_arguments(parser, argv):

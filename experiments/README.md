@@ -28,6 +28,29 @@ Run modules from the repository root. Config paths are relative to the current
 working directory; CLI arguments override JSON values. Explicit `--out` paths
 remain supported. Existing result files are not relocated or relabeled.
 
+## Progress and TensorBoard
+
+Both families use tqdm for training epochs, training batches, and audit stages.
+Image extraction also displays batch progress. TensorBoard logging is enabled for
+every training run, with a unique run directory beneath the output directory's
+`tensorboard/` folder. Thus the defaults keep synthetic and real logs separate.
+Override the log root with `--log-dir`; the resolved run directory is recorded in
+the JSON report as `tensorboard_log_dir`.
+
+```bash
+python -m experiments.synthetic.run --config experiments/synthetic/configs/partial.json
+tensorboard --logdir results
+```
+
+Open the URL printed by TensorBoard. Scalars include sample-weighted per-epoch
+training/evaluation total, concept, and task losses; task accuracy; readout rank
+and nullity; equivalence errors; and per-concept diagnostic/consequence results.
+Training metrics summarize minibatches during optimization; evaluation metrics
+use the fixed held-out split after each epoch. Evaluation does not select a
+checkpoint or change optimization. Audit values are logged at the final epoch.
+The run's configuration and data provenance are logged as text. Event writers
+are flushed and closed even if training or an audit raises an error.
+
 ## Reviewer-driven execution order
 
 | Order | Experiment | Objection it addresses | Planned evidence |

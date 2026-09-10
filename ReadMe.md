@@ -7,6 +7,11 @@ Experiment entry points and configs live in separate
 [ICLR experiment plan](experiments/README.md) records the ordered studies and
 decision checkpoint after synthetic step 4.
 
+Training uses tqdm progress bars and TensorBoard logging for both experiment
+families; extraction uses tqdm as well. Run `tensorboard --logdir results` to
+view losses, accuracy, and audit diagnostics. Use `--log-dir` to override a run's
+TensorBoard root.
+
 The native concept-model and audit pipeline is now available in
 [`concept_audit/`](concept_audit/README.md), including optional PyC support:
 

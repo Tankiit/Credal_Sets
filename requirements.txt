@@ -11,3 +11,4 @@ pandas
 pillow
 tqdm
 datasets>=2.20
+tensorboard
