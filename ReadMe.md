@@ -1,5 +1,15 @@
 # Replaceable image backbones for uncertainty and supervised LVMs
 
+The native concept-model and audit pipeline is now available in
+[`concept_audit/`](concept_audit/README.md), including optional PyC support:
+
+```bash
+python -m concept_audit.experiment --out results/concept_audit.json
+```
+
+This default is a synthetic smoke experiment. See the package guide for frozen
+image features, concept annotations, separate evaluation caches, and audit semantics.
+
 This branch extracts frozen, global image embeddings behind one provider-independent
 interface. Downstream uncertainty, concept-bottleneck, and supervised-LVM code always
 receives a matrix `z` with shape `(num_images, feature_dim)`. The extractor now

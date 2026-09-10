@@ -29,6 +29,8 @@ class ReparameterizedModel(ConceptModel):
     readout/blocks to investigate their parameterization dependence.
     """
     def __init__(self, model, a, tol=1e-5):
+        if not math.isfinite(tol) or tol <= 0:
+            raise ValueError("tol must be finite and positive")
         if not isinstance(model.head, nn.Linear):
             raise TypeError("Exact compensation requires an explicit nn.Linear task head")
         r = model.readout.matrix
@@ -60,8 +62,9 @@ class ReparameterizedModel(ConceptModel):
         return self.source.intervene(c @ self.inverse.T, concept_id, value) @ self.a.T
 
     def substitute(self, c, concept_id, value):
-        raise NotImplementedError("Transport substitution using a full donor representation via substitute_donor")
+        """Transport replacement; value is a block in the original source basis."""
+        return self.source.substitute(c @ self.inverse.T, concept_id, value) @ self.a.T
 
     def substitute_donor(self, c, concept_id, donor):
         old_c, old_donor = c @ self.inverse.T, donor @ self.inverse.T
-        return self.source.substitute(old_c, concept_id, old_donor[:, list(self.blocks[concept_id])]) @ self.a.T
+        return self.source.substitute_donor(old_c, concept_id, old_donor) @ self.a.T

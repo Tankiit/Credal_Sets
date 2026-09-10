@@ -74,7 +74,10 @@ def main():
         report = {
             "seed": args.seed, "backend": args.backend, "epochs": args.epochs,
             "data": "cached_features" if args.features_dir else "synthetic",
+            "train_cache": str(args.features_dir) if args.features_dir else None,
+            "eval_cache": str(args.eval_features_dir) if args.eval_features_dir else None,
             "readout_matrix": model.readout.matrix.tolist(), "blocks": model.blocks,
+            "transform_matrix": a.tolist(),
             "train_samples": n_train, "eval_samples": len(z)-n_train,
             "equivalence": audit_equivalence(state, a, registry, tol=1e-8),
             "structural": audit_structural(state, registry),
@@ -83,6 +86,10 @@ def main():
         }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
+    torch.save({"model_state_dict": model.state_dict(), "backend": args.backend,
+                "feature_dim": z.shape[1], "num_classes": classes,
+                "blocks": model.blocks, "readout_matrix": model.readout.matrix,
+                "transform_matrix": a, "seed": args.seed}, args.out.with_suffix(".pt"))
     print(f"Saved {args.out}; max logit error={report['equivalence']['max_logit_error']:.3g}")
 
 

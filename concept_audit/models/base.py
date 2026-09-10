@@ -41,6 +41,11 @@ class ConceptModel(nn.Module, ABC):
             raise IndexError(concept_id)
         return replace_block(c, self.blocks[concept_id], value)
 
+    def substitute_donor(self, c, concept_id, donor):
+        if not 0 <= concept_id < len(self.blocks):
+            raise IndexError(concept_id)
+        return self.substitute(c, concept_id, donor[:, list(self.blocks[concept_id])])
+
     def forward(self, z):
         c = self.encode(z)
         return self.concept_readout(c), self.predict_from_concepts(c)

@@ -52,7 +52,7 @@ def audit_consequence(state, registry, seed=0):
     base = accuracy(state.c)
     reports = []
     for j, block in enumerate(state.model.blocks):
-        c = state.model.substitute(state.c, j, donor[:, list(block)])
+        c = state.model.substitute_donor(state.c, j, donor)
         acc = accuracy(c)
         reports.append({"concept_id": j, "accuracy": acc, "accuracy_drop": base-acc,
                         "diagnostics": registry.compute(replace(state, c=c))})
