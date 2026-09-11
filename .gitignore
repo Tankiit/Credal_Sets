@@ -28,3 +28,5 @@ features_cub/
 old/
 results_cifar10h/
 results_cub/
+
+cub_cbm.pt
