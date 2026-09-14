@@ -1,9 +1,12 @@
 from abc import ABC, abstractmethod
+import torch
 from torch import nn
+from concept_audit.core.latent_model import LatentModel
+from concept_audit.core.observables import from_readout
 from concept_audit.interventions import replace_block, set_readout
 
 
-class ConceptModel(nn.Module, ABC):
+class ConceptModel(LatentModel, ABC):
     """Flat c: (batch, latent_dim); R(c): scores; h(c): task logits.
 
     Exact linear-head auditing additionally requires `readout.matrix` and `head`.
@@ -49,3 +52,47 @@ class ConceptModel(nn.Module, ABC):
     def forward(self, z):
         c = self.encode(z)
         return self.concept_readout(c), self.predict_from_concepts(c)
+
+    # -- LatentModel interface --------------------------------------------------
+    #
+    # Supervision *is* R, so R is a fixed map: admissibility means R A = R, not
+    # merely that some value happens to survive.
+
+    family = "cbm"
+    variant = "readout"
+
+    def latent_dim(self):
+        return int(self.readout.latent_dim)
+
+    def observable_maps(self):
+        return [from_readout(self.readout, name="readout")]
+
+    def observables(self, c):
+        return {"readout": self.concept_readout(c)}
+
+    def predictions(self, c):
+        return self.predict_from_concepts(c)
+
+    def compensate(self, a):
+        """The model that *is* c' = A c, via W' = W A^{-1}. R is unchanged.
+
+        Delegates to ReparameterizedModel, which owns the validation and the
+        frozen snapshot; returns None when A is inadmissible or too
+        ill-conditioned, which is the answer admissible expects.
+        """
+        from concept_audit.transforms.equivalence import ReparameterizedModel
+
+        try:
+            return ReparameterizedModel(self, a)
+        except (ValueError, TypeError) as exc:
+            del exc
+            return None
+
+    @property
+    def readout_rank(self):
+        return int(torch.linalg.matrix_rank(self.readout.matrix))
+
+    @property
+    def unconstrained_dim(self):
+        """dim ker(R): the free directions supervision never sees."""
+        return int(self.readout.latent_dim) - self.readout_rank
