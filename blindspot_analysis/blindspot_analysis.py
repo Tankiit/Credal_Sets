@@ -50,7 +50,7 @@ from pathlib import Path
 # Import NumPy for array manipulation.
 import numpy as np
 # Import SciPy's rank utility and Spearman correlation test.
-from scipy.stats import rankdata, spearmanr
+from scipy.stats import spearmanr
 
 # Import the shared helper functions used throughout this script.
 from common import (
@@ -58,6 +58,7 @@ from common import (
     class_name,
     knn_label_purity,
     knn_mean_distance,
+    standardized_ranks,
     load_attribute_credal,
     load_soft_labels,
     read_classes,
@@ -105,27 +106,25 @@ def rank_quadrants(x: np.ndarray, y: np.ndarray, x_name: str, y_name: str):
     heavy ties that discrete/skewed uncertainty metrics commonly produce
     (see README for why a plain `x > median(x)` split can degenerate)."""
     # Determine the number of points being ranked.
-    n = len(x)
-    # Convert x values to fractional ranks in [0, 1].
-    x_rank = rankdata(x, method="ordinal") / n
-    # Convert y values to fractional ranks in [0, 1].
-    y_rank = rankdata(y, method="ordinal") / n
-    # Flag points whose x rank is above the median.
-    high_x = x_rank > 0.5
-    # Flag points whose y rank is above the median.
-    high_y = y_rank > 0.5
-    # Allocate an empty object array to hold each point's quadrant label.
-    quadrant = np.empty(n, dtype=object)
-    # Label points with low x and high y.
-    quadrant[~high_x & high_y] = f"low_{x_name}_high_{y_name}"
-    # Label points with high x and low y.
-    quadrant[high_x & ~high_y] = f"high_{x_name}_low_{y_name}"
-    # Label points with low x and low y.
-    quadrant[~high_x & ~high_y] = f"low_{x_name}_low_{y_name}"
-    # Label points with high x and high y.
-    quadrant[high_x & high_y] = f"high_{x_name}_high_{y_name}"
-    # Return the quadrant labels along with both rank arrays.
-    return quadrant, x_rank, y_rank
+    # Tie-safe fractional ranks. "ordinal" breaks ties by ROW ORDER, so two
+    # points with identical metric values could land in opposite quadrants
+    # purely because of their position in the array -- which then reads as a
+    # finding. "average" gives tied values the same rank.
+    x_rank = standardized_ranks(x)
+    y_rank = standardized_ranks(y)
+    # The continuous disagreement score is the primary result; quadrants below
+    # are a rendering of it. See concept_audit.diagnostics.geometry.
+    score = y_rank - x_rank
+    # Points close to the median on an axis get their own "boundary" state
+    # instead of being forced to a side.
+    band = 0.25
+    quadrant = np.empty(len(x_rank), dtype=object)
+    for i, (xr, yr) in enumerate(zip(x_rank, y_rank)):
+        x_side = "low" if xr < 0.5 - band / 2 else ("high" if xr > 0.5 + band / 2 else "boundary")
+        y_side = "low" if yr < 0.5 - band / 2 else ("high" if yr > 0.5 + band / 2 else "boundary")
+        quadrant[i] = f"{x_side}_{x_name}_{y_side}_{y_name}"
+    # Return quadrant labels, both rank arrays, and the continuous score.
+    return quadrant, x_rank, y_rank, score
 
 
 def write_scatter(path, x, y, quadrant, xlabel, ylabel, title):
@@ -190,7 +189,10 @@ def run_single_label(args, ids, embeddings, labels, classes):
     # Compute the Spearman correlation between human entropy and model purity.
     rho, pval = spearmanr(human_entropy, model_purity)
     # Split both metrics into rank-based quadrants for cross-tabulation.
-    quadrant, ex_rank, ey_rank = rank_quadrants(human_entropy, model_purity, "entropy", "purity")
+    # blindspot_score is the primary result; quadrants are its rendering.
+    quadrant, ex_rank, ey_rank, blindspot = rank_quadrants(
+        human_entropy, model_purity, "entropy", "purity"
+    )
 
     # Wrap the output directory string in a Path object.
     out_dir = Path(args.out_dir)
@@ -215,7 +217,8 @@ def run_single_label(args, ids, embeddings, labels, classes):
         # Write the header row.
         w.writerow([
             "id", "true_label", "true_class", "human_top_choice", "human_top_class",
-            "human_top_prob", "human_entropy_bits", "model_knn_purity", "quadrant",
+            "human_top_prob", "human_signal_entropy_bits", "model_geometry_knn_purity",
+            "blindspot_score", "quadrant",
         ])
         # Write one row per image with all the computed metrics.
         for i in range(n):
@@ -223,7 +226,7 @@ def run_single_label(args, ids, embeddings, labels, classes):
                 ids[i], int(labels[i]), class_name(classes, labels[i]),
                 int(human_top_choice[i]), class_name(classes, human_top_choice[i]),
                 f"{human_top_prob[i]:.4f}", f"{human_entropy[i]:.4f}",
-                f"{model_purity[i]:.4f}", quadrant[i],
+                f"{model_purity[i]:.4f}", f"{blindspot[i]:.4f}", quadrant[i],
             ])
     # Print confirmation that the CSV was saved, with row count.
     print(f"[saved] {csv_path} ({n} rows)")
@@ -306,7 +309,10 @@ def run_multi_label(args, ids, embeddings, labels, classes):
     # Compute the Spearman correlation between human AU and one minus model purity.
     rho_au, pval_au = spearmanr(human_au, 1 - model_purity)
     # Split human EU and model distance into rank-based quadrants for cross-tabulation.
-    quadrant, ex_rank, ey_rank = rank_quadrants(human_eu, model_distance, "humanEU", "modelDist")
+    # blindspot_score is the primary result; quadrants are its rendering.
+    quadrant, ex_rank, ey_rank, blindspot = rank_quadrants(
+        human_eu, model_distance, "humanEU", "modelDist"
+    )
 
     # Wrap the output directory string in a Path object.
     out_dir = Path(args.out_dir)
@@ -338,8 +344,12 @@ def run_multi_label(args, ids, embeddings, labels, classes):
         w = csv.writer(f)
         # Write the header row, including dynamic top-attribute columns.
         w.writerow([
-            "id", "true_label", "true_class", "human_AU", "human_EU", "human_TU",
-            "model_knn_distance", "model_knn_purity", "quadrant",
+            # IDM-derived: these depend on the chosen certainty weights and
+            # idm_s, so they are named for that construction rather than as
+            # bare "uncertainty".
+            "id", "true_label", "true_class", "human_au_idm", "human_eu_idm", "human_tu_idm",
+            "model_geometry_knn_distance", "model_geometry_knn_purity",
+            "blindspot_score", "quadrant",
             *(f"top_eu_attr_{j}" for j in range(args.top_attrs)),
         ])
         # Write one row per image with all the computed metrics.
@@ -350,7 +360,8 @@ def run_multi_label(args, ids, embeddings, labels, classes):
             w.writerow([
                 ids[i], int(labels[i]), class_name(classes, labels[i]),
                 f"{human_au[i]:.4f}", f"{human_eu[i]:.4f}", f"{human_tu[i]:.4f}",
-                f"{model_distance[i]:.4f}", f"{model_purity[i]:.4f}", quadrant[i],
+                f"{model_distance[i]:.4f}", f"{model_purity[i]:.4f}",
+                f"{blindspot[i]:.4f}", quadrant[i],
                 *top_names,
             ])
     # Print confirmation that the CSV was saved, with row count.

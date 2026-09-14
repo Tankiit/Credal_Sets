@@ -321,46 +321,14 @@ def load_attribute_credal(path, ids: Sequence[str], num_attributes: int):
     return lower, upper, aligned_ids
 
 
-def knn_label_purity(embeddings: np.ndarray, labels: np.ndarray, k: int) -> np.ndarray:
-    """Fraction of each point's k nearest OTHER embeddings (cosine distance)
-    that share its label. A local, label-aware, aleatoric-flavored proxy:
-    low purity = locally-confused region of the embedding space -- but says
-    nothing about whether the model has ever seen enough data near this
-    point, which is what knn_mean_distance below is for."""
-    # Import scikit-learn's nearest-neighbors class lazily.
-    from sklearn.neighbors import NearestNeighbors
-
-    # Build a nearest-neighbors index using cosine distance, fetching k+1 neighbors (to exclude the point itself).
-    nn = NearestNeighbors(n_neighbors=k + 1, metric="cosine")
-    # Fit the nearest-neighbors index on the embeddings.
-    nn.fit(embeddings)
-    # Query the index to get distances and indices of neighbors for every point.
-    dist, idx = nn.kneighbors(embeddings)
-    # Drop the first neighbor column, which is each point itself.
-    idx = idx[:, 1:]
-    # Look up the labels of each point's neighbors.
-    neighbor_labels = labels[idx]
-    # Compute, per point, the fraction of neighbors sharing its own label.
-    purity = (neighbor_labels == labels[:, None]).mean(axis=1)
-    # Return the purity scores.
-    return purity
-
-
-def knn_mean_distance(embeddings: np.ndarray, k: int) -> np.ndarray:
-    """Mean cosine distance to each point's k nearest OTHER embeddings,
-    label-agnostic. A density-based, epistemic-flavored proxy in the style
-    of Deep Deterministic Uncertainty / Mahalanobis-OOD: points in a sparse
-    region of embedding space (far from everything else) are exactly where
-    a frozen, deterministic model has the least basis for any prediction --
-    independent of whether nearby points happen to agree on a label."""
-    # Import scikit-learn's nearest-neighbors class lazily.
-    from sklearn.neighbors import NearestNeighbors
-
-    # Build a nearest-neighbors index using cosine distance, fetching k+1 neighbors (to exclude the point itself).
-    nn = NearestNeighbors(n_neighbors=k + 1, metric="cosine")
-    # Fit the nearest-neighbors index on the embeddings.
-    nn.fit(embeddings)
-    # Query the index to get distances to each point's neighbors.
-    dist, _ = nn.kneighbors(embeddings)
-    # Return the mean distance to the k nearest neighbors, excluding the point itself.
-    return dist[:, 1:].mean(axis=1)
+# kNN geometry now lives in concept_audit.diagnostics.geometry so the standalone
+# blindspot pipeline and the identifiability audit share one implementation.
+# Re-exported here to keep this module's public surface unchanged.
+from concept_audit.diagnostics.geometry import (  # noqa: E402
+    knn_label_purity,
+    knn_mean_distance,
+    neighborhood_overlap,
+    blindspot_score,
+    rank_quadrants,
+    standardized_ranks,
+)
