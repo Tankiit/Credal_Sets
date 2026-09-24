@@ -22,7 +22,7 @@ def audit_structural(state, registry):
 
 @torch.no_grad()
 def audit_informational(state, registry, seed=0):
-    generator = torch.Generator(device=state.c.device).manual_seed(seed)
+    generator = torch.Generator().manual_seed(seed)
     reports = []
     for j, block in enumerate(state.model.blocks):
         c = state.c.clone()
@@ -41,7 +41,7 @@ def audit_consequence(state, registry, seed=0):
     Donor blocks are permuted within each split, independently of labels.
     This avoids treating binary labels as latent logits or embedding vectors.
     """
-    generator = torch.Generator(device=state.c.device).manual_seed(seed)
+    generator = torch.Generator().manual_seed(seed)
     donor = state.c.clone()
     for mask in (state.train_mask, ~state.train_mask):
         rows = mask.nonzero().flatten()

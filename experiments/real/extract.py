@@ -1,6 +1,7 @@
 """Image-dataset extraction entry point for the real-data experiment family."""
 import sys
-from concept_audit.data.extraction import main as extract
+from concept_audit.data import extract
+
 
 
 def main(argv=None):

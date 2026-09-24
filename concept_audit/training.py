@@ -14,6 +14,9 @@ from concept_audit.audits import audit_equivalence, audit_structural, audit_info
 
 
 def train_and_audit(z, g, y, n_train, args, *, family, provenance):
+    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+    z, g, y = z.to(device), g.to(device), y.to(device)
+
     k, classes = g.shape[1], int(y.max()) + 1
     train = torch.arange(len(z)) < n_train
     if args.backend == "cem":
@@ -28,7 +31,9 @@ def train_and_audit(z, g, y, n_train, args, *, family, provenance):
             readout = GroupReadout(2*k, blocks)
         factory = NativeCBM if args.backend == "native" else PyCAdapter
         model = factory(z.shape[1], classes, readout, blocks)
+    model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.02)
+
     log_root = getattr(args, "log_dir", None) or args.out.parent / "tensorboard"
     run_name = f"{family}-{args.backend}-{args.readout}-seed{args.seed}-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{uuid4().hex[:8]}"
     log_dir = log_root / run_name
@@ -73,6 +78,7 @@ def train_and_audit(z, g, y, n_train, args, *, family, provenance):
         model.eval().double()
         with torch.no_grad():
             state = AuditState(model.encode(z.double()), g.double(), y, model, train)
+            
             registry = default_registry()
             a = admissible_transform(model.readout, seed=args.seed)
             audit_results = {}
@@ -102,10 +108,10 @@ def train_and_audit(z, g, y, n_train, args, *, family, provenance):
         writer.flush()
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
-        torch.save({"model_state_dict": model.state_dict(), "backend": args.backend,
+        torch.save({"model_state_dict": {k: v.cpu() for k, v in model.state_dict().items()}, "backend": args.backend,
                     "feature_dim": z.shape[1], "num_classes": classes,
-                    "blocks": model.blocks, "readout_matrix": model.readout.matrix,
-                    "transform_matrix": a, "seed": args.seed}, args.out.with_suffix(".pt"))
+                    "blocks": model.blocks, "readout_matrix": model.readout.matrix.cpu(),
+                    "transform_matrix": a.cpu(), "seed": args.seed}, args.out.with_suffix(".pt"))
         print(f"Saved {args.out}; max logit error={report['equivalence']['max_logit_error']:.3g}")
 
         return report

@@ -36,7 +36,7 @@ import torch
 from transformers import AutoImageProcessor, AutoModel
 
 # Import the project's dataset class and manifest-reading helper.
-from common import ManifestImageDataset, read_manifest
+from .common import ManifestImageDataset, read_manifest
 
 
 def build_collate_fn(processor):
@@ -55,7 +55,7 @@ def build_collate_fn(processor):
     return collate
 
 
-def main():
+def main(argv=None):
     """
     Parse CLI arguments, run the frozen vision model over the manifest, and save embeddings, labels, ids, and metadata to disk.
     """
@@ -80,7 +80,7 @@ def main():
     ap.add_argument("--save-patch-tokens", action="store_true",
                      help="also save the full patch/register token grid, not just the CLS embedding")
     # Parse the command-line arguments into the args namespace.
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     # Wrap the output directory string in a Path object.
     out_dir = Path(args.out_dir)

@@ -1,0 +1,9 @@
+{
+  "backend": "native",
+  "readout": "coordinates",
+  "epochs": 100,
+  "seed": 0,
+  "features_dir": "ignore/cache/cache_shapes3d/cache_shapes3d_train",
+  "eval_features_dir": "ignore/cache/cache_shapes3d/cache_shapes3d_eval",
+  "out": "ignore/results_experiments/cbm_results/shapes3d_dataset/audit.json"
+}

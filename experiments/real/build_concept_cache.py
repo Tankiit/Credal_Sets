@@ -21,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 
-from blindspot_analysis.common import load_soft_labels, load_attribute_credal
+from concept_audit.data.common import load_soft_labels, load_attribute_credal
 
 
 def main():
