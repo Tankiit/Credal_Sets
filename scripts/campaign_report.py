@@ -73,11 +73,13 @@ def run_metrics(root, run, masked):
         au = a["au"].mean(-1) if a["au"].ndim > 1 else a["au"]
         conf = 1 - a["probs"].max(-1)
     collapsed = bool(np.std(au) < COLLAPSED_SD)
+    eu_collapsed = bool(np.std(eu) < COLLAPSED_SD)  # e.g. EU driven constant by a decorrelation penalty
     H = a.get("H")
-    m = {"acc": 100 * (1 - err.mean()), "collapsed": collapsed,
-         "rho_eu_err": rho(eu, err), "auroc_eu": float(roc_auc_score(err, eu)),
+    m = {"acc": 100 * (1 - err.mean()), "collapsed": collapsed, "eu_collapsed": eu_collapsed,
+         "rho_eu_err": math.nan if eu_collapsed else rho(eu, err),
+         "auroc_eu": math.nan if eu_collapsed else float(roc_auc_score(err, eu)),
          "auroc_maxprob": float(roc_auc_score(err, conf)) if conf is not None else math.nan,
-         "rho_eu_au": math.nan if collapsed else rho(eu, au), "rho_au_H": math.nan, "concept_acc": math.nan}
+         "rho_eu_au": math.nan if (collapsed or eu_collapsed) else rho(eu, au), "rho_au_H": math.nan, "concept_acc": math.nan}
     if run in masked:  # CEBaB: masked values
         r = masked[run]
         m["rho_au_H"] = r["rho_au_H"]["masked_matched"]["value"]
@@ -114,7 +116,7 @@ def main():
              "have a defined value. `—` means undefined, including correlations with a collapsed "
              "(constant) ambiguity head. CEBaB ρ(AU,H) and concept accuracy exclude unannotated aspects "
              "(`CEBAB_MASK_AUDIT.md`).", ""]
-    missing, collapsed = [], []
+    missing, collapsed, eu_collapsed = [], [], []
     for title, rows in GROUPS:
         lines += [f"## {title}", "", "| Configuration | Seeds | " + " | ".join(c[1] for c in COLS) + " |",
                   "|" + "---|" * (len(COLS) + 2)]
@@ -128,6 +130,8 @@ def main():
                     ms[s] = m
                     if m["collapsed"]:
                         collapsed.append(r)
+                    if m["eu_collapsed"]:
+                        eu_collapsed.append(r)
             cells = [fmt([m[k] for m in ms.values()], 1 if k in ("acc", "concept_acc") else 2) for k, _ in COLS]
             lines.append(f"| {name} | {','.join(map(str, sorted(ms))) or 'none'} | " + " | ".join(cells) + " |")
         lines.append("")
@@ -150,6 +154,8 @@ def main():
     lines += ["## Status", ""]
     lines.append(f"- Missing runs (not trained or not yet collected): {', '.join(f'`{m}`' for m in missing) or 'none'}")
     lines.append(f"- Runs with a collapsed ambiguity head: {', '.join(f'`{c}`' for c in collapsed) or 'none'}")
+    lines.append(f"- Runs with a collapsed epistemic head (EU metrics undefined): "
+                 f"{', '.join(f'`{c}`' for c in dict.fromkeys(eu_collapsed)) or 'none'}")
     Path(args.out).write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
 
