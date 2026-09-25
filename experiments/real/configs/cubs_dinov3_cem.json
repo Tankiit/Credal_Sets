@@ -2,8 +2,8 @@
   "backend": "cem",
   "readout": "coordinates",
   "epochs": 100,
-  "seed": 0,
+  "seed": 12,
   "features_dir": "ignore/cache/cache_cubs/cache_cubs_train",
   "eval_features_dir": "ignore/cache/cache_cubs/cache_cubs_eval",
-  "out": "ignore/results_experiments/cem_results/cubs_dataset/audit.json"
+  "out": "ignore/results_experiments/cem_results_seed12/cubs_dataset/audit.json"
 }
