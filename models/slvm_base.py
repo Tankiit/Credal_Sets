@@ -366,9 +366,11 @@ class HybridCredalSLVM(nn.Module):
                     annotator_entropy = annotator_entropy.unsqueeze(-1).expand_as(concept_labels)
                 elif annotator_entropy.shape != concept_labels.shape:
                     annotator_entropy = annotator_entropy.reshape_as(concept_labels)
-                targets = annotator_entropy[known_mask]
-                preds = result["aleatoric"][known_mask]
-                losses["aleatoric_loss"] = F.mse_loss(preds, targets)
+                known_mask = known_mask & torch.isfinite(annotator_entropy)  # NaN = unannotated
+                if known_mask.any():
+                    targets = annotator_entropy[known_mask]
+                    preds = result["aleatoric"][known_mask]
+                    losses["aleatoric_loss"] = F.mse_loss(preds, targets)
 
         # U-supervision (ablation only)
         if self.config.aleatoric_unknown_weight > 0 and concept_labels is not None:

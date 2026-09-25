@@ -233,7 +233,8 @@ def process_cebab_raw(raw_data: List[Dict]) -> List[Dict]:
         # ====================================================================
         concepts = np.zeros(4, dtype=np.int64)
         is_unknown = np.zeros(4, dtype=np.float32)
-        concept_distributions = []  # For computing disagreement
+        concept_valid = np.zeros(4, dtype=bool)  # binary (Negative/Positive) target exists
+        concept_distributions = []  # For computing disagreement; None = not annotated
 
         for aspect_name, aspect_idx in aspect_to_idx.items():
             majority = item.get(f'{aspect_name}_aspect_majority', 'unknown')
@@ -242,6 +243,12 @@ def process_cebab_raw(raw_data: List[Dict]) -> List[Dict]:
             if majority in label_to_idx:
                 concepts[aspect_idx] = label_to_idx[majority]
                 is_unknown[aspect_idx] = 1.0 if majority == 'unknown' else 0.0
+                concept_valid[aspect_idx] = majority != 'unknown'
+            else:
+                # '' (aspect not annotated) or 'no majority': there is no point
+                # label. Label 1 keeps it out of every `concept_labels != 1`
+                # loss and metric instead of silently counting it as Negative.
+                concepts[aspect_idx] = 1
 
             # Get distribution for disagreement computation
             dist_str = item.get(f'{aspect_name}_aspect_label_distribution', '{}')
@@ -270,9 +277,9 @@ def process_cebab_raw(raw_data: List[Dict]) -> List[Dict]:
                     ]
                     concept_distributions.append(probs)
                 else:
-                    concept_distributions.append([0.0, 1.0, 0.0])  # All unknown
+                    concept_distributions.append(None)  # no annotators: entropy undefined
             else:
-                concept_distributions.append([0.0, 1.0, 0.0])
+                concept_distributions.append(None)
 
         # ====================================================================
         # Extract task label (5-star rating)
@@ -280,15 +287,15 @@ def process_cebab_raw(raw_data: List[Dict]) -> List[Dict]:
         review_majority = item.get('review_majority', 'no majority')
 
         # Map to 0-4 (for 5 classes)
-        if review_majority == 'no majority':
-            # Use abstention class or map to middle
-            task_label = 2  # Middle rating (3 stars)
-        else:
-            try:
-                rating = int(review_majority)
-                task_label = rating - 1  # Convert 1-5 to 0-4
-            except:
-                task_label = 2  # Default to middle
+        # Reviews without a majority rating have no task label; skip them
+        # rather than inventing a 3-star label.
+        try:
+            rating = int(review_majority)
+        except (TypeError, ValueError):
+            continue
+        if not 1 <= rating <= 5:
+            continue
+        task_label = rating - 1  # Convert 1-5 to 0-4
 
         # ====================================================================
         # Compute annotator disagreement (aleatoric uncertainty signal)
@@ -296,6 +303,9 @@ def process_cebab_raw(raw_data: List[Dict]) -> List[Dict]:
         # For each concept, compute entropy of label distribution
         concept_entropies = []
         for probs in concept_distributions:
+            if probs is None:
+                concept_entropies.append(np.nan)
+                continue
             probs = np.array(probs)
             probs = probs / (probs.sum() + 1e-10)  # Normalize
 
@@ -359,12 +369,14 @@ def process_cebab_raw(raw_data: List[Dict]) -> List[Dict]:
             'label': task_label,  # 0-4 (5-star rating)
             'concepts': concepts,  # [4] - food, service, ambiance, noise
             'is_unknown': is_unknown,  # [4] - which concepts are unknown
+            'concept_valid': concept_valid,  # [4] - Negative/Positive majority exists
+            'entropy_valid': np.isfinite(concept_entropies),  # [4] - aspect was annotated
 
             # For analysis and aleatoric supervision
             '_concept_entropies': concept_entropies.astype(np.float32),
             '_concept_distributions': concept_distributions,  # Raw distributions for on-the-fly entropy computation
             '_rating_entropy': float(normalized_rating_entropy),
-            '_overall_disagreement': float(concept_entropies.mean()),
+            '_overall_disagreement': float(np.nanmean(concept_entropies)) if np.isfinite(concept_entropies).any() else float('nan'),
 
             # Original data
             '_review_majority': review_majority,
@@ -425,7 +437,7 @@ def load_cebab_direct(
 
             # Disagreement statistics
             disagreements = [d['_overall_disagreement'] for d in data]
-            print(f"  Mean disagreement: {np.mean(disagreements):.3f} ± {np.std(disagreements):.3f}")
+            print(f"  Mean disagreement: {np.nanmean(disagreements):.3f} ± {np.nanstd(disagreements):.3f}")
 
             # Rating entropy
             rating_entropies = [d['_rating_entropy'] for d in data]
@@ -486,9 +498,11 @@ class CEBaBDataset:
             # Fallback to zeros if not available
             result['annotator_entropy'] = torch.zeros(4, dtype=torch.float)
 
-        # Note: We could add entropy_weights based on whether distribution was available,
-        # but for now all entropies are treated equally
-        result['entropy_weights'] = torch.ones(4, dtype=torch.float)  # All valid
+        # NaN entries in annotator_entropy mark unannotated aspects; consumers must mask them.
+        valid = item.get('entropy_valid', np.ones(4, dtype=bool))
+        result['entropy_valid'] = torch.tensor(valid, dtype=torch.bool)
+        result['concept_valid'] = torch.tensor(item.get('concept_valid', np.ones(4, dtype=bool)), dtype=torch.bool)
+        result['entropy_weights'] = torch.tensor(valid, dtype=torch.float)
 
         # Add optional metadata
         for key in ['_rating_entropy', '_overall_disagreement']:

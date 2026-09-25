@@ -57,25 +57,35 @@ def compute_uncertainty_correlations(
 ) -> Dict[str, float]:
     """
     Compute Spearman correlations for the three headline relationships.
-    Returns NaN-safe dict: if a statistic is undefined (constant series),
-    returns 0.0 for rho and 1.0 for p-value.
+    Returns NaN for any statistic that is undefined (constant series or too
+    few finite pairs), never a placeholder 0.0.
     """
     eu_s = eu.mean(axis=-1) if eu.ndim > 1 else eu
     au_s = au.mean(axis=-1) if au.ndim > 1 else au
 
     def _spearman(x, y):
-        if x.std() == 0 or y.std() == 0:
-            return 0.0, 1.0
+        ok = np.isfinite(x) & np.isfinite(y)
+        x, y = x[ok], y[ok]
+        if len(x) < 3 or x.std() == 0 or y.std() == 0:
+            return float("nan"), float("nan")  # undefined, not zero
         r, p = stats.spearmanr(x, y)
         return float(r), float(p)
 
     rho_eu_au, p_eu_au = _spearman(eu_s, au_s)
     rho_eu_err, p_eu_err = _spearman(eu_s, errors.astype(float))
 
-    rho_ale_ent, p_ale_ent = 0.0, 1.0
+    rho_ale_ent, p_ale_ent = float("nan"), float("nan")
     if annotator_entropy is not None:
-        ent_s = annotator_entropy.mean(axis=-1) if annotator_entropy.ndim > 1 else annotator_entropy
-        rho_ale_ent, p_ale_ent = _spearman(au_s, ent_s)
+        if annotator_entropy.ndim > 1:
+            # Average AU and H over the same annotated (finite-H) entries only.
+            valid = np.isfinite(annotator_entropy)
+            n_valid = np.maximum(valid.sum(axis=-1), 1)
+            ent_s = np.where(valid, annotator_entropy, 0).sum(axis=-1) / n_valid
+            ent_s[valid.sum(axis=-1) == 0] = np.nan
+            au_m = np.where(valid, au, 0).sum(axis=-1) / n_valid if au.shape == annotator_entropy.shape else au_s
+        else:
+            ent_s, au_m = annotator_entropy, au_s
+        rho_ale_ent, p_ale_ent = _spearman(au_m, ent_s)
 
     return {
         "rho_eu_au": rho_eu_au, "p_eu_au": p_eu_au,

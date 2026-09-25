@@ -757,7 +757,9 @@ class VariationalCredalCBM(nn.Module):
 
         # Aleatoric supervision from annotator entropy (H-supervision)
         if annotator_entropy is not None:
-            losses['aleatoric_loss'] = F.mse_loss(result['aleatoric'], annotator_entropy)
+            valid = torch.isfinite(annotator_entropy)  # NaN marks unannotated aspects
+            if valid.any():
+                losses['aleatoric_loss'] = F.mse_loss(result['aleatoric'][valid], annotator_entropy[valid])
 
         # Aleatoric supervision from unknown-rate ablation (U-supervision)
         if self.config.aleatoric_unknown_weight > 0 and concept_labels is not None:
