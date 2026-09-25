@@ -6,6 +6,8 @@ from pathlib import Path
 
 def add_training_arguments(parser, output):
     parser.add_argument("--config", type=Path, help="Family-specific JSON config; CLI flags override it")
+    parser.add_argument("--task", choices=["model", "reference", "certification"], required=True,
+                         help="Which split role this run corresponds to (model-train / reference-train / certification)")
     parser.add_argument("--backend", choices=["native", "pyc", "cem"], default="native")
     parser.add_argument("--readout", choices=["identity", "coordinates", "grouped"], default="coordinates")
     parser.add_argument("--epochs", type=int, default=100)
