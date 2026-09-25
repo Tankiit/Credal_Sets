@@ -35,6 +35,8 @@ def main() -> None:
     parser.add_argument("--ckpt", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--batches", type=int, default=20)
+    parser.add_argument("--decorr-weight", type=float, default=0.0,
+                        help="also audit lambda_d * corr(EU, AU)^2, the penalty of the --decorr-weight campaign runs")
     args = parser.parse_args()
     ckpt_path, out_path = Path(args.ckpt).resolve(), Path(args.out).resolve()
     os.chdir(args.code_dir)
@@ -67,6 +69,8 @@ def main() -> None:
         "aleatoric_loss": config.aleatoric_weight, "aleatoric_unknown": 0.1 * config.aleatoric_weight,
         "orth_penalty": config.orth_weight,
     }
+    if args.decorr_weight > 0:
+        weights["decorr"] = args.decorr_weight
     sums: dict = {}
     for i, batch in enumerate(loader):
         if i == args.batches:
@@ -78,6 +82,12 @@ def main() -> None:
         losses = {k: v for k, v in result.items() if k in weights or k == "loss"}
         if not losses and "losses" in result:
             losses = {k: v for k, v in result["losses"].items() if k in weights or k == "loss"}
+        if args.decorr_weight > 0:
+            # Same form as modal_icml_2026_multiseed.py --decorr-weight.
+            eu, au = result["epistemic"].mean(-1), result["aleatoric"].mean(-1)
+            corr = ((eu - eu.mean()) * (au - au.mean())).mean() / (eu.std() * au.std() + 1e-8)
+            losses["decorr"] = corr ** 2
+            losses["loss"] = losses["loss"] + args.decorr_weight * losses["decorr"]
         for lname, lval in losses.items():
             if not torch.is_tensor(lval) or not lval.requires_grad:
                 continue
@@ -90,7 +100,7 @@ def main() -> None:
                     entry["sq"] += float(sum((g ** 2).sum() for g in present))
     n = min(args.batches, len(loader))
     report = {
-        "checkpoint": str(ckpt_path), "batches": n, "encoder_trainable_tensors": int(encoder_trainable),
+        "checkpoint": str(ckpt_path), "batches": n, "decorr_weight": args.decorr_weight, "encoder_trainable_tensors": int(encoder_trainable),
         "loss_weights": weights,
         "grad_norm_rms_over_batches": {
             l: {b: (None if not e["path"] else (e["sq"] / n) ** 0.5) for b, e in d.items()} for l, d in sums.items()
