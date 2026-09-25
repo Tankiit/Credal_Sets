@@ -29,3 +29,19 @@ def set_readout(c, readout, concept_id, value, tol=1e-5):
     if not torch.allclose(readout(result), target, atol=tol, rtol=tol):
         raise ValueError("Requested concept intervention is infeasible for this readout")
     return result
+
+
+def replace_supervised_block(c, readout, value):
+    """Set the whole supervised block to ground truth; leave free coordinates untouched (leaky)."""
+    return replace_block(c, readout.indices, value)
+
+
+def replace_supervised_block_concept_only(c, readout, value):
+    """Set the whole supervised block to ground truth; zero every free coordinate (concept-only)."""
+    latent_dim = readout.matrix.shape[1]
+    free_indices = tuple(i for i in range(latent_dim) if i not in set(readout.indices))
+    result = replace_block(c, readout.indices, value)
+    if free_indices:
+        zeros = torch.zeros(c.shape[0], len(free_indices), dtype=c.dtype, device=c.device)
+        result = replace_block(result, free_indices, zeros)
+    return result

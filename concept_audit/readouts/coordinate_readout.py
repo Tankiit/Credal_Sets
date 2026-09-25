@@ -10,4 +10,5 @@ class CoordinateReadout(LinearReadout):
         ):
             raise ValueError("Coordinates must be unique, nonempty, and in range")
         super().__init__(torch.eye(latent_dim)[list(coordinates)])
+        self.indices = coordinates
 
