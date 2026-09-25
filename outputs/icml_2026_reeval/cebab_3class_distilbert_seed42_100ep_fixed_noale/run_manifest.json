@@ -1,0 +1,12 @@
+{
+  "run_id": "cebab_3class_distilbert_seed42_100ep_fixed_noale",
+  "kind": "cebab3",
+  "encoder": "distilbert-base-uncased",
+  "seed": 42,
+  "checkpoint_epoch": 18,
+  "checkpoint_rule": "best validation task accuracy (HybridCredalCBMTrainer.fit)",
+  "lambda_d": 0.0,
+  "H_source": "annotator_entropy",
+  "n_test": 1689,
+  "accuracy": 0.7803433984606276
+}

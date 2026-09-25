@@ -1,0 +1,15 @@
+{
+  "run_id": "ambigqa_distilbert_seed2024_100ep",
+  "kind": "maqa",
+  "qa_subset": "ambigqa",
+  "encoder": "distilbert-base-uncased",
+  "seed": 2024,
+  "checkpoint_epoch": 99,
+  "checkpoint_rule": "lowest validation loss (train_maqa_model)",
+  "loss_version": "v7b",
+  "lambda_decorr": 5.0,
+  "note": "sigma_ale head takes ground-truth entropy as input; au_no_H_input zeroes it",
+  "accuracy_definition": "argmax of answer logits over valid answers == majority answer",
+  "n_test": 421,
+  "accuracy": 0.5225653206650831
+}

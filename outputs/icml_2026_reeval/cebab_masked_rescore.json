@@ -380,6 +380,1581 @@
         "share_predicted_negative": 0.8787047200878156
       }
     },
+    "cebab_3class_distilbert_seed123_100ep_fixed": {
+      "run_id": "cebab_3class_distilbert_seed123_100ep_fixed",
+      "seed": 123,
+      "n": 1689,
+      "unchanged": {
+        "accuracy": 0.7773830669034931,
+        "rho_eu_au": -0.1208828196503812,
+        "rho_eu_err": 0.3368034988160966,
+        "auroc_eu_err": 0.733716436291747,
+        "auroc_maxprob_err": 0.7692955874965566
+      },
+      "rho_au_H": {
+        "old_all_aspects": {
+          "value": 0.022474412836088795,
+          "boot95": [
+            -0.021658023830584704,
+            0.06749984299217832
+          ]
+        },
+        "masked_matched": {
+          "value": 0.21371898457235933,
+          "boot95": [
+            0.17044733897163233,
+            0.25950680984739394
+          ],
+          "note": "AU and H both averaged over annotated aspects"
+        },
+        "masked_H_only": {
+          "value": 0.11727948783402761,
+          "note": "U_ale over all concepts, H over annotated aspects"
+        },
+        "masked_pooled": {
+          "value": 0.22671571779462235,
+          "boot95": [
+            0.1995437489898048,
+            0.25100740487879647
+          ],
+          "n_entries": 4934
+        },
+        "per_aspect_old": {
+          "food": 0.25273341315854636,
+          "service": 0.04482043329965625,
+          "ambiance": -0.05668116017396463,
+          "noise": -0.1330434377800404
+        },
+        "per_aspect_masked": {
+          "food": 0.3195114630282755,
+          "service": 0.249081601932359,
+          "ambiance": 0.15065569892352568,
+          "noise": 0.0025489803166118524
+        }
+      },
+      "strata_old": {
+        "cuts": [
+          0.11387147754430771,
+          0.22774295508861542
+        ],
+        "low": {
+          "n": 418,
+          "errors": 84,
+          "H_range": [
+            0.0,
+            0.0
+          ],
+          "auroc_eu": 0.7374893071000855,
+          "auroc_maxprob": 0.7992942686056459
+        },
+        "med": {
+          "n": 695,
+          "errors": 155,
+          "H_range": [
+            0.11387147754430771,
+            0.21624338626861572
+          ],
+          "auroc_eu": 0.7370011947431303,
+          "auroc_maxprob": 0.7673476702508961
+        },
+        "high": {
+          "n": 576,
+          "errors": 137,
+          "H_range": [
+            0.22774295508861542,
+            0.5971367359161377
+          ],
+          "auroc_eu": 0.728812995693597,
+          "auroc_maxprob": 0.7519578338293733
+        }
+      },
+      "strata_masked": {
+        "cuts": [
+          0.15182863672574362,
+          0.288324515024821
+        ],
+        "low": {
+          "n": 550,
+          "errors": 118,
+          "H_range": [
+            0.0,
+            0.11387147754430771
+          ],
+          "auroc_eu": 0.7417608286252354,
+          "auroc_maxprob": 0.7902346202134338
+        },
+        "med": {
+          "n": 554,
+          "errors": 112,
+          "H_range": [
+            0.15182863672574362,
+            0.26702189445495605
+          ],
+          "auroc_eu": 0.7500404007756949,
+          "auroc_maxprob": 0.7774725274725275
+        },
+        "high": {
+          "n": 585,
+          "errors": 146,
+          "H_range": [
+            0.288324515024821,
+            0.8649735450744629
+          ],
+          "auroc_eu": 0.7113614378881018,
+          "auroc_maxprob": 0.7436577526757574
+        }
+      },
+      "n_reviews_H0_old": 418,
+      "n_reviews_H0_masked": 418,
+      "concept_accuracy": {
+        "old_known_incl_unannotated": {
+          "mean": 0.6951293945983673,
+          "per_aspect": {
+            "food": {
+              "n": 1375,
+              "acc": 0.7883636363636364
+            },
+            "service": {
+              "n": 1267,
+              "acc": 0.6945540647198106
+            },
+            "ambiance": {
+              "n": 1134,
+              "acc": 0.681657848324515
+            },
+            "noise": {
+              "n": 1104,
+              "acc": 0.6159420289855072
+            }
+          }
+        },
+        "masked_binary_only": {
+          "mean": 0.783740798146713,
+          "per_aspect": {
+            "food": {
+              "n": 1275,
+              "acc": 0.7952941176470588
+            },
+            "service": {
+              "n": 875,
+              "acc": 0.7931428571428571
+            },
+            "ambiance": {
+              "n": 546,
+              "acc": 0.7454212454212454
+            },
+            "noise": {
+              "n": 362,
+              "acc": 0.8011049723756906
+            }
+          }
+        }
+      },
+      "phantom_negative_entries": {
+        "n": 1822,
+        "share_predicted_negative": 0.5554335894621295
+      }
+    },
+    "cebab_3class_distilbert_seed123_100ep_fixed_decorr5": {
+      "run_id": "cebab_3class_distilbert_seed123_100ep_fixed_decorr5",
+      "seed": 123,
+      "n": 1689,
+      "unchanged": {
+        "accuracy": 0.7690941385435168,
+        "rho_eu_au": NaN,
+        "rho_eu_err": 0.30471963786732237,
+        "auroc_eu_err": 0.7087384773297013,
+        "auroc_maxprob_err": 0.7869485402972702
+      },
+      "rho_au_H": {
+        "old_all_aspects": {
+          "value": NaN,
+          "boot95": [
+            NaN,
+            NaN
+          ]
+        },
+        "masked_matched": {
+          "value": NaN,
+          "boot95": [
+            NaN,
+            NaN
+          ],
+          "note": "AU and H both averaged over annotated aspects"
+        },
+        "masked_H_only": {
+          "value": NaN,
+          "note": "U_ale over all concepts, H over annotated aspects"
+        },
+        "masked_pooled": {
+          "value": NaN,
+          "boot95": [
+            NaN,
+            NaN
+          ],
+          "n_entries": 4934
+        },
+        "per_aspect_old": {
+          "food": NaN,
+          "service": NaN,
+          "ambiance": NaN,
+          "noise": NaN
+        },
+        "per_aspect_masked": {
+          "food": NaN,
+          "service": NaN,
+          "ambiance": NaN,
+          "noise": NaN
+        }
+      },
+      "strata_old": {
+        "cuts": [
+          0.11387147754430771,
+          0.22774295508861542
+        ],
+        "low": {
+          "n": 418,
+          "errors": 88,
+          "H_range": [
+            0.0,
+            0.0
+          ],
+          "auroc_eu": 0.7193181818181817,
+          "auroc_maxprob": 0.806404958677686
+        },
+        "med": {
+          "n": 695,
+          "errors": 156,
+          "H_range": [
+            0.11387147754430771,
+            0.21624338626861572
+          ],
+          "auroc_eu": 0.7153917511060368,
+          "auroc_maxprob": 0.7845012130726416
+        },
+        "high": {
+          "n": 576,
+          "errors": 146,
+          "H_range": [
+            0.22774295508861542,
+            0.5971367359161377
+          ],
+          "auroc_eu": 0.6960815546352341,
+          "auroc_maxprob": 0.7767601146862058
+        }
+      },
+      "strata_masked": {
+        "cuts": [
+          0.15182863672574362,
+          0.288324515024821
+        ],
+        "low": {
+          "n": 550,
+          "errors": 126,
+          "H_range": [
+            0.0,
+            0.11387147754430771
+          ],
+          "auroc_eu": 0.7273510032943996,
+          "auroc_maxprob": 0.8104971548367774
+        },
+        "med": {
+          "n": 554,
+          "errors": 116,
+          "H_range": [
+            0.15182863672574362,
+            0.26702189445495605
+          ],
+          "auroc_eu": 0.7248267989293025,
+          "auroc_maxprob": 0.800011809163911
+        },
+        "high": {
+          "n": 585,
+          "errors": 148,
+          "H_range": [
+            0.288324515024821,
+            0.8649735450744629
+          ],
+          "auroc_eu": 0.6764178366009029,
+          "auroc_maxprob": 0.7526284866101799
+        }
+      },
+      "n_reviews_H0_old": 418,
+      "n_reviews_H0_masked": 418,
+      "concept_accuracy": {
+        "old_known_incl_unannotated": {
+          "mean": 0.6913917025385418,
+          "per_aspect": {
+            "food": {
+              "n": 1375,
+              "acc": 0.7876363636363637
+            },
+            "service": {
+              "n": 1267,
+              "acc": 0.7166535122336227
+            },
+            "ambiance": {
+              "n": 1134,
+              "acc": 0.6516754850088183
+            },
+            "noise": {
+              "n": 1104,
+              "acc": 0.6096014492753623
+            }
+          }
+        },
+        "masked_binary_only": {
+          "mean": 0.790929407717188,
+          "per_aspect": {
+            "food": {
+              "n": 1275,
+              "acc": 0.8007843137254902
+            },
+            "service": {
+              "n": 875,
+              "acc": 0.7908571428571428
+            },
+            "ambiance": {
+              "n": 546,
+              "acc": 0.7875457875457875
+            },
+            "noise": {
+              "n": 362,
+              "acc": 0.7845303867403315
+            }
+          }
+        }
+      },
+      "phantom_negative_entries": {
+        "n": 1822,
+        "share_predicted_negative": 0.535675082327113
+      }
+    },
+    "cebab_3class_distilbert_seed123_100ep_fixed_noale": {
+      "run_id": "cebab_3class_distilbert_seed123_100ep_fixed_noale",
+      "seed": 123,
+      "n": 1689,
+      "unchanged": {
+        "accuracy": 0.7649496743635287,
+        "rho_eu_au": NaN,
+        "rho_eu_err": 0.32067085721238786,
+        "auroc_eu_err": 0.7183091452144957,
+        "auroc_maxprob_err": 0.7872355358688617
+      },
+      "rho_au_H": {
+        "old_all_aspects": {
+          "value": NaN,
+          "boot95": [
+            NaN,
+            NaN
+          ]
+        },
+        "masked_matched": {
+          "value": NaN,
+          "boot95": [
+            NaN,
+            NaN
+          ],
+          "note": "AU and H both averaged over annotated aspects"
+        },
+        "masked_H_only": {
+          "value": NaN,
+          "note": "U_ale over all concepts, H over annotated aspects"
+        },
+        "masked_pooled": {
+          "value": NaN,
+          "boot95": [
+            NaN,
+            NaN
+          ],
+          "n_entries": 4934
+        },
+        "per_aspect_old": {
+          "food": NaN,
+          "service": NaN,
+          "ambiance": NaN,
+          "noise": NaN
+        },
+        "per_aspect_masked": {
+          "food": NaN,
+          "service": NaN,
+          "ambiance": NaN,
+          "noise": NaN
+        }
+      },
+      "strata_old": {
+        "cuts": [
+          0.11387147754430771,
+          0.22774295508861542
+        ],
+        "low": {
+          "n": 418,
+          "errors": 89,
+          "H_range": [
+            0.0,
+            0.0
+          ],
+          "auroc_eu": 0.7430757146272327,
+          "auroc_maxprob": 0.8004508042758103
+        },
+        "med": {
+          "n": 695,
+          "errors": 161,
+          "H_range": [
+            0.11387147754430771,
+            0.21624338626861572
+          ],
+          "auroc_eu": 0.7046897899364923,
+          "auroc_maxprob": 0.792286039965571
+        },
+        "high": {
+          "n": 576,
+          "errors": 147,
+          "H_range": [
+            0.22774295508861542,
+            0.5971367359161377
+          ],
+          "auroc_eu": 0.7167118595690023,
+          "auroc_maxprob": 0.7734170591313448
+        }
+      },
+      "strata_masked": {
+        "cuts": [
+          0.15182863672574362,
+          0.288324515024821
+        ],
+        "low": {
+          "n": 550,
+          "errors": 126,
+          "H_range": [
+            0.0,
+            0.11387147754430771
+          ],
+          "auroc_eu": 0.7474543276430068,
+          "auroc_maxprob": 0.8038709194369571
+        },
+        "med": {
+          "n": 554,
+          "errors": 115,
+          "H_range": [
+            0.15182863672574362,
+            0.26702189445495605
+          ],
+          "auroc_eu": 0.7084678617411113,
+          "auroc_maxprob": 0.7898979895018323
+        },
+        "high": {
+          "n": 585,
+          "errors": 156,
+          "H_range": [
+            0.288324515024821,
+            0.8649735450744629
+          ],
+          "auroc_eu": 0.6983892176199868,
+          "auroc_maxprob": 0.7701422509114817
+        }
+      },
+      "n_reviews_H0_old": 418,
+      "n_reviews_H0_masked": 418,
+      "concept_accuracy": {
+        "old_known_incl_unannotated": {
+          "mean": 0.6884520377836296,
+          "per_aspect": {
+            "food": {
+              "n": 1375,
+              "acc": 0.7803636363636364
+            },
+            "service": {
+              "n": 1267,
+              "acc": 0.7016574585635359
+            },
+            "ambiance": {
+              "n": 1134,
+              "acc": 0.6649029982363316
+            },
+            "noise": {
+              "n": 1104,
+              "acc": 0.6068840579710145
+            }
+          }
+        },
+        "masked_binary_only": {
+          "mean": 0.787988159819814,
+          "per_aspect": {
+            "food": {
+              "n": 1275,
+              "acc": 0.7913725490196079
+            },
+            "service": {
+              "n": 875,
+              "acc": 0.8022857142857143
+            },
+            "ambiance": {
+              "n": 546,
+              "acc": 0.782051282051282
+            },
+            "noise": {
+              "n": 362,
+              "acc": 0.7762430939226519
+            }
+          }
+        }
+      },
+      "phantom_negative_entries": {
+        "n": 1822,
+        "share_predicted_negative": 0.530735455543359
+      }
+    },
+    "cebab_3class_distilbert_seed2024_100ep_fixed": {
+      "run_id": "cebab_3class_distilbert_seed2024_100ep_fixed",
+      "seed": 2024,
+      "n": 1689,
+      "unchanged": {
+        "accuracy": 0.7773830669034931,
+        "rho_eu_au": -0.12697292966231927,
+        "rho_eu_err": 0.2961038187593046,
+        "auroc_eu_err": 0.7054739025457373,
+        "auroc_maxprob_err": 0.7747990633760593
+      },
+      "rho_au_H": {
+        "old_all_aspects": {
+          "value": 0.03498984830991044,
+          "boot95": [
+            -0.008805614805917336,
+            0.08237374797691151
+          ]
+        },
+        "masked_matched": {
+          "value": 0.2094691058038161,
+          "boot95": [
+            0.16114807579410578,
+            0.259756432513076
+          ],
+          "note": "AU and H both averaged over annotated aspects"
+        },
+        "masked_H_only": {
+          "value": 0.13371952157816602,
+          "note": "U_ale over all concepts, H over annotated aspects"
+        },
+        "masked_pooled": {
+          "value": 0.21917169885855126,
+          "boot95": [
+            0.1935208979676528,
+            0.2436056317382049
+          ],
+          "n_entries": 4934
+        },
+        "per_aspect_old": {
+          "food": 0.24635810498933317,
+          "service": 0.06849688953605881,
+          "ambiance": -0.061815193709438096,
+          "noise": -0.13457498924970776
+        },
+        "per_aspect_masked": {
+          "food": 0.30016361793944396,
+          "service": 0.2886037763578426,
+          "ambiance": 0.12698925317174417,
+          "noise": -0.013273130771167584
+        }
+      },
+      "strata_old": {
+        "cuts": [
+          0.11387147754430771,
+          0.22774295508861542
+        ],
+        "low": {
+          "n": 418,
+          "errors": 82,
+          "H_range": [
+            0.0,
+            0.0
+          ],
+          "auroc_eu": 0.7105836236933798,
+          "auroc_maxprob": 0.7915214866434379
+        },
+        "med": {
+          "n": 695,
+          "errors": 152,
+          "H_range": [
+            0.11387147754430771,
+            0.21624338626861572
+          ],
+          "auroc_eu": 0.7065401764078706,
+          "auroc_maxprob": 0.7822404768828147
+        },
+        "high": {
+          "n": 576,
+          "errors": 142,
+          "H_range": [
+            0.22774295508861542,
+            0.5971367359161377
+          ],
+          "auroc_eu": 0.6984325306678782,
+          "auroc_maxprob": 0.7552573505549426
+        }
+      },
+      "strata_masked": {
+        "cuts": [
+          0.15182863672574362,
+          0.288324515024821
+        ],
+        "low": {
+          "n": 550,
+          "errors": 113,
+          "H_range": [
+            0.0,
+            0.11387147754430771
+          ],
+          "auroc_eu": 0.7065875539174987,
+          "auroc_maxprob": 0.7862740730240376
+        },
+        "med": {
+          "n": 554,
+          "errors": 124,
+          "H_range": [
+            0.15182863672574362,
+            0.26702189445495605
+          ],
+          "auroc_eu": 0.7423668417104275,
+          "auroc_maxprob": 0.8081582895723931
+        },
+        "high": {
+          "n": 585,
+          "errors": 139,
+          "H_range": [
+            0.288324515024821,
+            0.8649735450744629
+          ],
+          "auroc_eu": 0.6678388231119141,
+          "auroc_maxprob": 0.735071135916379
+        }
+      },
+      "n_reviews_H0_old": 418,
+      "n_reviews_H0_masked": 418,
+      "concept_accuracy": {
+        "old_known_incl_unannotated": {
+          "mean": 0.6954965143448409,
+          "per_aspect": {
+            "food": {
+              "n": 1375,
+              "acc": 0.7738181818181818
+            },
+            "service": {
+              "n": 1267,
+              "acc": 0.7261247040252565
+            },
+            "ambiance": {
+              "n": 1134,
+              "acc": 0.6208112874779541
+            },
+            "noise": {
+              "n": 1104,
+              "acc": 0.6612318840579711
+            }
+          }
+        },
+        "masked_binary_only": {
+          "mean": 0.7730447334054744,
+          "per_aspect": {
+            "food": {
+              "n": 1275,
+              "acc": 0.7803921568627451
+            },
+            "service": {
+              "n": 875,
+              "acc": 0.7828571428571428
+            },
+            "ambiance": {
+              "n": 546,
+              "acc": 0.7637362637362637
+            },
+            "noise": {
+              "n": 362,
+              "acc": 0.7651933701657458
+            }
+          }
+        }
+      },
+      "phantom_negative_entries": {
+        "n": 1822,
+        "share_predicted_negative": 0.5729967069154775
+      }
+    },
+    "cebab_3class_distilbert_seed2024_100ep_fixed_decorr5": {
+      "run_id": "cebab_3class_distilbert_seed2024_100ep_fixed_decorr5",
+      "seed": 2024,
+      "n": 1689,
+      "unchanged": {
+        "accuracy": 0.7714624037892244,
+        "rho_eu_au": NaN,
+        "rho_eu_err": NaN,
+        "auroc_eu_err": 0.5,
+        "auroc_maxprob_err": 0.78353858572684
+      },
+      "rho_au_H": {
+        "old_all_aspects": {
+          "value": 0.04673031471918598,
+          "boot95": [
+            0.0003866971092219888,
+            0.09549724351514967
+          ]
+        },
+        "masked_matched": {
+          "value": 0.21944379560314087,
+          "boot95": [
+            0.17062093885849086,
+            0.26745165583277547
+          ],
+          "note": "AU and H both averaged over annotated aspects"
+        },
+        "masked_H_only": {
+          "value": 0.1407305052429533,
+          "note": "U_ale over all concepts, H over annotated aspects"
+        },
+        "masked_pooled": {
+          "value": 0.2147654037554867,
+          "boot95": [
+            0.18937548878378857,
+            0.2395902568683703
+          ],
+          "n_entries": 4934
+        },
+        "per_aspect_old": {
+          "food": 0.24160066137511774,
+          "service": 0.07501462296448445,
+          "ambiance": -0.06213694188522809,
+          "noise": -0.12506974483776406
+        },
+        "per_aspect_masked": {
+          "food": 0.29924909766863406,
+          "service": 0.2994410480731754,
+          "ambiance": 0.12944351661175454,
+          "noise": 0.0006955342957783803
+        }
+      },
+      "strata_old": {
+        "cuts": [
+          0.11387147754430771,
+          0.22774295508861542
+        ],
+        "low": {
+          "n": 418,
+          "errors": 84,
+          "H_range": [
+            0.0,
+            0.0
+          ],
+          "auroc_eu": 0.5,
+          "auroc_maxprob": 0.8013972055888224
+        },
+        "med": {
+          "n": 695,
+          "errors": 164,
+          "H_range": [
+            0.11387147754430771,
+            0.21624338626861572
+          ],
+          "auroc_eu": 0.5,
+          "auroc_maxprob": 0.8040512608515916
+        },
+        "high": {
+          "n": 576,
+          "errors": 138,
+          "H_range": [
+            0.22774295508861542,
+            0.5971367359161377
+          ],
+          "auroc_eu": 0.5,
+          "auroc_maxprob": 0.7466580636622329
+        }
+      },
+      "strata_masked": {
+        "cuts": [
+          0.15182863672574362,
+          0.288324515024821
+        ],
+        "low": {
+          "n": 550,
+          "errors": 116,
+          "H_range": [
+            0.0,
+            0.11387147754430771
+          ],
+          "auroc_eu": 0.5,
+          "auroc_maxprob": 0.8004727474972192
+        },
+        "med": {
+          "n": 554,
+          "errors": 131,
+          "H_range": [
+            0.15182863672574362,
+            0.26702189445495605
+          ],
+          "auroc_eu": 0.5,
+          "auroc_maxprob": 0.8266652229621207
+        },
+        "high": {
+          "n": 585,
+          "errors": 139,
+          "H_range": [
+            0.288324515024821,
+            0.8649735450744629
+          ],
+          "auroc_eu": 0.5,
+          "auroc_maxprob": 0.7284898538568249
+        }
+      },
+      "n_reviews_H0_old": 418,
+      "n_reviews_H0_masked": 418,
+      "concept_accuracy": {
+        "old_known_incl_unannotated": {
+          "mean": 0.7090995879356037,
+          "per_aspect": {
+            "food": {
+              "n": 1375,
+              "acc": 0.7847272727272727
+            },
+            "service": {
+              "n": 1267,
+              "acc": 0.7205998421468035
+            },
+            "ambiance": {
+              "n": 1134,
+              "acc": 0.6499118165784833
+            },
+            "noise": {
+              "n": 1104,
+              "acc": 0.6811594202898551
+            }
+          }
+        },
+        "masked_binary_only": {
+          "mean": 0.7721768408170748,
+          "per_aspect": {
+            "food": {
+              "n": 1275,
+              "acc": 0.7945098039215687
+            },
+            "service": {
+              "n": 875,
+              "acc": 0.768
+            },
+            "ambiance": {
+              "n": 546,
+              "acc": 0.7582417582417582
+            },
+            "noise": {
+              "n": 362,
+              "acc": 0.7679558011049724
+            }
+          }
+        }
+      },
+      "phantom_negative_entries": {
+        "n": 1822,
+        "share_predicted_negative": 0.605927552140505
+      }
+    },
+    "cebab_3class_distilbert_seed2024_100ep_fixed_noale": {
+      "run_id": "cebab_3class_distilbert_seed2024_100ep_fixed_noale",
+      "seed": 2024,
+      "n": 1689,
+      "unchanged": {
+        "accuracy": 0.7779751332149201,
+        "rho_eu_au": NaN,
+        "rho_eu_err": 0.30405811496193075,
+        "auroc_eu_err": 0.7111943176052765,
+        "auroc_maxprob_err": 0.7862425164890919
+      },
+      "rho_au_H": {
+        "old_all_aspects": {
+          "value": NaN,
+          "boot95": [
+            NaN,
+            NaN
+          ]
+        },
+        "masked_matched": {
+          "value": NaN,
+          "boot95": [
+            NaN,
+            NaN
+          ],
+          "note": "AU and H both averaged over annotated aspects"
+        },
+        "masked_H_only": {
+          "value": NaN,
+          "note": "U_ale over all concepts, H over annotated aspects"
+        },
+        "masked_pooled": {
+          "value": NaN,
+          "boot95": [
+            NaN,
+            NaN
+          ],
+          "n_entries": 4934
+        },
+        "per_aspect_old": {
+          "food": NaN,
+          "service": NaN,
+          "ambiance": NaN,
+          "noise": NaN
+        },
+        "per_aspect_masked": {
+          "food": NaN,
+          "service": NaN,
+          "ambiance": NaN,
+          "noise": NaN
+        }
+      },
+      "strata_old": {
+        "cuts": [
+          0.11387147754430771,
+          0.22774295508861542
+        ],
+        "low": {
+          "n": 418,
+          "errors": 75,
+          "H_range": [
+            0.0,
+            0.0
+          ],
+          "auroc_eu": 0.7244314868804664,
+          "auroc_maxprob": 0.7852672497570456
+        },
+        "med": {
+          "n": 695,
+          "errors": 155,
+          "H_range": [
+            0.11387147754430771,
+            0.21624338626861572
+          ],
+          "auroc_eu": 0.7156869772998806,
+          "auroc_maxprob": 0.7964277180406212
+        },
+        "high": {
+          "n": 576,
+          "errors": 145,
+          "H_range": [
+            0.22774295508861542,
+            0.5971367359161377
+          ],
+          "auroc_eu": 0.6991919353548284,
+          "auroc_maxprob": 0.7765261220897672
+        }
+      },
+      "strata_masked": {
+        "cuts": [
+          0.15182863672574362,
+          0.288324515024821
+        ],
+        "low": {
+          "n": 550,
+          "errors": 108,
+          "H_range": [
+            0.0,
+            0.11387147754430771
+          ],
+          "auroc_eu": 0.7176344896933131,
+          "auroc_maxprob": 0.7803125523713759
+        },
+        "med": {
+          "n": 554,
+          "errors": 120,
+          "H_range": [
+            0.15182863672574362,
+            0.26702189445495605
+          ],
+          "auroc_eu": 0.7368663594470045,
+          "auroc_maxprob": 0.8075844854070661
+        },
+        "high": {
+          "n": 585,
+          "errors": 147,
+          "H_range": [
+            0.288324515024821,
+            0.8649735450744629
+          ],
+          "auroc_eu": 0.6829745596868885,
+          "auroc_maxprob": 0.771083775976144
+        }
+      },
+      "n_reviews_H0_old": 418,
+      "n_reviews_H0_masked": 418,
+      "concept_accuracy": {
+        "old_known_incl_unannotated": {
+          "mean": 0.6988151160611524,
+          "per_aspect": {
+            "food": {
+              "n": 1375,
+              "acc": 0.7789090909090909
+            },
+            "service": {
+              "n": 1267,
+              "acc": 0.7348066298342542
+            },
+            "ambiance": {
+              "n": 1134,
+              "acc": 0.6058201058201058
+            },
+            "noise": {
+              "n": 1104,
+              "acc": 0.6757246376811594
+            }
+          }
+        },
+        "masked_binary_only": {
+          "mean": 0.771523414295595,
+          "per_aspect": {
+            "food": {
+              "n": 1275,
+              "acc": 0.7890196078431373
+            },
+            "service": {
+              "n": 875,
+              "acc": 0.7828571428571428
+            },
+            "ambiance": {
+              "n": 546,
+              "acc": 0.76007326007326
+            },
+            "noise": {
+              "n": 362,
+              "acc": 0.7541436464088398
+            }
+          }
+        }
+      },
+      "phantom_negative_entries": {
+        "n": 1822,
+        "share_predicted_negative": 0.579582875960483
+      }
+    },
+    "cebab_3class_distilbert_seed42_100ep_fixed": {
+      "run_id": "cebab_3class_distilbert_seed42_100ep_fixed",
+      "seed": 42,
+      "n": 1689,
+      "unchanged": {
+        "accuracy": 0.778567199526347,
+        "rho_eu_au": -0.17842167908343512,
+        "rho_eu_err": 0.3342055100282092,
+        "auroc_eu_err": 0.7323559911347879,
+        "auroc_maxprob_err": 0.7822248429271468
+      },
+      "rho_au_H": {
+        "old_all_aspects": {
+          "value": 0.04301585684140918,
+          "boot95": [
+            -0.003294761532661232,
+            0.08805952558170352
+          ]
+        },
+        "masked_matched": {
+          "value": 0.23283256733594268,
+          "boot95": [
+            0.1849711267877226,
+            0.2774387589646502
+          ],
+          "note": "AU and H both averaged over annotated aspects"
+        },
+        "masked_H_only": {
+          "value": 0.14067850925094638,
+          "note": "U_ale over all concepts, H over annotated aspects"
+        },
+        "masked_pooled": {
+          "value": 0.22689808279438534,
+          "boot95": [
+            0.2018495441972888,
+            0.2506752015336143
+          ],
+          "n_entries": 4934
+        },
+        "per_aspect_old": {
+          "food": 0.28037577348852055,
+          "service": 0.024930904451912914,
+          "ambiance": -0.05624074221550407,
+          "noise": -0.13831339465034417
+        },
+        "per_aspect_masked": {
+          "food": 0.34970090913241925,
+          "service": 0.23800851815264548,
+          "ambiance": 0.1351133748556444,
+          "noise": -0.0192936503910311
+        }
+      },
+      "strata_old": {
+        "cuts": [
+          0.11387147754430771,
+          0.22774295508861542
+        ],
+        "low": {
+          "n": 418,
+          "errors": 76,
+          "H_range": [
+            0.0,
+            0.0
+          ],
+          "auroc_eu": 0.7370729455216989,
+          "auroc_maxprob": 0.7955909510618653
+        },
+        "med": {
+          "n": 695,
+          "errors": 155,
+          "H_range": [
+            0.11387147754430771,
+            0.21624338626861572
+          ],
+          "auroc_eu": 0.7375149342891278,
+          "auroc_maxprob": 0.795400238948626
+        },
+        "high": {
+          "n": 576,
+          "errors": 143,
+          "H_range": [
+            0.22774295508861542,
+            0.5971367359161377
+          ],
+          "auroc_eu": 0.7260614674009593,
+          "auroc_maxprob": 0.7603320467061807
+        }
+      },
+      "strata_masked": {
+        "cuts": [
+          0.15182863672574362,
+          0.288324515024821
+        ],
+        "low": {
+          "n": 550,
+          "errors": 106,
+          "H_range": [
+            0.0,
+            0.11387147754430771
+          ],
+          "auroc_eu": 0.7370389257181709,
+          "auroc_maxprob": 0.7894994050654428
+        },
+        "med": {
+          "n": 554,
+          "errors": 122,
+          "H_range": [
+            0.15182863672574362,
+            0.26702189445495605
+          ],
+          "auroc_eu": 0.759012598664238,
+          "auroc_maxprob": 0.808154978749241
+        },
+        "high": {
+          "n": 585,
+          "errors": 146,
+          "H_range": [
+            0.288324515024821,
+            0.8649735450744629
+          ],
+          "auroc_eu": 0.7071332730052735,
+          "auroc_maxprob": 0.7523949199613068
+        }
+      },
+      "n_reviews_H0_old": 418,
+      "n_reviews_H0_masked": 418,
+      "concept_accuracy": {
+        "old_known_incl_unannotated": {
+          "mean": 0.6983758609885502,
+          "per_aspect": {
+            "food": {
+              "n": 1375,
+              "acc": 0.7992727272727272
+            },
+            "service": {
+              "n": 1267,
+              "acc": 0.7087608524072613
+            },
+            "ambiance": {
+              "n": 1134,
+              "acc": 0.6613756613756614
+            },
+            "noise": {
+              "n": 1104,
+              "acc": 0.6240942028985508
+            }
+          }
+        },
+        "masked_binary_only": {
+          "mean": 0.7857139857217854,
+          "per_aspect": {
+            "food": {
+              "n": 1275,
+              "acc": 0.8125490196078431
+            },
+            "service": {
+              "n": 875,
+              "acc": 0.7977142857142857
+            },
+            "ambiance": {
+              "n": 546,
+              "acc": 0.7673992673992674
+            },
+            "noise": {
+              "n": 362,
+              "acc": 0.7651933701657458
+            }
+          }
+        }
+      },
+      "phantom_negative_entries": {
+        "n": 1822,
+        "share_predicted_negative": 0.5521405049396267
+      }
+    },
+    "cebab_3class_distilbert_seed42_100ep_fixed_decorr5": {
+      "run_id": "cebab_3class_distilbert_seed42_100ep_fixed_decorr5",
+      "seed": 42,
+      "n": 1689,
+      "unchanged": {
+        "accuracy": 0.7761989342806395,
+        "rho_eu_au": NaN,
+        "rho_eu_err": NaN,
+        "auroc_eu_err": 0.5,
+        "auroc_maxprob_err": 0.7861178711674517
+      },
+      "rho_au_H": {
+        "old_all_aspects": {
+          "value": 0.040983872217131775,
+          "boot95": [
+            -0.007338017879643463,
+            0.08800613221472953
+          ]
+        },
+        "masked_matched": {
+          "value": 0.23027396575140646,
+          "boot95": [
+            0.18088455894418723,
+            0.27759067767508905
+          ],
+          "note": "AU and H both averaged over annotated aspects"
+        },
+        "masked_H_only": {
+          "value": 0.13887312751686867,
+          "note": "U_ale over all concepts, H over annotated aspects"
+        },
+        "masked_pooled": {
+          "value": 0.22986206847332968,
+          "boot95": [
+            0.20387426621272842,
+            0.25366652590432626
+          ],
+          "n_entries": 4934
+        },
+        "per_aspect_old": {
+          "food": 0.269317076225556,
+          "service": 0.04056039289229168,
+          "ambiance": -0.04895625148220978,
+          "noise": -0.14368498352467177
+        },
+        "per_aspect_masked": {
+          "food": 0.3343092341846084,
+          "service": 0.2656247442022032,
+          "ambiance": 0.152660469988246,
+          "noise": -0.023351084918700273
+        }
+      },
+      "strata_old": {
+        "cuts": [
+          0.11387147754430771,
+          0.22774295508861542
+        ],
+        "low": {
+          "n": 418,
+          "errors": 86,
+          "H_range": [
+            0.0,
+            0.0
+          ],
+          "auroc_eu": 0.5,
+          "auroc_maxprob": 0.8298893247408238
+        },
+        "med": {
+          "n": 695,
+          "errors": 154,
+          "H_range": [
+            0.11387147754430771,
+            0.21624338626861572
+          ],
+          "auroc_eu": 0.5,
+          "auroc_maxprob": 0.7830616703075113
+        },
+        "high": {
+          "n": 576,
+          "errors": 138,
+          "H_range": [
+            0.22774295508861542,
+            0.5971367359161377
+          ],
+          "auroc_eu": 0.5,
+          "auroc_maxprob": 0.7598769108596386
+        }
+      },
+      "strata_masked": {
+        "cuts": [
+          0.15182863672574362,
+          0.288324515024821
+        ],
+        "low": {
+          "n": 550,
+          "errors": 118,
+          "H_range": [
+            0.0,
+            0.11387147754430771
+          ],
+          "auroc_eu": 0.5,
+          "auroc_maxprob": 0.8202487445072191
+        },
+        "med": {
+          "n": 554,
+          "errors": 123,
+          "H_range": [
+            0.15182863672574362,
+            0.26702189445495605
+          ],
+          "auroc_eu": 0.5,
+          "auroc_maxprob": 0.8021994605096864
+        },
+        "high": {
+          "n": 585,
+          "errors": 137,
+          "H_range": [
+            0.288324515024821,
+            0.8649735450744629
+          ],
+          "auroc_eu": 0.5,
+          "auroc_maxprob": 0.7386111835245047
+        }
+      },
+      "n_reviews_H0_old": 418,
+      "n_reviews_H0_masked": 418,
+      "concept_accuracy": {
+        "old_known_incl_unannotated": {
+          "mean": 0.7164883284784599,
+          "per_aspect": {
+            "food": {
+              "n": 1375,
+              "acc": 0.7912727272727272
+            },
+            "service": {
+              "n": 1267,
+              "acc": 0.7379636937647988
+            },
+            "ambiance": {
+              "n": 1134,
+              "acc": 0.6754850088183422
+            },
+            "noise": {
+              "n": 1104,
+              "acc": 0.6612318840579711
+            }
+          }
+        },
+        "masked_binary_only": {
+          "mean": 0.783861199898574,
+          "per_aspect": {
+            "food": {
+              "n": 1275,
+              "acc": 0.8023529411764706
+            },
+            "service": {
+              "n": 875,
+              "acc": 0.7931428571428571
+            },
+            "ambiance": {
+              "n": 546,
+              "acc": 0.7692307692307693
+            },
+            "noise": {
+              "n": 362,
+              "acc": 0.7707182320441989
+            }
+          }
+        }
+      },
+      "phantom_negative_entries": {
+        "n": 1822,
+        "share_predicted_negative": 0.6053787047200878
+      }
+    },
+    "cebab_3class_distilbert_seed42_100ep_fixed_noale": {
+      "run_id": "cebab_3class_distilbert_seed42_100ep_fixed_noale",
+      "seed": 42,
+      "n": 1689,
+      "unchanged": {
+        "accuracy": 0.7803433984606276,
+        "rho_eu_au": NaN,
+        "rho_eu_err": 0.32075901133899426,
+        "auroc_eu_err": 0.7236521888510322,
+        "auroc_maxprob_err": 0.7879311543668631
+      },
+      "rho_au_H": {
+        "old_all_aspects": {
+          "value": NaN,
+          "boot95": [
+            NaN,
+            NaN
+          ]
+        },
+        "masked_matched": {
+          "value": NaN,
+          "boot95": [
+            NaN,
+            NaN
+          ],
+          "note": "AU and H both averaged over annotated aspects"
+        },
+        "masked_H_only": {
+          "value": NaN,
+          "note": "U_ale over all concepts, H over annotated aspects"
+        },
+        "masked_pooled": {
+          "value": NaN,
+          "boot95": [
+            NaN,
+            NaN
+          ],
+          "n_entries": 4934
+        },
+        "per_aspect_old": {
+          "food": NaN,
+          "service": NaN,
+          "ambiance": NaN,
+          "noise": NaN
+        },
+        "per_aspect_masked": {
+          "food": NaN,
+          "service": NaN,
+          "ambiance": NaN,
+          "noise": NaN
+        }
+      },
+      "strata_old": {
+        "cuts": [
+          0.11387147754430771,
+          0.22774295508861542
+        ],
+        "low": {
+          "n": 418,
+          "errors": 85,
+          "H_range": [
+            0.0,
+            0.0
+          ],
+          "auroc_eu": 0.7495495495495494,
+          "auroc_maxprob": 0.8210916799152094
+        },
+        "med": {
+          "n": 695,
+          "errors": 148,
+          "H_range": [
+            0.11387147754430771,
+            0.21624338626861572
+          ],
+          "auroc_eu": 0.7297173773407777,
+          "auroc_maxprob": 0.7776322940856761
+        },
+        "high": {
+          "n": 576,
+          "errors": 138,
+          "H_range": [
+            0.22774295508861542,
+            0.5971367359161377
+          ],
+          "auroc_eu": 0.6990106544901066,
+          "auroc_maxprob": 0.7771987294024222
+        }
+      },
+      "strata_masked": {
+        "cuts": [
+          0.15182863672574362,
+          0.288324515024821
+        ],
+        "low": {
+          "n": 550,
+          "errors": 115,
+          "H_range": [
+            0.0,
+            0.11387147754430771
+          ],
+          "auroc_eu": 0.7431884057971013,
+          "auroc_maxprob": 0.7963018490754623
+        },
+        "med": {
+          "n": 554,
+          "errors": 114,
+          "H_range": [
+            0.15182863672574362,
+            0.26702189445495605
+          ],
+          "auroc_eu": 0.7452950558213716,
+          "auroc_maxprob": 0.8060606060606061
+        },
+        "high": {
+          "n": 585,
+          "errors": 142,
+          "H_range": [
+            0.288324515024821,
+            0.8649735450744629
+          ],
+          "auroc_eu": 0.6869138079038565,
+          "auroc_maxprob": 0.7623120211108638
+        }
+      },
+      "n_reviews_H0_old": 418,
+      "n_reviews_H0_masked": 418,
+      "concept_accuracy": {
+        "old_known_incl_unannotated": {
+          "mean": 0.6693848222558988,
+          "per_aspect": {
+            "food": {
+              "n": 1375,
+              "acc": 0.7854545454545454
+            },
+            "service": {
+              "n": 1267,
+              "acc": 0.7071823204419889
+            },
+            "ambiance": {
+              "n": 1134,
+              "acc": 0.6622574955908289
+            },
+            "noise": {
+              "n": 1104,
+              "acc": 0.5226449275362319
+            }
+          }
+        },
+        "masked_binary_only": {
+          "mean": 0.7724134991863298,
+          "per_aspect": {
+            "food": {
+              "n": 1275,
+              "acc": 0.7945098039215687
+            },
+            "service": {
+              "n": 875,
+              "acc": 0.7771428571428571
+            },
+            "ambiance": {
+              "n": 546,
+              "acc": 0.7417582417582418
+            },
+            "noise": {
+              "n": 362,
+              "acc": 0.7762430939226519
+            }
+          }
+        }
+      },
+      "phantom_negative_entries": {
+        "n": 1822,
+        "share_predicted_negative": 0.5076838638858397
+      }
+    },
     "cebab_3class_microsoft_deberta_v3_base_seed123_100ep": {
       "run_id": "cebab_3class_microsoft_deberta_v3_base_seed123_100ep",
       "seed": 123,
@@ -905,6 +2480,181 @@
         "share_predicted_negative": 0.933589462129528
       }
     },
+    "cebab_3class_roberta_base_seed123_100ep_fixed": {
+      "run_id": "cebab_3class_roberta_base_seed123_100ep_fixed",
+      "seed": 123,
+      "n": 1689,
+      "unchanged": {
+        "accuracy": 0.7850799289520426,
+        "rho_eu_au": -0.013412265923483383,
+        "rho_eu_err": 0.3002449937786452,
+        "auroc_eu_err": 0.7110034944259545,
+        "auroc_maxprob_err": 0.7875733891776672
+      },
+      "rho_au_H": {
+        "old_all_aspects": {
+          "value": 0.04606579065870265,
+          "boot95": [
+            0.0022846262770205815,
+            0.09311683176354091
+          ]
+        },
+        "masked_matched": {
+          "value": 0.24323297763788798,
+          "boot95": [
+            0.19998779546014495,
+            0.28777755506152647
+          ],
+          "note": "AU and H both averaged over annotated aspects"
+        },
+        "masked_H_only": {
+          "value": 0.15410151501255567,
+          "note": "U_ale over all concepts, H over annotated aspects"
+        },
+        "masked_pooled": {
+          "value": 0.2311916151649109,
+          "boot95": [
+            0.20535945946020165,
+            0.2577422698254758
+          ],
+          "n_entries": 4934
+        },
+        "per_aspect_old": {
+          "food": 0.28090160855847457,
+          "service": 0.07052838461726019,
+          "ambiance": -0.07261981464136233,
+          "noise": -0.14249261106119235
+        },
+        "per_aspect_masked": {
+          "food": 0.33506683115653046,
+          "service": 0.25743227584229944,
+          "ambiance": 0.1081298616899974,
+          "noise": 0.019267137066710318
+        }
+      },
+      "strata_old": {
+        "cuts": [
+          0.11387147754430771,
+          0.22774295508861542
+        ],
+        "low": {
+          "n": 418,
+          "errors": 81,
+          "H_range": [
+            0.0,
+            0.0
+          ],
+          "auroc_eu": 0.7379199179397004,
+          "auroc_maxprob": 0.811481115140858
+        },
+        "med": {
+          "n": 695,
+          "errors": 152,
+          "H_range": [
+            0.11387147754430771,
+            0.21624338626861572
+          ],
+          "auroc_eu": 0.6901836774256083,
+          "auroc_maxprob": 0.7876078317340311
+        },
+        "high": {
+          "n": 576,
+          "errors": 130,
+          "H_range": [
+            0.22774295508861542,
+            0.5971367359161377
+          ],
+          "auroc_eu": 0.7203863401172819,
+          "auroc_maxprob": 0.7733183856502243
+        }
+      },
+      "strata_masked": {
+        "cuts": [
+          0.15182863672574362,
+          0.288324515024821
+        ],
+        "low": {
+          "n": 550,
+          "errors": 109,
+          "H_range": [
+            0.0,
+            0.11387147754430771
+          ],
+          "auroc_eu": 0.7220661965091847,
+          "auroc_maxprob": 0.799725394745054
+        },
+        "med": {
+          "n": 554,
+          "errors": 118,
+          "H_range": [
+            0.15182863672574362,
+            0.26702189445495605
+          ],
+          "auroc_eu": 0.7307378323744362,
+          "auroc_maxprob": 0.8147449852278028
+        },
+        "high": {
+          "n": 585,
+          "errors": 136,
+          "H_range": [
+            0.288324515024821,
+            0.8649735450744629
+          ],
+          "auroc_eu": 0.6860343246429974,
+          "auroc_maxprob": 0.752931350714005
+        }
+      },
+      "n_reviews_H0_old": 418,
+      "n_reviews_H0_masked": 418,
+      "concept_accuracy": {
+        "old_known_incl_unannotated": {
+          "mean": 0.695271707857123,
+          "per_aspect": {
+            "food": {
+              "n": 1375,
+              "acc": 0.7810909090909091
+            },
+            "service": {
+              "n": 1267,
+              "acc": 0.7063930544593529
+            },
+            "ambiance": {
+              "n": 1134,
+              "acc": 0.6287477954144621
+            },
+            "noise": {
+              "n": 1104,
+              "acc": 0.6648550724637681
+            }
+          }
+        },
+        "masked_binary_only": {
+          "mean": 0.7865166382745193,
+          "per_aspect": {
+            "food": {
+              "n": 1275,
+              "acc": 0.8015686274509803
+            },
+            "service": {
+              "n": 875,
+              "acc": 0.8091428571428572
+            },
+            "ambiance": {
+              "n": 546,
+              "acc": 0.7673992673992674
+            },
+            "noise": {
+              "n": 362,
+              "acc": 0.7679558011049724
+            }
+          }
+        }
+      },
+      "phantom_negative_entries": {
+        "n": 1822,
+        "share_predicted_negative": 0.5428100987925357
+      }
+    },
     "cebab_3class_roberta_base_seed2024_100ep": {
       "run_id": "cebab_3class_roberta_base_seed2024_100ep",
       "seed": 2024,
@@ -1078,6 +2828,356 @@
       "phantom_negative_entries": {
         "n": 1822,
         "share_predicted_negative": 0.8995609220636663
+      }
+    },
+    "cebab_3class_roberta_base_seed2024_100ep_fixed": {
+      "run_id": "cebab_3class_roberta_base_seed2024_100ep_fixed",
+      "seed": 2024,
+      "n": 1689,
+      "unchanged": {
+        "accuracy": 0.7838957963291888,
+        "rho_eu_au": 0.026434996158332797,
+        "rho_eu_err": 0.3266133566947806,
+        "auroc_eu_err": 0.7290775152092042,
+        "auroc_maxprob_err": 0.7864379423084882
+      },
+      "rho_au_H": {
+        "old_all_aspects": {
+          "value": 0.06566578427154232,
+          "boot95": [
+            0.01780281851997225,
+            0.11311879401412903
+          ]
+        },
+        "masked_matched": {
+          "value": 0.24218580874678336,
+          "boot95": [
+            0.19566403776534466,
+            0.2902008339491338
+          ],
+          "note": "AU and H both averaged over annotated aspects"
+        },
+        "masked_H_only": {
+          "value": 0.17324107941083425,
+          "note": "U_ale over all concepts, H over annotated aspects"
+        },
+        "masked_pooled": {
+          "value": 0.22273029465918182,
+          "boot95": [
+            0.19610158000149935,
+            0.2489251572260707
+          ],
+          "n_entries": 4934
+        },
+        "per_aspect_old": {
+          "food": 0.2780965996230907,
+          "service": 0.05696087341803619,
+          "ambiance": -0.04722533968835278,
+          "noise": -0.13953115191776752
+        },
+        "per_aspect_masked": {
+          "food": 0.33205624435977205,
+          "service": 0.254365465819487,
+          "ambiance": 0.11924097411328446,
+          "noise": 0.013030625045226419
+        }
+      },
+      "strata_old": {
+        "cuts": [
+          0.11387147754430771,
+          0.22774295508861542
+        ],
+        "low": {
+          "n": 418,
+          "errors": 87,
+          "H_range": [
+            0.0,
+            0.0
+          ],
+          "auroc_eu": 0.7441400145848527,
+          "auroc_maxprob": 0.8188700211827621
+        },
+        "med": {
+          "n": 695,
+          "errors": 145,
+          "H_range": [
+            0.11387147754430771,
+            0.21624338626861572
+          ],
+          "auroc_eu": 0.699360501567398,
+          "auroc_maxprob": 0.7739561128526646
+        },
+        "high": {
+          "n": 576,
+          "errors": 133,
+          "H_range": [
+            0.22774295508861542,
+            0.5971367359161377
+          ],
+          "auroc_eu": 0.7519475890629508,
+          "auroc_maxprob": 0.7791374599025782
+        }
+      },
+      "strata_masked": {
+        "cuts": [
+          0.15182863672574362,
+          0.288324515024821
+        ],
+        "low": {
+          "n": 550,
+          "errors": 114,
+          "H_range": [
+            0.0,
+            0.11387147754430771
+          ],
+          "auroc_eu": 0.7471028488652824,
+          "auroc_maxprob": 0.8067157572831161
+        },
+        "med": {
+          "n": 554,
+          "errors": 108,
+          "H_range": [
+            0.15182863672574362,
+            0.26702189445495605
+          ],
+          "auroc_eu": 0.7280352100979903,
+          "auroc_maxprob": 0.7931821956485634
+        },
+        "high": {
+          "n": 585,
+          "errors": 143,
+          "H_range": [
+            0.288324515024821,
+            0.8649735450744629
+          ],
+          "auroc_eu": 0.7120368319463343,
+          "auroc_maxprob": 0.7624117963484479
+        }
+      },
+      "n_reviews_H0_old": 418,
+      "n_reviews_H0_masked": 418,
+      "concept_accuracy": {
+        "old_known_incl_unannotated": {
+          "mean": 0.7094231277492447,
+          "per_aspect": {
+            "food": {
+              "n": 1375,
+              "acc": 0.792
+            },
+            "service": {
+              "n": 1267,
+              "acc": 0.7292817679558011
+            },
+            "ambiance": {
+              "n": 1134,
+              "acc": 0.656084656084656
+            },
+            "noise": {
+              "n": 1104,
+              "acc": 0.6603260869565217
+            }
+          }
+        },
+        "masked_binary_only": {
+          "mean": 0.7932851262051781,
+          "per_aspect": {
+            "food": {
+              "n": 1275,
+              "acc": 0.8180392156862745
+            },
+            "service": {
+              "n": 875,
+              "acc": 0.8114285714285714
+            },
+            "ambiance": {
+              "n": 546,
+              "acc": 0.7619047619047619
+            },
+            "noise": {
+              "n": 362,
+              "acc": 0.7817679558011049
+            }
+          }
+        }
+      },
+      "phantom_negative_entries": {
+        "n": 1822,
+        "share_predicted_negative": 0.5675082327113062
+      }
+    },
+    "cebab_3class_roberta_base_seed42_100ep_fixed": {
+      "run_id": "cebab_3class_roberta_base_seed42_100ep_fixed",
+      "seed": 42,
+      "n": 1689,
+      "unchanged": {
+        "accuracy": 0.7779751332149201,
+        "rho_eu_au": -0.0018427422883111786,
+        "rho_eu_err": 0.3264038993658749,
+        "auroc_eu_err": 0.7267153729071538,
+        "auroc_maxprob_err": 0.8108777270421107
+      },
+      "rho_au_H": {
+        "old_all_aspects": {
+          "value": 0.054703735934759114,
+          "boot95": [
+            0.006573997819959687,
+            0.09880575592689719
+          ]
+        },
+        "masked_matched": {
+          "value": 0.23167830970919462,
+          "boot95": [
+            0.18257426527175769,
+            0.2760005954831228
+          ],
+          "note": "AU and H both averaged over annotated aspects"
+        },
+        "masked_H_only": {
+          "value": 0.1636788436984755,
+          "note": "U_ale over all concepts, H over annotated aspects"
+        },
+        "masked_pooled": {
+          "value": 0.2295180426665194,
+          "boot95": [
+            0.2025964538186876,
+            0.25300501284764043
+          ],
+          "n_entries": 4934
+        },
+        "per_aspect_old": {
+          "food": 0.28772874787992214,
+          "service": 0.06405333542266275,
+          "ambiance": -0.043453832215433356,
+          "noise": -0.14218180303831263
+        },
+        "per_aspect_masked": {
+          "food": 0.3399881118945189,
+          "service": 0.2645500412251545,
+          "ambiance": 0.13019125711364948,
+          "noise": 0.00878265394334384
+        }
+      },
+      "strata_old": {
+        "cuts": [
+          0.11387147754430771,
+          0.22774295508861542
+        ],
+        "low": {
+          "n": 418,
+          "errors": 88,
+          "H_range": [
+            0.0,
+            0.0
+          ],
+          "auroc_eu": 0.7620867768595042,
+          "auroc_maxprob": 0.8423898071625345
+        },
+        "med": {
+          "n": 695,
+          "errors": 155,
+          "H_range": [
+            0.11387147754430771,
+            0.21624338626861572
+          ],
+          "auroc_eu": 0.7013978494623656,
+          "auroc_maxprob": 0.8077180406212664
+        },
+        "high": {
+          "n": 576,
+          "errors": 132,
+          "H_range": [
+            0.22774295508861542,
+            0.5971367359161377
+          ],
+          "auroc_eu": 0.7325279825279825,
+          "auroc_maxprob": 0.7939359814359814
+        }
+      },
+      "strata_masked": {
+        "cuts": [
+          0.15182863672574362,
+          0.288324515024821
+        ],
+        "low": {
+          "n": 550,
+          "errors": 122,
+          "H_range": [
+            0.0,
+            0.11387147754430771
+          ],
+          "auroc_eu": 0.7607821357438332,
+          "auroc_maxprob": 0.8437260609774782
+        },
+        "med": {
+          "n": 554,
+          "errors": 118,
+          "H_range": [
+            0.15182863672574362,
+            0.26702189445495605
+          ],
+          "auroc_eu": 0.7259368682941999,
+          "auroc_maxprob": 0.8242886020836574
+        },
+        "high": {
+          "n": 585,
+          "errors": 135,
+          "H_range": [
+            0.288324515024821,
+            0.8649735450744629
+          ],
+          "auroc_eu": 0.697349794238683,
+          "auroc_maxprob": 0.7693004115226337
+        }
+      },
+      "n_reviews_H0_old": 418,
+      "n_reviews_H0_masked": 418,
+      "concept_accuracy": {
+        "old_known_incl_unannotated": {
+          "mean": 0.6889482663743614,
+          "per_aspect": {
+            "food": {
+              "n": 1375,
+              "acc": 0.7861818181818182
+            },
+            "service": {
+              "n": 1267,
+              "acc": 0.7087608524072613
+            },
+            "ambiance": {
+              "n": 1134,
+              "acc": 0.6340388007054674
+            },
+            "noise": {
+              "n": 1104,
+              "acc": 0.6268115942028986
+            }
+          }
+        },
+        "masked_binary_only": {
+          "mean": 0.801785497029241,
+          "per_aspect": {
+            "food": {
+              "n": 1275,
+              "acc": 0.8188235294117647
+            },
+            "service": {
+              "n": 875,
+              "acc": 0.8171428571428572
+            },
+            "ambiance": {
+              "n": 546,
+              "acc": 0.7838827838827839
+            },
+            "noise": {
+              "n": 362,
+              "acc": 0.787292817679558
+            }
+          }
+        }
+      },
+      "phantom_negative_entries": {
+        "n": 1822,
+        "share_predicted_negative": 0.5038419319429198
       }
     },
     "cebab_3class_seed123_100ep": {
@@ -1528,6 +3628,549 @@
         "sd": 0.01379808786486037
       }
     },
+    "cebab_3class_distilbert_100ep_fixed": {
+      "seeds": [
+        123,
+        2024
+      ],
+      "rho_au_H_old": {
+        "per_seed": [
+          0.022474412836088795,
+          0.03498984830991044
+        ],
+        "n_valid": 2,
+        "mean": 0.028732130572999618,
+        "sd": 0.008849749293041958
+      },
+      "rho_au_H_masked_matched": {
+        "per_seed": [
+          0.21371898457235933,
+          0.2094691058038161
+        ],
+        "n_valid": 2,
+        "mean": 0.21159404518808772,
+        "sd": 0.0030051180964576403
+      },
+      "rho_au_H_masked_pooled": {
+        "per_seed": [
+          0.22671571779462235,
+          0.21917169885855126
+        ],
+        "n_valid": 2,
+        "mean": 0.2229437083265868,
+        "sd": 0.005334426947095595
+      },
+      "concept_acc_old": {
+        "per_seed": [
+          0.6951293945983673,
+          0.6954965143448409
+        ],
+        "n_valid": 2,
+        "mean": 0.6953129544716041,
+        "sd": 0.0002595928622389913
+      },
+      "concept_acc_masked": {
+        "per_seed": [
+          0.783740798146713,
+          0.7730447334054744
+        ],
+        "n_valid": 2,
+        "mean": 0.7783927657760937,
+        "sd": 0.00756325991054017
+      },
+      "accuracy": {
+        "per_seed": [
+          0.7773830669034931,
+          0.7773830669034931
+        ],
+        "n_valid": 2,
+        "mean": 0.7773830669034931,
+        "sd": 0.0
+      },
+      "rho_eu_au": {
+        "per_seed": [
+          -0.1208828196503812,
+          -0.12697292966231927
+        ],
+        "n_valid": 2,
+        "mean": -0.12392787465635023,
+        "sd": 0.004306358087613496
+      },
+      "rho_eu_err": {
+        "per_seed": [
+          0.3368034988160966,
+          0.2961038187593046
+        ],
+        "n_valid": 2,
+        "mean": 0.3164536587877006,
+        "sd": 0.028779019760280536
+      },
+      "auroc_eu_err": {
+        "per_seed": [
+          0.733716436291747,
+          0.7054739025457373
+        ],
+        "n_valid": 2,
+        "mean": 0.7195951694187421,
+        "sd": 0.019970487129693373
+      },
+      "auroc_maxprob_err": {
+        "per_seed": [
+          0.7692955874965566,
+          0.7747990633760593
+        ],
+        "n_valid": 2,
+        "mean": 0.7720473254363079,
+        "sd": 0.003891545114492978
+      }
+    },
+    "cebab_3class_distilbert_100ep_fixed_decorr5": {
+      "seeds": [
+        123,
+        2024
+      ],
+      "rho_au_H_old": {
+        "per_seed": [
+          NaN,
+          0.04673031471918598
+        ],
+        "n_valid": 1,
+        "mean": 0.04673031471918598,
+        "sd": NaN
+      },
+      "rho_au_H_masked_matched": {
+        "per_seed": [
+          NaN,
+          0.21944379560314087
+        ],
+        "n_valid": 1,
+        "mean": 0.21944379560314087,
+        "sd": NaN
+      },
+      "rho_au_H_masked_pooled": {
+        "per_seed": [
+          NaN,
+          0.2147654037554867
+        ],
+        "n_valid": 1,
+        "mean": 0.2147654037554867,
+        "sd": NaN
+      },
+      "concept_acc_old": {
+        "per_seed": [
+          0.6913917025385418,
+          0.7090995879356037
+        ],
+        "n_valid": 2,
+        "mean": 0.7002456452370727,
+        "sd": 0.012521365844736721
+      },
+      "concept_acc_masked": {
+        "per_seed": [
+          0.790929407717188,
+          0.7721768408170748
+        ],
+        "n_valid": 2,
+        "mean": 0.7815531242671314,
+        "sd": 0.013260067219724421
+      },
+      "accuracy": {
+        "per_seed": [
+          0.7690941385435168,
+          0.7714624037892244
+        ],
+        "n_valid": 2,
+        "mean": 0.7702782711663706,
+        "sd": 0.0016746164148882308
+      },
+      "rho_eu_au": {
+        "per_seed": [
+          NaN,
+          NaN
+        ],
+        "n_valid": 0,
+        "mean": NaN,
+        "sd": NaN
+      },
+      "rho_eu_err": {
+        "per_seed": [
+          0.30471963786732237,
+          NaN
+        ],
+        "n_valid": 1,
+        "mean": 0.30471963786732237,
+        "sd": NaN
+      },
+      "auroc_eu_err": {
+        "per_seed": [
+          0.7087384773297013,
+          0.5
+        ],
+        "n_valid": 2,
+        "mean": 0.6043692386648507,
+        "sd": 0.1476003928143862
+      },
+      "auroc_maxprob_err": {
+        "per_seed": [
+          0.7869485402972702,
+          0.78353858572684
+        ],
+        "n_valid": 2,
+        "mean": 0.7852435630120551,
+        "sd": 0.0024112020002892915
+      }
+    },
+    "cebab_3class_distilbert_100ep_fixed_noale": {
+      "seeds": [
+        123,
+        2024
+      ],
+      "rho_au_H_old": {
+        "per_seed": [
+          NaN,
+          NaN
+        ],
+        "n_valid": 0,
+        "mean": NaN,
+        "sd": NaN
+      },
+      "rho_au_H_masked_matched": {
+        "per_seed": [
+          NaN,
+          NaN
+        ],
+        "n_valid": 0,
+        "mean": NaN,
+        "sd": NaN
+      },
+      "rho_au_H_masked_pooled": {
+        "per_seed": [
+          NaN,
+          NaN
+        ],
+        "n_valid": 0,
+        "mean": NaN,
+        "sd": NaN
+      },
+      "concept_acc_old": {
+        "per_seed": [
+          0.6884520377836296,
+          0.6988151160611524
+        ],
+        "n_valid": 2,
+        "mean": 0.693633576922391,
+        "sd": 0.007327802924003384
+      },
+      "concept_acc_masked": {
+        "per_seed": [
+          0.787988159819814,
+          0.771523414295595
+        ],
+        "n_valid": 2,
+        "mean": 0.7797557870577045,
+        "sd": 0.011642333210686076
+      },
+      "accuracy": {
+        "per_seed": [
+          0.7649496743635287,
+          0.7779751332149201
+        ],
+        "n_valid": 2,
+        "mean": 0.7714624037892244,
+        "sd": 0.009210390281885191
+      },
+      "rho_eu_au": {
+        "per_seed": [
+          NaN,
+          NaN
+        ],
+        "n_valid": 0,
+        "mean": NaN,
+        "sd": NaN
+      },
+      "rho_eu_err": {
+        "per_seed": [
+          0.32067085721238786,
+          0.30405811496193075
+        ],
+        "n_valid": 2,
+        "mean": 0.3123644860871593,
+        "sd": 0.01174698269940249
+      },
+      "auroc_eu_err": {
+        "per_seed": [
+          0.7183091452144957,
+          0.7111943176052765
+        ],
+        "n_valid": 2,
+        "mean": 0.7147517314098861,
+        "sd": 0.005030942849452183
+      },
+      "auroc_maxprob_err": {
+        "per_seed": [
+          0.7872355358688617,
+          0.7862425164890919
+        ],
+        "n_valid": 2,
+        "mean": 0.7867390261789768,
+        "sd": 0.0007021707372848927
+      }
+    },
+    "cebab_3class_distilbert_seed42_100ep_fixed": {
+      "seeds": [
+        42
+      ],
+      "rho_au_H_old": {
+        "per_seed": [
+          0.04301585684140918
+        ],
+        "n_valid": 1,
+        "mean": 0.04301585684140918,
+        "sd": NaN
+      },
+      "rho_au_H_masked_matched": {
+        "per_seed": [
+          0.23283256733594268
+        ],
+        "n_valid": 1,
+        "mean": 0.23283256733594268,
+        "sd": NaN
+      },
+      "rho_au_H_masked_pooled": {
+        "per_seed": [
+          0.22689808279438534
+        ],
+        "n_valid": 1,
+        "mean": 0.22689808279438534,
+        "sd": NaN
+      },
+      "concept_acc_old": {
+        "per_seed": [
+          0.6983758609885502
+        ],
+        "n_valid": 1,
+        "mean": 0.6983758609885502,
+        "sd": NaN
+      },
+      "concept_acc_masked": {
+        "per_seed": [
+          0.7857139857217854
+        ],
+        "n_valid": 1,
+        "mean": 0.7857139857217854,
+        "sd": NaN
+      },
+      "accuracy": {
+        "per_seed": [
+          0.778567199526347
+        ],
+        "n_valid": 1,
+        "mean": 0.778567199526347,
+        "sd": NaN
+      },
+      "rho_eu_au": {
+        "per_seed": [
+          -0.17842167908343512
+        ],
+        "n_valid": 1,
+        "mean": -0.17842167908343512,
+        "sd": NaN
+      },
+      "rho_eu_err": {
+        "per_seed": [
+          0.3342055100282092
+        ],
+        "n_valid": 1,
+        "mean": 0.3342055100282092,
+        "sd": NaN
+      },
+      "auroc_eu_err": {
+        "per_seed": [
+          0.7323559911347879
+        ],
+        "n_valid": 1,
+        "mean": 0.7323559911347879,
+        "sd": NaN
+      },
+      "auroc_maxprob_err": {
+        "per_seed": [
+          0.7822248429271468
+        ],
+        "n_valid": 1,
+        "mean": 0.7822248429271468,
+        "sd": NaN
+      }
+    },
+    "cebab_3class_distilbert_seed42_100ep_fixed_decorr5": {
+      "seeds": [
+        42
+      ],
+      "rho_au_H_old": {
+        "per_seed": [
+          0.040983872217131775
+        ],
+        "n_valid": 1,
+        "mean": 0.040983872217131775,
+        "sd": NaN
+      },
+      "rho_au_H_masked_matched": {
+        "per_seed": [
+          0.23027396575140646
+        ],
+        "n_valid": 1,
+        "mean": 0.23027396575140646,
+        "sd": NaN
+      },
+      "rho_au_H_masked_pooled": {
+        "per_seed": [
+          0.22986206847332968
+        ],
+        "n_valid": 1,
+        "mean": 0.22986206847332968,
+        "sd": NaN
+      },
+      "concept_acc_old": {
+        "per_seed": [
+          0.7164883284784599
+        ],
+        "n_valid": 1,
+        "mean": 0.7164883284784599,
+        "sd": NaN
+      },
+      "concept_acc_masked": {
+        "per_seed": [
+          0.783861199898574
+        ],
+        "n_valid": 1,
+        "mean": 0.783861199898574,
+        "sd": NaN
+      },
+      "accuracy": {
+        "per_seed": [
+          0.7761989342806395
+        ],
+        "n_valid": 1,
+        "mean": 0.7761989342806395,
+        "sd": NaN
+      },
+      "rho_eu_au": {
+        "per_seed": [
+          NaN
+        ],
+        "n_valid": 0,
+        "mean": NaN,
+        "sd": NaN
+      },
+      "rho_eu_err": {
+        "per_seed": [
+          NaN
+        ],
+        "n_valid": 0,
+        "mean": NaN,
+        "sd": NaN
+      },
+      "auroc_eu_err": {
+        "per_seed": [
+          0.5
+        ],
+        "n_valid": 1,
+        "mean": 0.5,
+        "sd": NaN
+      },
+      "auroc_maxprob_err": {
+        "per_seed": [
+          0.7861178711674517
+        ],
+        "n_valid": 1,
+        "mean": 0.7861178711674517,
+        "sd": NaN
+      }
+    },
+    "cebab_3class_distilbert_seed42_100ep_fixed_noale": {
+      "seeds": [
+        42
+      ],
+      "rho_au_H_old": {
+        "per_seed": [
+          NaN
+        ],
+        "n_valid": 0,
+        "mean": NaN,
+        "sd": NaN
+      },
+      "rho_au_H_masked_matched": {
+        "per_seed": [
+          NaN
+        ],
+        "n_valid": 0,
+        "mean": NaN,
+        "sd": NaN
+      },
+      "rho_au_H_masked_pooled": {
+        "per_seed": [
+          NaN
+        ],
+        "n_valid": 0,
+        "mean": NaN,
+        "sd": NaN
+      },
+      "concept_acc_old": {
+        "per_seed": [
+          0.6693848222558988
+        ],
+        "n_valid": 1,
+        "mean": 0.6693848222558988,
+        "sd": NaN
+      },
+      "concept_acc_masked": {
+        "per_seed": [
+          0.7724134991863298
+        ],
+        "n_valid": 1,
+        "mean": 0.7724134991863298,
+        "sd": NaN
+      },
+      "accuracy": {
+        "per_seed": [
+          0.7803433984606276
+        ],
+        "n_valid": 1,
+        "mean": 0.7803433984606276,
+        "sd": NaN
+      },
+      "rho_eu_au": {
+        "per_seed": [
+          NaN
+        ],
+        "n_valid": 0,
+        "mean": NaN,
+        "sd": NaN
+      },
+      "rho_eu_err": {
+        "per_seed": [
+          0.32075901133899426
+        ],
+        "n_valid": 1,
+        "mean": 0.32075901133899426,
+        "sd": NaN
+      },
+      "auroc_eu_err": {
+        "per_seed": [
+          0.7236521888510322
+        ],
+        "n_valid": 1,
+        "mean": 0.7236521888510322,
+        "sd": NaN
+      },
+      "auroc_maxprob_err": {
+        "per_seed": [
+          0.7879311543668631
+        ],
+        "n_valid": 1,
+        "mean": 0.7879311543668631,
+        "sd": NaN
+      }
+    },
     "cebab_3class_microsoft_deberta_v3_base_100ep": {
       "seeds": [
         123,
@@ -1718,6 +4361,187 @@
         "n_valid": 2,
         "mean": 0.7991102415854177,
         "sd": 0.0008556836824334065
+      }
+    },
+    "cebab_3class_roberta_base_100ep_fixed": {
+      "seeds": [
+        123,
+        2024
+      ],
+      "rho_au_H_old": {
+        "per_seed": [
+          0.04606579065870265,
+          0.06566578427154232
+        ],
+        "n_valid": 2,
+        "mean": 0.05586578746512248,
+        "sd": 0.01385928839485195
+      },
+      "rho_au_H_masked_matched": {
+        "per_seed": [
+          0.24323297763788798,
+          0.24218580874678336
+        ],
+        "n_valid": 2,
+        "mean": 0.24270939319233567,
+        "sd": 0.0007404602239476754
+      },
+      "rho_au_H_masked_pooled": {
+        "per_seed": [
+          0.2311916151649109,
+          0.22273029465918182
+        ],
+        "n_valid": 2,
+        "mean": 0.22696095491204638,
+        "sd": 0.005983057107393829
+      },
+      "concept_acc_old": {
+        "per_seed": [
+          0.695271707857123,
+          0.7094231277492447
+        ],
+        "n_valid": 2,
+        "mean": 0.7023474178031839,
+        "sd": 0.010006564969137422
+      },
+      "concept_acc_masked": {
+        "per_seed": [
+          0.7865166382745193,
+          0.7932851262051781
+        ],
+        "n_valid": 2,
+        "mean": 0.7899008822398488,
+        "sd": 0.004786043714148113
+      },
+      "accuracy": {
+        "per_seed": [
+          0.7850799289520426,
+          0.7838957963291888
+        ],
+        "n_valid": 2,
+        "mean": 0.7844878626406158,
+        "sd": 0.0008373082074441154
+      },
+      "rho_eu_au": {
+        "per_seed": [
+          -0.013412265923483383,
+          0.026434996158332797
+        ],
+        "n_valid": 2,
+        "mean": 0.006511365117424707,
+        "sd": 0.028176269229769808
+      },
+      "rho_eu_err": {
+        "per_seed": [
+          0.3002449937786452,
+          0.3266133566947806
+        ],
+        "n_valid": 2,
+        "mean": 0.3134291752367129,
+        "sd": 0.018645248226787207
+      },
+      "auroc_eu_err": {
+        "per_seed": [
+          0.7110034944259545,
+          0.7290775152092042
+        ],
+        "n_valid": 2,
+        "mean": 0.7200405048175793,
+        "sd": 0.012780262659142465
+      },
+      "auroc_maxprob_err": {
+        "per_seed": [
+          0.7875733891776672,
+          0.7864379423084882
+        ],
+        "n_valid": 2,
+        "mean": 0.7870056657430777,
+        "sd": 0.0008028821808734991
+      }
+    },
+    "cebab_3class_roberta_base_seed42_100ep_fixed": {
+      "seeds": [
+        42
+      ],
+      "rho_au_H_old": {
+        "per_seed": [
+          0.054703735934759114
+        ],
+        "n_valid": 1,
+        "mean": 0.054703735934759114,
+        "sd": NaN
+      },
+      "rho_au_H_masked_matched": {
+        "per_seed": [
+          0.23167830970919462
+        ],
+        "n_valid": 1,
+        "mean": 0.23167830970919462,
+        "sd": NaN
+      },
+      "rho_au_H_masked_pooled": {
+        "per_seed": [
+          0.2295180426665194
+        ],
+        "n_valid": 1,
+        "mean": 0.2295180426665194,
+        "sd": NaN
+      },
+      "concept_acc_old": {
+        "per_seed": [
+          0.6889482663743614
+        ],
+        "n_valid": 1,
+        "mean": 0.6889482663743614,
+        "sd": NaN
+      },
+      "concept_acc_masked": {
+        "per_seed": [
+          0.801785497029241
+        ],
+        "n_valid": 1,
+        "mean": 0.801785497029241,
+        "sd": NaN
+      },
+      "accuracy": {
+        "per_seed": [
+          0.7779751332149201
+        ],
+        "n_valid": 1,
+        "mean": 0.7779751332149201,
+        "sd": NaN
+      },
+      "rho_eu_au": {
+        "per_seed": [
+          -0.0018427422883111786
+        ],
+        "n_valid": 1,
+        "mean": -0.0018427422883111786,
+        "sd": NaN
+      },
+      "rho_eu_err": {
+        "per_seed": [
+          0.3264038993658749
+        ],
+        "n_valid": 1,
+        "mean": 0.3264038993658749,
+        "sd": NaN
+      },
+      "auroc_eu_err": {
+        "per_seed": [
+          0.7267153729071538
+        ],
+        "n_valid": 1,
+        "mean": 0.7267153729071538,
+        "sd": NaN
+      },
+      "auroc_maxprob_err": {
+        "per_seed": [
+          0.8108777270421107
+        ],
+        "n_valid": 1,
+        "mean": 0.8108777270421107,
+        "sd": NaN
       }
     },
     "cebab_3class_100ep": {

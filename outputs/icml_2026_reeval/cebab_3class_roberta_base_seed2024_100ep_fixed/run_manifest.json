@@ -1,0 +1,12 @@
+{
+  "run_id": "cebab_3class_roberta_base_seed2024_100ep_fixed",
+  "kind": "cebab3",
+  "encoder": "roberta-base",
+  "seed": 2024,
+  "checkpoint_epoch": 56,
+  "checkpoint_rule": "best validation task accuracy (HybridCredalCBMTrainer.fit)",
+  "lambda_d": 0.0,
+  "H_source": "annotator_entropy",
+  "n_test": 1689,
+  "accuracy": 0.7838957963291888
+}
