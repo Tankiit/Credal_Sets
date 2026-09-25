@@ -1,0 +1,23 @@
+{
+  "accuracy": 0.7679100059206632,
+  "loss": 1.9043211295919598,
+  "concept_accs": {},
+  "mean_sigma_epi": 0.690872073173523,
+  "std_sigma_epi": 0.12001090496778488,
+  "mean_eu": -0.38785070180892944,
+  "std_eu": 0.14211979508399963,
+  "mean_aleatoric": 0.21817712485790253,
+  "std_aleatoric": 0.006964323576539755,
+  "rho_eu_au": -0.5256298972251363,
+  "p_eu_au": 1.2921424933017495e-120,
+  "rho_eu_error": 0.10772662316512091,
+  "p_eu_error": 9.125160295913763e-06,
+  "rho_ale_entropy": 0.1115805615024371,
+  "p_ale_entropy": 4.293556601290548e-06,
+  "dataset": "cebab",
+  "seed": 123,
+  "epochs": 100,
+  "cebab_three_class": true,
+  "cebab_binary": false,
+  "phased_schedule": true
+}

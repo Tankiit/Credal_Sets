@@ -1,0 +1,12 @@
+{
+  "run_id": "hatexplain_seed2024_100ep",
+  "kind": "hatexplain",
+  "encoder": "distilbert-base-uncased",
+  "seed": 2024,
+  "checkpoint_epoch": 76,
+  "checkpoint_rule": "best validation task accuracy (HybridCredalCBMTrainer.fit)",
+  "lambda_d": 0.0,
+  "H_source": "_annotator_entropy",
+  "n_test": 1924,
+  "accuracy": 0.5706860706860707
+}

@@ -1,0 +1,88 @@
+{
+  "checkpoint": "/Users/tanmoy/research/Credal_Sets/neurips-credal/checkpoints_from_modal/icml_2026/cebab_3class_seed123_100ep/best_model.pt",
+  "batches": 20,
+  "encoder_trainable_tensors": 0,
+  "loss_weights": {
+    "task_loss": 1.0,
+    "concept_bce": 2.0,
+    "error_supervision": 1.0,
+    "credal_kl": 0.01,
+    "aleatoric_loss": 2.0,
+    "aleatoric_unknown": 0.2,
+    "orth_penalty": 0.001
+  },
+  "grad_norm_rms_over_batches": {
+    "task_loss": {
+      "W_mu": 1.5173747811391527,
+      "W_epi": null,
+      "W_ale": null,
+      "mean head": 2.7281912371207473,
+      "epi head": null,
+      "ale head": null,
+      "task head": 0.27798718434414016
+    },
+    "concept_bce": {
+      "W_mu": 1.1686472006711954,
+      "W_epi": null,
+      "W_ale": null,
+      "mean head": 1.721072776656253,
+      "epi head": null,
+      "ale head": null,
+      "task head": null
+    },
+    "error_supervision": {
+      "W_mu": null,
+      "W_epi": 0.2673269332757117,
+      "W_ale": null,
+      "mean head": null,
+      "epi head": 0.8028341841544121,
+      "ale head": null,
+      "task head": null
+    },
+    "credal_kl": {
+      "W_mu": null,
+      "W_epi": 0.9229150546399254,
+      "W_ale": null,
+      "mean head": null,
+      "epi head": 3.6617951378852083,
+      "ale head": null,
+      "task head": null
+    },
+    "aleatoric_loss": {
+      "W_mu": null,
+      "W_epi": null,
+      "W_ale": 0.3363108922534337,
+      "mean head": null,
+      "epi head": null,
+      "ale head": 0.4588191873477868,
+      "task head": null
+    },
+    "aleatoric_unknown": {
+      "W_mu": null,
+      "W_epi": null,
+      "W_ale": 0.8360117166319259,
+      "mean head": null,
+      "epi head": null,
+      "ale head": 1.434847182425849,
+      "task head": null
+    },
+    "orth_penalty": {
+      "W_mu": 34.652789150347445,
+      "W_epi": 19.184830967663295,
+      "W_ale": 23.32668594858151,
+      "mean head": null,
+      "epi head": null,
+      "ale head": null,
+      "task head": null
+    },
+    "loss": {
+      "W_mu": 2.9067040642458246,
+      "W_epi": 0.26928404847806514,
+      "W_ale": 0.6655977445605504,
+      "mean head": 4.6833446445984634,
+      "epi head": 0.8061323462627852,
+      "ale head": 0.9099829529250223,
+      "task head": 0.27798718434414016
+    }
+  }
+}

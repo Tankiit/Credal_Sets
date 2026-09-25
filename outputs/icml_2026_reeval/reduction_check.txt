@@ -1,0 +1,46 @@
+run                                        U_epi variant                  rho(EU,AU) rho(EU,err)   AUROC
+cebab_3class_roberta_base_seed123_100ep    mean log sigma (reported)          -0.006       0.236   0.662
+cebab_3class_roberta_base_seed123_100ep    sum log sigma = 1/2 logdet         -0.006       0.236   0.662
+cebab_3class_roberta_base_seed123_100ep    mean sigma                         -0.023       0.243   0.667
+cebab_3class_roberta_base_seed123_100ep    sum sigma^2 (trace)                -0.036       0.248   0.671
+
+cebab_3class_roberta_base_seed2024_100ep   mean log sigma (reported)          -0.045       0.213   0.649
+cebab_3class_roberta_base_seed2024_100ep   sum log sigma = 1/2 logdet         -0.045       0.213   0.649
+cebab_3class_roberta_base_seed2024_100ep   mean sigma                         -0.049       0.226   0.658
+cebab_3class_roberta_base_seed2024_100ep   sum sigma^2 (trace)                -0.057       0.234   0.663
+
+cebab_3class_seed123_100ep                 mean log sigma (reported)          -0.117       0.162   0.609
+cebab_3class_seed123_100ep                 sum log sigma = 1/2 logdet         -0.117       0.162   0.609
+cebab_3class_seed123_100ep                 mean sigma                         -0.114       0.181   0.622
+cebab_3class_seed123_100ep                 sum sigma^2 (trace)                -0.102       0.194   0.631
+
+cebab_3class_seed2024_100ep                mean log sigma (reported)          -0.059       0.251   0.671
+cebab_3class_seed2024_100ep                sum log sigma = 1/2 logdet         -0.059       0.251   0.671
+cebab_3class_seed2024_100ep                mean sigma                         -0.063       0.256   0.675
+cebab_3class_seed2024_100ep                sum sigma^2 (trace)                -0.058       0.257   0.675
+
+goemotions_seed123_100ep                   mean log sigma (reported)           0.013       0.082   0.548
+goemotions_seed123_100ep                   sum log sigma = 1/2 logdet          0.013       0.082   0.548
+goemotions_seed123_100ep                   mean sigma                          0.017       0.013   0.508
+goemotions_seed123_100ep                   sum sigma^2 (trace)                 0.015      -0.060   0.465
+
+goemotions_seed2024_100ep                  mean log sigma (reported)           0.002       0.012   0.507
+goemotions_seed2024_100ep                  sum log sigma = 1/2 logdet          0.002       0.012   0.507
+goemotions_seed2024_100ep                  mean sigma                          0.017      -0.075   0.456
+goemotions_seed2024_100ep                  sum sigma^2 (trace)                 0.022      -0.092   0.447
+
+hatexplain_seed123_100ep                   mean log sigma (reported)          -0.015       0.210   0.622
+hatexplain_seed123_100ep                   sum log sigma = 1/2 logdet         -0.015       0.210   0.622
+hatexplain_seed123_100ep                   mean sigma                         -0.016       0.208   0.622
+hatexplain_seed123_100ep                   sum sigma^2 (trace)                -0.016       0.208   0.622
+
+hatexplain_seed2024_100ep                  mean log sigma (reported)           0.164       0.168   0.598
+hatexplain_seed2024_100ep                  sum log sigma = 1/2 logdet          0.164       0.168   0.598
+hatexplain_seed2024_100ep                  mean sigma                          0.165       0.168   0.598
+hatexplain_seed2024_100ep                  sum sigma^2 (trace)                 0.165       0.168   0.598
+
+maqa_seed123_100ep                         sigma (reported)                   -0.040      -0.002   0.499
+maqa_seed123_100ep                         log sigma                          -0.040      -0.002   0.499
+
+maqa_seed2024_100ep                        sigma (reported)                    0.048      -0.011   0.494
+maqa_seed2024_100ep                        log sigma                           0.048      -0.011   0.494

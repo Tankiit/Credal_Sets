@@ -1,0 +1,1282 @@
+[
+  {
+    "run_id": "cebab_3class_roberta_base_seed123_100ep",
+    "n": 1689,
+    "manifest": {
+      "run_id": "cebab_3class_roberta_base_seed123_100ep",
+      "kind": "cebab3",
+      "encoder": "roberta-base",
+      "seed": 123,
+      "checkpoint_epoch": 66,
+      "checkpoint_rule": "best validation task accuracy (HybridCredalCBMTrainer.fit)",
+      "lambda_d": 0.0,
+      "H_source": "annotator_entropy",
+      "n_test": 1689,
+      "accuracy": 0.7708703374777975
+    },
+    "au_constant": false,
+    "accuracy": {
+      "value": 0.7708703374777975,
+      "boot95": [
+        0.7513321492007105,
+        0.7915926583777383
+      ]
+    },
+    "rho_eu_au": {
+      "value": -0.005856805491379166,
+      "boot95": [
+        -0.05312530091149405,
+        0.04435057554703219
+      ],
+      "fisher95": [
+        -0.0535395678659561,
+        0.04185260528416036
+      ]
+    },
+    "rho_eu_err": {
+      "value": 0.23551087774222146,
+      "boot95": [
+        0.19451519700588224,
+        0.27847295673933836
+      ],
+      "fisher95": [
+        0.1899468952269292,
+        0.2800625610945918
+      ]
+    },
+    "auroc_eu_err": {
+      "value": 0.661766632134224,
+      "boot95": [
+        0.6339969248551338,
+        0.6909149768401601
+      ]
+    },
+    "rho_au_H": {
+      "value": 0.164636801735121,
+      "boot95": [
+        0.1186459169323998,
+        0.21127417675611532
+      ],
+      "fisher95": [
+        0.11786465026125774,
+        0.21068009211607194
+      ]
+    },
+    "auroc_maxprob_err": {
+      "value": 0.7985051818510183,
+      "boot95": [
+        0.7760716669301488,
+        0.8200078481157219
+      ]
+    },
+    "diagnostics": {
+      "aurc": {
+        "eu": 0.1403800440859643,
+        "au": 0.19366874385184293,
+        "maxprob": 0.08345465862628039,
+        "oracle": 0.028589962357537385
+      },
+      "ambiguity_strata": {
+        "cuts": [
+          0.11387147754430771,
+          0.22774295508861542
+        ],
+        "bins": {
+          "low": {
+            "n": 418,
+            "errors": 94,
+            "H_range": [
+              0.0,
+              0.0
+            ],
+            "auroc_eu": 0.7045245600210139,
+            "auroc_maxprob": 0.8360914105594957
+          },
+          "med": {
+            "n": 695,
+            "errors": 157,
+            "H_range": [
+              0.11387147754430771,
+              0.21624338626861572
+            ],
+            "auroc_eu": 0.6506523334832951,
+            "auroc_maxprob": 0.7986527123339568
+          },
+          "high": {
+            "n": 576,
+            "errors": 136,
+            "H_range": [
+              0.22774295508861542,
+              0.5971367359161377
+            ],
+            "auroc_eu": 0.6483121657754011,
+            "auroc_maxprob": 0.7715909090909092
+          }
+        }
+      },
+      "quadrants": {
+        "trust": {
+          "n": 431,
+          "accuracy": 0.8932714617169374,
+          "mean_H": 0.12726950645446777
+        },
+        "data": {
+          "n": 414,
+          "accuracy": 0.6835748792270531,
+          "mean_H": 0.14470453560352325
+        },
+        "review": {
+          "n": 414,
+          "accuracy": 0.8309178743961353,
+          "mean_H": 0.15134179592132568
+        },
+        "abstain": {
+          "n": 430,
+          "accuracy": 0.6744186046511628,
+          "mean_H": 0.18870915472507477
+        }
+      }
+    }
+  },
+  {
+    "run_id": "cebab_3class_roberta_base_seed2024_100ep",
+    "n": 1689,
+    "manifest": {
+      "run_id": "cebab_3class_roberta_base_seed2024_100ep",
+      "kind": "cebab3",
+      "encoder": "roberta-base",
+      "seed": 2024,
+      "checkpoint_epoch": 77,
+      "checkpoint_rule": "best validation task accuracy (HybridCredalCBMTrainer.fit)",
+      "lambda_d": 0.0,
+      "H_source": "annotator_entropy",
+      "n_test": 1689,
+      "accuracy": 0.7821195973949082
+    },
+    "au_constant": false,
+    "accuracy": {
+      "value": 0.7821195973949082,
+      "boot95": [
+        0.7613972764949675,
+        0.8004736530491415
+      ]
+    },
+    "rho_eu_au": {
+      "value": -0.044647165961059915,
+      "boot95": [
+        -0.09155496864891693,
+        0.0038307098742933372
+      ],
+      "fisher95": [
+        -0.09214864813913703,
+        0.0030570632510907017
+      ]
+    },
+    "rho_eu_err": {
+      "value": 0.21275814056790582,
+      "boot95": [
+        0.16962589681342835,
+        0.25693720332697295
+      ],
+      "fisher95": [
+        0.1667526403812575,
+        0.2578392863662264
+      ]
+    },
+    "auroc_eu_err": {
+      "value": 0.6487818023236679,
+      "boot95": [
+        0.6197270281653795,
+        0.6791052324443428
+      ]
+    },
+    "rho_au_H": {
+      "value": 0.20371357702756673,
+      "boot95": [
+        0.15968432500428303,
+        0.24973391068009082
+      ],
+      "fisher95": [
+        0.15754668767811753,
+        0.24899192293310393
+      ]
+    },
+    "auroc_maxprob_err": {
+      "value": 0.7997153013198169,
+      "boot95": [
+        0.777183584946562,
+        0.8209237325965332
+      ]
+    },
+    "diagnostics": {
+      "aurc": {
+        "eu": 0.1339473599498942,
+        "au": 0.20555655920784202,
+        "maxprob": 0.07735274399137439,
+        "oracle": 0.025740864344321397
+      },
+      "ambiguity_strata": {
+        "cuts": [
+          0.11387147754430771,
+          0.22774295508861542
+        ],
+        "bins": {
+          "low": {
+            "n": 418,
+            "errors": 89,
+            "H_range": [
+              0.0,
+              0.0
+            ],
+            "auroc_eu": 0.6845736142891294,
+            "auroc_maxprob": 0.8261671391004406
+          },
+          "med": {
+            "n": 695,
+            "errors": 154,
+            "H_range": [
+              0.11387147754430771,
+              0.21624338626861572
+            ],
+            "auroc_eu": 0.6562642533067673,
+            "auroc_maxprob": 0.8061910363204263
+          },
+          "high": {
+            "n": 576,
+            "errors": 125,
+            "H_range": [
+              0.22774295508861542,
+              0.5971367359161377
+            ],
+            "auroc_eu": 0.6182882483370288,
+            "auroc_maxprob": 0.7698270509977827
+          }
+        }
+      },
+      "quadrants": {
+        "trust": {
+          "n": 417,
+          "accuracy": 0.9088729016786571,
+          "mean_H": 0.12165366113185883
+        },
+        "data": {
+          "n": 428,
+          "accuracy": 0.6658878504672897,
+          "mean_H": 0.14058580994606018
+        },
+        "review": {
+          "n": 428,
+          "accuracy": 0.8434579439252337,
+          "mean_H": 0.163980633020401
+        },
+        "abstain": {
+          "n": 416,
+          "accuracy": 0.7115384615384616,
+          "mean_H": 0.18624339997768402
+        }
+      }
+    }
+  },
+  {
+    "run_id": "cebab_3class_seed123_100ep",
+    "n": 1689,
+    "manifest": {
+      "run_id": "cebab_3class_seed123_100ep",
+      "kind": "cebab3",
+      "encoder": "distilbert-base-uncased",
+      "seed": 123,
+      "checkpoint_epoch": 60,
+      "checkpoint_rule": "best validation task accuracy (HybridCredalCBMTrainer.fit)",
+      "lambda_d": 0.0,
+      "H_source": "annotator_entropy",
+      "n_test": 1689,
+      "accuracy": 0.7578448786264061
+    },
+    "au_constant": false,
+    "accuracy": {
+      "value": 0.7578448786264061,
+      "boot95": [
+        0.7377146240378922,
+        0.7773978685612787
+      ]
+    },
+    "rho_eu_au": {
+      "value": -0.11659625217535372,
+      "boot95": [
+        -0.16383535495137688,
+        -0.06966021449553764
+      ],
+      "fisher95": [
+        -0.16338532406256528,
+        -0.06928384665871262
+      ]
+    },
+    "rho_eu_err": {
+      "value": 0.16229317186276246,
+      "boot95": [
+        0.11889659870510223,
+        0.2059083184593316
+      ],
+      "fisher95": [
+        0.11548945840109628,
+        0.20837783509026805
+      ]
+    },
+    "auroc_eu_err": {
+      "value": 0.6093635391198045,
+      "boot95": [
+        0.579968964098284,
+        0.6386609928089398
+      ]
+    },
+    "rho_au_H": {
+      "value": 0.14037434136680182,
+      "boot95": [
+        0.09502791636581562,
+        0.18438919727282682
+      ],
+      "fisher95": [
+        0.09330132474685907,
+        0.18682119235695197
+      ]
+    },
+    "auroc_maxprob_err": {
+      "value": 0.7701138447432763,
+      "boot95": [
+        0.746669925487224,
+        0.793959648751714
+      ]
+    },
+    "diagnostics": {
+      "aurc": {
+        "eu": 0.16658638999574446,
+        "au": 0.23204253882463402,
+        "maxprob": 0.10092317136472549,
+        "oracle": 0.03209417003151509
+      },
+      "ambiguity_strata": {
+        "cuts": [
+          0.11387147754430771,
+          0.22774295508861542
+        ],
+        "bins": {
+          "low": {
+            "n": 418,
+            "errors": 88,
+            "H_range": [
+              0.0,
+              0.0
+            ],
+            "auroc_eu": 0.6457644628099174,
+            "auroc_maxprob": 0.7990358126721764
+          },
+          "med": {
+            "n": 695,
+            "errors": 169,
+            "H_range": [
+              0.11387147754430771,
+              0.21624338626861572
+            ],
+            "auroc_eu": 0.6076900578216753,
+            "auroc_maxprob": 0.770738182554503
+          },
+          "high": {
+            "n": 576,
+            "errors": 152,
+            "H_range": [
+              0.22774295508861542,
+              0.5971367359161377
+            ],
+            "auroc_eu": 0.5823299404170804,
+            "auroc_maxprob": 0.7513964746772591
+          }
+        }
+      },
+      "quadrants": {
+        "trust": {
+          "n": 383,
+          "accuracy": 0.8276762402088773,
+          "mean_H": 0.1322212815284729
+        },
+        "data": {
+          "n": 462,
+          "accuracy": 0.699134199134199,
+          "mean_H": 0.14865495264530182
+        },
+        "review": {
+          "n": 462,
+          "accuracy": 0.8008658008658008,
+          "mean_H": 0.14956651628017426
+        },
+        "abstain": {
+          "n": 382,
+          "accuracy": 0.7068062827225131,
+          "mean_H": 0.18361827731132507
+        }
+      }
+    }
+  },
+  {
+    "run_id": "cebab_3class_seed2024_100ep",
+    "n": 1689,
+    "manifest": {
+      "run_id": "cebab_3class_seed2024_100ep",
+      "kind": "cebab3",
+      "encoder": "distilbert-base-uncased",
+      "seed": 2024,
+      "checkpoint_epoch": 60,
+      "checkpoint_rule": "best validation task accuracy (HybridCredalCBMTrainer.fit)",
+      "lambda_d": 0.0,
+      "H_source": "annotator_entropy",
+      "n_test": 1689,
+      "accuracy": 0.7649496743635287
+    },
+    "au_constant": false,
+    "accuracy": {
+      "value": 0.7649496743635287,
+      "boot95": [
+        0.7448194197750149,
+        0.7844878626406158
+      ]
+    },
+    "rho_eu_au": {
+      "value": -0.05885005081423859,
+      "boot95": [
+        -0.10752016501030678,
+        -0.01250127595286677
+      ],
+      "fisher95": [
+        -0.10624952598193398,
+        -0.011183724688758863
+      ]
+    },
+    "rho_eu_err": {
+      "value": 0.25145697255883526,
+      "boot95": [
+        0.20739645759909292,
+        0.2936824897365041
+      ],
+      "fisher95": [
+        0.2062327940316431,
+        0.2956091775335943
+      ]
+    },
+    "auroc_eu_err": {
+      "value": 0.6711891040388049,
+      "boot95": [
+        0.6422610902797902,
+        0.700122137796496
+      ]
+    },
+    "rho_au_H": {
+      "value": 0.12528921713520022,
+      "boot95": [
+        0.07982900826192309,
+        0.17176393517115357
+      ],
+      "fisher95": [
+        0.07805797336640903,
+        0.17195930561555545
+      ]
+    },
+    "auroc_maxprob_err": {
+      "value": 0.7558293236424889,
+      "boot95": [
+        0.7294598558791413,
+        0.7803787083692646
+      ]
+    },
+    "diagnostics": {
+      "aurc": {
+        "eu": 0.13494612852914162,
+        "au": 0.20963865682166413,
+        "maxprob": 0.10096171086556312,
+        "oracle": 0.030155274162210984
+      },
+      "ambiguity_strata": {
+        "cuts": [
+          0.11387147754430771,
+          0.22774295508861542
+        ],
+        "bins": {
+          "low": {
+            "n": 418,
+            "errors": 85,
+            "H_range": [
+              0.0,
+              0.0
+            ],
+            "auroc_eu": 0.7237237237237237,
+            "auroc_maxprob": 0.7767178943649532
+          },
+          "med": {
+            "n": 695,
+            "errors": 165,
+            "H_range": [
+              0.11387147754430771,
+              0.21624338626861572
+            ],
+            "auroc_eu": 0.6681646655231561,
+            "auroc_maxprob": 0.763533447684391
+          },
+          "high": {
+            "n": 576,
+            "errors": 147,
+            "H_range": [
+              0.22774295508861542,
+              0.5971367359161377
+            ],
+            "auroc_eu": 0.634873063444492,
+            "auroc_maxprob": 0.7329337329337329
+          }
+        }
+      },
+      "quadrants": {
+        "trust": {
+          "n": 405,
+          "accuracy": 0.8962962962962963,
+          "mean_H": 0.1343250274658203
+        },
+        "data": {
+          "n": 440,
+          "accuracy": 0.6545454545454545,
+          "mean_H": 0.1444082260131836
+        },
+        "review": {
+          "n": 440,
+          "accuracy": 0.8477272727272727,
+          "mean_H": 0.1508878469467163
+        },
+        "abstain": {
+          "n": 404,
+          "accuracy": 0.6633663366336633,
+          "mean_H": 0.18373601138591766
+        }
+      }
+    }
+  },
+  {
+    "run_id": "goemotions_seed123_100ep",
+    "n": 5427,
+    "manifest": {
+      "run_id": "goemotions_seed123_100ep",
+      "kind": "goemotions",
+      "encoder": "distilbert-base-uncased",
+      "seed": 123,
+      "checkpoint_epoch": 97,
+      "checkpoint_rule": "best validation task accuracy (HybridCredalCBMTrainer.fit)",
+      "lambda_d": 0.0,
+      "H_source": null,
+      "n_test": 5427,
+      "accuracy": 0.44812972176156257
+    },
+    "au_constant": true,
+    "accuracy": {
+      "value": 0.4481297217615625,
+      "boot95": [
+        0.43467845955408146,
+        0.46121245623733187
+      ]
+    },
+    "rho_eu_au": {
+      "value": 0.0128595216872796,
+      "boot95": [
+        0.012391588480877885,
+        0.025232091007212038
+      ],
+      "fisher95": [
+        -0.013752049255008678,
+        0.039452888476806766
+      ]
+    },
+    "rho_eu_err": {
+      "value": 0.08248319009500861,
+      "boot95": [
+        0.05649923834621327,
+        0.10898000913081808
+      ],
+      "fisher95": [
+        0.0559992214020202,
+        0.10885116889150812
+      ]
+    },
+    "auroc_eu_err": {
+      "value": 0.5478800330594852,
+      "boot95": [
+        0.5327887942414247,
+        0.5632268082442006
+      ]
+    },
+    "auroc_maxprob_err": {
+      "value": 0.7451807013882786,
+      "boot95": [
+        0.7318632838795801,
+        0.7580367266025698
+      ]
+    },
+    "diagnostics": {
+      "aurc": {
+        "eu": 0.5011743544275252,
+        "au": 0.5451377447426956,
+        "maxprob": 0.35773817235922256,
+        "oracle": 0.19221970009545547
+      },
+      "quadrants": {
+        "trust": {
+          "n": 2714,
+          "accuracy": 0.4804716285924834,
+          "mean_H": null
+        },
+        "data": {
+          "n": 2713,
+          "accuracy": 0.4157758938444527,
+          "mean_H": null
+        },
+        "review": {
+          "n": 0,
+          "accuracy": NaN,
+          "mean_H": null
+        },
+        "abstain": {
+          "n": 0,
+          "accuracy": NaN,
+          "mean_H": null
+        }
+      }
+    }
+  },
+  {
+    "run_id": "goemotions_seed2024_100ep",
+    "n": 5427,
+    "manifest": {
+      "run_id": "goemotions_seed2024_100ep",
+      "kind": "goemotions",
+      "encoder": "distilbert-base-uncased",
+      "seed": 2024,
+      "checkpoint_epoch": 87,
+      "checkpoint_rule": "best validation task accuracy (HybridCredalCBMTrainer.fit)",
+      "lambda_d": 0.0,
+      "H_source": null,
+      "n_test": 5427,
+      "accuracy": 0.44223327805417356
+    },
+    "au_constant": true,
+    "accuracy": {
+      "value": 0.44223327805417356,
+      "boot95": [
+        0.42970333517597203,
+        0.45586880412751063
+      ]
+    },
+    "rho_eu_au": {
+      "value": 0.0019510030843148437,
+      "boot95": [
+        -0.023328555253218766,
+        0.025084276377378614
+      ],
+      "fisher95": [
+        -0.02465714252695205,
+        0.028556386377200958
+      ]
+    },
+    "rho_eu_err": {
+      "value": 0.011570093929281083,
+      "boot95": [
+        -0.01508871982330647,
+        0.03718121905704147
+      ],
+      "fisher95": [
+        -0.015041402132237142,
+        0.03816521065775978
+      ]
+    },
+    "auroc_eu_err": {
+      "value": 0.5067250302830085,
+      "boot95": [
+        0.49123967681935465,
+        0.5216113468232824
+      ]
+    },
+    "auroc_maxprob_err": {
+      "value": 0.7504759938332782,
+      "boot95": [
+        0.7373704703913448,
+        0.763332326812593
+      ]
+    },
+    "diagnostics": {
+      "aurc": {
+        "eu": 0.5411640858482467,
+        "au": 0.5521941201772169,
+        "maxprob": 0.35612156559901514,
+        "oracle": 0.19699212030287502
+      },
+      "quadrants": {
+        "trust": {
+          "n": 2714,
+          "accuracy": 0.44288872512896094,
+          "mean_H": null
+        },
+        "data": {
+          "n": 2713,
+          "accuracy": 0.44157758938444525,
+          "mean_H": null
+        },
+        "review": {
+          "n": 0,
+          "accuracy": NaN,
+          "mean_H": null
+        },
+        "abstain": {
+          "n": 0,
+          "accuracy": NaN,
+          "mean_H": null
+        }
+      }
+    }
+  },
+  {
+    "run_id": "hatexplain_seed123_100ep",
+    "n": 1924,
+    "manifest": {
+      "run_id": "hatexplain_seed123_100ep",
+      "kind": "hatexplain",
+      "encoder": "distilbert-base-uncased",
+      "seed": 123,
+      "checkpoint_epoch": 65,
+      "checkpoint_rule": "best validation task accuracy (HybridCredalCBMTrainer.fit)",
+      "lambda_d": 0.0,
+      "H_source": "_annotator_entropy",
+      "n_test": 1924,
+      "accuracy": 0.5774428274428275
+    },
+    "au_constant": true,
+    "accuracy": {
+      "value": 0.5774428274428274,
+      "boot95": [
+        0.5556003118503119,
+        0.5982328482328483
+      ]
+    },
+    "rho_eu_au": {
+      "value": -0.014651545584983838,
+      "boot95": [
+        -0.06205998108283126,
+        0.032200032869444034
+      ],
+      "fisher95": [
+        -0.0593019623519905,
+        0.030057380688150837
+      ]
+    },
+    "rho_eu_err": {
+      "value": 0.20951204094417222,
+      "boot95": [
+        0.16643292243267335,
+        0.2505403291189331
+      ],
+      "fisher95": [
+        0.16638060605000113,
+        0.2518432942374039
+      ]
+    },
+    "auroc_eu_err": {
+      "value": 0.6224393657077885,
+      "boot95": [
+        0.5974081860387362,
+        0.646612255448114
+      ]
+    },
+    "rho_au_H": {
+      "value": 0.011218517830299143,
+      "boot95": [
+        -0.03476377584696209,
+        0.05457199053689199
+      ],
+      "fisher95": [
+        -0.033487516745662485,
+        0.05587974838707105
+      ]
+    },
+    "auroc_maxprob_err": {
+      "value": 0.675975346612152,
+      "boot95": [
+        0.6513572893780478,
+        0.7011881270022728
+      ]
+    },
+    "diagnostics": {
+      "aurc": {
+        "eu": 0.3132436186303802,
+        "au": 0.3885730247503991,
+        "maxprob": 0.28686782018035106,
+        "oracle": 0.10556663128234432
+      },
+      "ambiguity_strata": {
+        "cuts": [
+          -9.102393144777565e-11,
+          0.5793801546096802
+        ],
+        "bins": {
+          "low": {
+            "n": 0,
+            "errors": 0,
+            "H_range": null,
+            "auroc_eu": NaN,
+            "auroc_maxprob": NaN
+          },
+          "med": {
+            "n": 974,
+            "errors": 301,
+            "H_range": [
+              -9.102393144777565e-11,
+              -9.102393144777565e-11
+            ],
+            "auroc_eu": 0.6402876987555104,
+            "auroc_maxprob": 0.7610194843340427
+          },
+          "high": {
+            "n": 950,
+            "errors": 512,
+            "H_range": [
+              0.5793801546096802,
+              0.5793801546096802
+            ],
+            "auroc_eu": 0.599422089041096,
+            "auroc_maxprob": 0.5799956299942922
+          }
+        }
+      },
+      "quadrants": {
+        "trust": {
+          "n": 962,
+          "accuracy": 0.6683991683991684,
+          "mean_H": 0.2674061954021454
+        },
+        "data": {
+          "n": 962,
+          "accuracy": 0.4864864864864865,
+          "mean_H": 0.30474668741226196
+        },
+        "review": {
+          "n": 0,
+          "accuracy": NaN,
+          "mean_H": null
+        },
+        "abstain": {
+          "n": 0,
+          "accuracy": NaN,
+          "mean_H": null
+        }
+      }
+    }
+  },
+  {
+    "run_id": "hatexplain_seed2024_100ep",
+    "n": 1924,
+    "manifest": {
+      "run_id": "hatexplain_seed2024_100ep",
+      "kind": "hatexplain",
+      "encoder": "distilbert-base-uncased",
+      "seed": 2024,
+      "checkpoint_epoch": 76,
+      "checkpoint_rule": "best validation task accuracy (HybridCredalCBMTrainer.fit)",
+      "lambda_d": 0.0,
+      "H_source": "_annotator_entropy",
+      "n_test": 1924,
+      "accuracy": 0.5706860706860707
+    },
+    "au_constant": true,
+    "accuracy": {
+      "value": 0.5706860706860707,
+      "boot95": [
+        0.5493762993762994,
+        0.593035343035343
+      ]
+    },
+    "rho_eu_au": {
+      "value": 0.16404080440145255,
+      "boot95": [
+        0.12045884407284489,
+        0.20651998578530364
+      ],
+      "fisher95": [
+        0.12023296974105865,
+        0.20721101520368176
+      ]
+    },
+    "rho_eu_err": {
+      "value": 0.16830107468454422,
+      "boot95": [
+        0.12473231421101874,
+        0.209993142258377
+      ],
+      "fisher95": [
+        0.1245485898199392,
+        0.21140032609451404
+      ]
+    },
+    "auroc_eu_err": {
+      "value": 0.5981544697160146,
+      "boot95": [
+        0.5726548926725593,
+        0.6225057907379253
+      ]
+    },
+    "rho_au_H": {
+      "value": -0.034022325570761854,
+      "boot95": [
+        -0.0787005928793348,
+        0.009684442046292804
+      ],
+      "fisher95": [
+        -0.07859207736269445,
+        0.010683163159644722
+      ]
+    },
+    "auroc_maxprob_err": {
+      "value": 0.6975234522817184,
+      "boot95": [
+        0.6737287957766086,
+        0.7205233924551385
+      ]
+    },
+    "diagnostics": {
+      "aurc": {
+        "eu": 0.33360290231505213,
+        "au": 0.43544759274308514,
+        "maxprob": 0.2795951483811456,
+        "oracle": 0.10931851753299322
+      },
+      "ambiguity_strata": {
+        "cuts": [
+          -9.102393144777565e-11,
+          0.5793801546096802
+        ],
+        "bins": {
+          "low": {
+            "n": 0,
+            "errors": 0,
+            "H_range": null,
+            "auroc_eu": NaN,
+            "auroc_maxprob": NaN
+          },
+          "med": {
+            "n": 974,
+            "errors": 302,
+            "H_range": [
+              -9.102393144777565e-11,
+              -9.102393144777565e-11
+            ],
+            "auroc_eu": 0.6244530510879849,
+            "auroc_maxprob": 0.7774854146956796
+          },
+          "high": {
+            "n": 950,
+            "errors": 524,
+            "H_range": [
+              0.5793801546096802,
+              0.5793801546096802
+            ],
+            "auroc_eu": 0.5652976382467835,
+            "auroc_maxprob": 0.6047109629788912
+          }
+        }
+      },
+      "quadrants": {
+        "trust": {
+          "n": 544,
+          "accuracy": 0.6636029411764706,
+          "mean_H": 0.2715844213962555
+        },
+        "data": {
+          "n": 418,
+          "accuracy": 0.4736842105263158,
+          "mean_H": 0.31186726689338684
+        },
+        "review": {
+          "n": 418,
+          "accuracy": 0.6100478468899522,
+          "mean_H": 0.2619685232639313
+        },
+        "abstain": {
+          "n": 544,
+          "accuracy": 0.5220588235294117,
+          "mean_H": 0.29927539825439453
+        }
+      }
+    }
+  },
+  {
+    "run_id": "maqa_seed123_100ep",
+    "n": 464,
+    "manifest": {
+      "run_id": "maqa_seed123_100ep",
+      "kind": "maqa",
+      "encoder": "distilbert-base-uncased",
+      "seed": 123,
+      "checkpoint_epoch": 96,
+      "checkpoint_rule": "lowest validation loss (train_maqa_model)",
+      "loss_version": "v7b",
+      "lambda_decorr": 20.0,
+      "note": "sigma_ale head takes ground-truth entropy as input; au_no_H_input zeroes it",
+      "accuracy_definition": "argmax of answer logits over valid answers == majority answer",
+      "n_test": 464,
+      "accuracy": 0.5021551724137931
+    },
+    "au_constant": false,
+    "accuracy": {
+      "value": 0.5021551724137931,
+      "boot95": [
+        0.4589978448275862,
+        0.5495689655172413
+      ]
+    },
+    "rho_eu_au": {
+      "value": -0.03966256122301002,
+      "boot95": [
+        -0.12908326969879294,
+        0.05096233188520596
+      ],
+      "fisher95": [
+        -0.130225938779384,
+        0.05155716690916195
+      ]
+    },
+    "rho_eu_err": {
+      "value": -0.001609013611303714,
+      "boot95": [
+        -0.09406094119880384,
+        0.08970719340859631
+      ],
+      "fisher95": [
+        -0.0926290203946693,
+        0.08943766125462499
+      ]
+    },
+    "auroc_eu_err": {
+      "value": 0.4990710291139475,
+      "boot95": [
+        0.44562330111875503,
+        0.5518220478521197
+      ]
+    },
+    "rho_au_H": {
+      "value": 0.2252241513939236,
+      "boot95": [
+        0.1381529857310122,
+        0.3138563151945633
+      ],
+      "fisher95": [
+        0.13699947146882144,
+        0.30990378124507684
+      ]
+    },
+    "rho_au_H_leaky_input": {
+      "value": 0.8939681945835288
+    },
+    "diagnostics": {
+      "aurc": {
+        "eu": 0.5065481376772555,
+        "au": 0.47502133850054784,
+        "oracle": 0.15247309042806942
+      },
+      "ambiguity_strata": {
+        "cuts": [
+          0.4505612254142761,
+          0.6931002736091614
+        ],
+        "bins": {
+          "low": {
+            "n": 152,
+            "errors": 60,
+            "H_range": [
+              -0.0,
+              0.44050174951553345
+            ],
+            "auroc_eu": 0.4826086956521739,
+            "auroc_maxprob": NaN
+          },
+          "med": {
+            "n": 157,
+            "errors": 73,
+            "H_range": [
+              0.4505612254142761,
+              0.6930539011955261
+            ],
+            "auroc_eu": 0.515737116764514,
+            "auroc_maxprob": NaN
+          },
+          "high": {
+            "n": 155,
+            "errors": 98,
+            "H_range": [
+              0.693123459815979,
+              1.9952261447906494
+            ],
+            "auroc_eu": 0.5159326888650198,
+            "auroc_maxprob": NaN
+          }
+        }
+      },
+      "quadrants": {
+        "trust": {
+          "n": 112,
+          "accuracy": 0.5803571428571428,
+          "mean_H": 0.5436280369758606
+        },
+        "data": {
+          "n": 120,
+          "accuracy": 0.5083333333333333,
+          "mean_H": 0.5062773823738098
+        },
+        "review": {
+          "n": 120,
+          "accuracy": 0.41666666666666663,
+          "mean_H": 0.7258277535438538
+        },
+        "abstain": {
+          "n": 112,
+          "accuracy": 0.5089285714285714,
+          "mean_H": 0.6325085759162903
+        }
+      }
+    }
+  },
+  {
+    "run_id": "maqa_seed2024_100ep",
+    "n": 464,
+    "manifest": {
+      "run_id": "maqa_seed2024_100ep",
+      "kind": "maqa",
+      "encoder": "distilbert-base-uncased",
+      "seed": 2024,
+      "checkpoint_epoch": 90,
+      "checkpoint_rule": "lowest validation loss (train_maqa_model)",
+      "loss_version": "v7b",
+      "lambda_decorr": 20.0,
+      "note": "sigma_ale head takes ground-truth entropy as input; au_no_H_input zeroes it",
+      "accuracy_definition": "argmax of answer logits over valid answers == majority answer",
+      "n_test": 464,
+      "accuracy": 0.4698275862068966
+    },
+    "au_constant": false,
+    "accuracy": {
+      "value": 0.4698275862068966,
+      "boot95": [
+        0.4267241379310345,
+        0.5129310344827587
+      ]
+    },
+    "rho_eu_au": {
+      "value": 0.048455448712375684,
+      "boot95": [
+        -0.04254127112942491,
+        0.13937813119453935
+      ],
+      "fisher95": [
+        -0.042766773184033,
+        0.13887642923694649
+      ]
+    },
+    "rho_eu_err": {
+      "value": -0.010703256849649784,
+      "boot95": [
+        -0.10685255812252768,
+        0.07984426397931653
+      ],
+      "fisher95": [
+        -0.10163780002740441,
+        0.08040866434385624
+      ]
+    },
+    "auroc_eu_err": {
+      "value": 0.4938092041470874,
+      "boot95": [
+        0.4382598979169707,
+        0.5465347573279524
+      ]
+    },
+    "rho_au_H": {
+      "value": 0.2231982210234887,
+      "boot95": [
+        0.13426882718349029,
+        0.30662180582727455
+      ],
+      "fisher95": [
+        0.13490573290954244,
+        0.3079742117308129
+      ]
+    },
+    "rho_au_H_leaky_input": {
+      "value": 0.8841831915877886
+    },
+    "diagnostics": {
+      "aurc": {
+        "eu": 0.5292585036593954,
+        "au": 0.5225034031512654,
+        "oracle": 0.1758402578174934
+      },
+      "ambiguity_strata": {
+        "cuts": [
+          0.4505612254142761,
+          0.6931002736091614
+        ],
+        "bins": {
+          "low": {
+            "n": 152,
+            "errors": 64,
+            "H_range": [
+              -0.0,
+              0.44050174951553345
+            ],
+            "auroc_eu": 0.4856178977272727,
+            "auroc_maxprob": NaN
+          },
+          "med": {
+            "n": 157,
+            "errors": 76,
+            "H_range": [
+              0.4505612254142761,
+              0.6930539011955261
+            ],
+            "auroc_eu": 0.5037361923326835,
+            "auroc_maxprob": NaN
+          },
+          "high": {
+            "n": 155,
+            "errors": 106,
+            "H_range": [
+              0.693123459815979,
+              1.9952261447906494
+            ],
+            "auroc_eu": 0.46091644204851756,
+            "auroc_maxprob": NaN
+          }
+        }
+      },
+      "quadrants": {
+        "trust": {
+          "n": 124,
+          "accuracy": 0.5161290322580645,
+          "mean_H": 0.515284538269043
+        },
+        "data": {
+          "n": 108,
+          "accuracy": 0.4629629629629629,
+          "mean_H": 0.5226494669914246
+        },
+        "review": {
+          "n": 108,
+          "accuracy": 0.42592592592592593,
+          "mean_H": 0.6455065608024597
+        },
+        "abstain": {
+          "n": 124,
+          "accuracy": 0.467741935483871,
+          "mean_H": 0.7219657897949219
+        }
+      }
+    }
+  }
+]

@@ -4,15 +4,41 @@ __pycache__/
 
 # Local training artifacts
 logs/
-outputs/
+outputs/*
+!outputs/icml_2026_reeval/
+!outputs/icml_2026_multiseed/
+outputs/icml_2026_reeval_*.log
 
 # Large model / data files
-checkpoints/**/*.pt
+*.pt
+*.pth
+*.safetensors
+*.ckpt
 checkpoints/**/*.jsonl
+checkpoints/**/logs/
 checkpoints_from_modal/
+tmp_modal_pull/checkpoints/
 results_all_*.json
 data/hatexplain/dataset.json
 data/hatexplain/post_id_divisions.json
+
+# Paper draft and reviewer notes stay local (repo is public; double-blind review)
+paper/iclr2027_revised.tex
+paper/REVISION_NOTES.md
+paper/*.pdf
+paper/*.aux
+paper/*.log
+paper/*.bbl
+paper/*.blg
+paper/*.out
+
+# Anonymous submission bundle is built separately
+anonymous_release/
+anonymous_release.zip
+
+# Experiment trackers
+wandb/
+mlruns/
 
 # OS/editor artifacts
 .DS_Store

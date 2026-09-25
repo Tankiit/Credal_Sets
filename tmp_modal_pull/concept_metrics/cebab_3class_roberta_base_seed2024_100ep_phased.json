@@ -1,0 +1,79 @@
+{
+  "run_id": "cebab_3class_roberta_base_seed2024_100ep_phased",
+  "encoder": "roberta-base",
+  "seed": 2024,
+  "checkpoint_epoch": 52,
+  "task_accuracy": 0.7850799289520426,
+  "mean_concept_accuracy": 0.8106557377049181,
+  "concept_coverage": 0.7223208999407934,
+  "negative_accuracy": 0.9055384615384615,
+  "positive_accuracy": 0.6214723926380368,
+  "rho_au_entropy_sample_mean": 0.1750217029884808,
+  "rho_au_entropy_flattened": 0.08308864455931014,
+  "rho_au_worker_rating_entropy": 0.012739675342491001,
+  "rho_au_entropy_known_majority_pooled": 0.02743506628117613,
+  "rho_au_binary_entropy_no_unknown_votes_pooled": -0.02030037402835527,
+  "rho_au_entropy_by_aggregation": {
+    "mean": 0.1750217029884808,
+    "max": 0.0757503053276259,
+    "rms": 0.1739919217924526,
+    "median": 0.1439753737972157,
+    "std": -0.08761106375280459
+  },
+  "rho_au_binary_entropy_by_aggregation": {
+    "mean": 0.0021776034472908673,
+    "max": -0.10841187106269863,
+    "rms": -0.007072646956729658,
+    "median": -0.0024637884543678434,
+    "std": -0.14755592490527503
+  },
+  "per_aspect": {
+    "food": {
+      "accuracy": 0.7912727272727272,
+      "negative_accuracy": 0.8237082066869301,
+      "positive_accuracy": 0.7615062761506276,
+      "known_count": 1375,
+      "unknown_count": 314,
+      "rho_au_entropy": 0.2960415165936151,
+      "rho_au_entropy_known_majority": 0.2778367208216215,
+      "rho_au_binary_entropy_no_unknown_votes": 0.06147403709134983
+    },
+    "service": {
+      "accuracy": 0.7774269928966061,
+      "negative_accuracy": 0.8349633251833741,
+      "positive_accuracy": 0.6726057906458798,
+      "known_count": 1267,
+      "unknown_count": 422,
+      "rho_au_entropy": 0.04239620050033315,
+      "rho_au_entropy_known_majority": -0.04139184193476665,
+      "rho_au_binary_entropy_no_unknown_votes": -0.04769047278025601
+    },
+    "ambiance": {
+      "accuracy": 0.8121693121693122,
+      "negative_accuracy": 0.9434416365824309,
+      "positive_accuracy": 0.4521452145214521,
+      "known_count": 1134,
+      "unknown_count": 555,
+      "rho_au_entropy": 0.005048061710588333,
+      "rho_au_entropy_known_majority": 0.004745446179023912,
+      "rho_au_binary_entropy_no_unknown_votes": 0.007056168119648685
+    },
+    "noise": {
+      "accuracy": 0.8713768115942029,
+      "negative_accuracy": 0.9904559915164369,
+      "positive_accuracy": 0.17391304347826086,
+      "known_count": 1104,
+      "unknown_count": 585,
+      "rho_au_entropy": 0.021971887179461826,
+      "rho_au_entropy_known_majority": -0.07595061234843994,
+      "rho_au_binary_entropy_no_unknown_votes": -0.1409887371556725
+    }
+  },
+  "counts": {
+    "test_examples": 1689,
+    "known_concepts": 4880,
+    "unknown_concepts": 1876,
+    "negative_concepts": 3250,
+    "positive_concepts": 1630
+  }
+}

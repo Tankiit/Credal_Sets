@@ -1,0 +1,19 @@
+{
+  "val_loss": 1.071997146154272,
+  "mean_sigma_epi": 0.316283643245697,
+  "mean_sigma_ale": 0.7127334475517273,
+  "mean_entropy_gt": 0.6025428771972656,
+  "rho_eu_au": 0.05220379255087847,
+  "p_eu_au": 0.2617619803342069,
+  "rho_au_entropy": 0.8841831915877886,
+  "p_au_entropy": 8.07719944551516e-155,
+  "gradient_conflict_rate": 0.0,
+  "gradient_alignment_rate": 0.0,
+  "contrastive_success_rate": 0.5,
+  "contrastive_total_pairs": 0,
+  "dataset": "maqa_ambigqa",
+  "seed": 2024,
+  "epochs": 100,
+  "encoder": "distilbert-base-uncased",
+  "loss_version": "v7b"
+}

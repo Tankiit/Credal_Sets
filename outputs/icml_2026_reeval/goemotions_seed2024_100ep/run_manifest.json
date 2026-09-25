@@ -1,0 +1,12 @@
+{
+  "run_id": "goemotions_seed2024_100ep",
+  "kind": "goemotions",
+  "encoder": "distilbert-base-uncased",
+  "seed": 2024,
+  "checkpoint_epoch": 87,
+  "checkpoint_rule": "best validation task accuracy (HybridCredalCBMTrainer.fit)",
+  "lambda_d": 0.0,
+  "H_source": null,
+  "n_test": 5427,
+  "accuracy": 0.44223327805417356
+}

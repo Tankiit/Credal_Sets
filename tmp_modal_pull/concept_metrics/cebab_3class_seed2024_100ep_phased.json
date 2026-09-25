@@ -1,0 +1,65 @@
+{
+  "run_id": "cebab_3class_seed2024_100ep_phased",
+  "encoder": "distilbert-base-uncased",
+  "seed": 2024,
+  "checkpoint_epoch": 37,
+  "task_accuracy": 0.7673179396092362,
+  "mean_concept_accuracy": 0.7901639344262295,
+  "concept_coverage": 0.7223208999407934,
+  "negative_accuracy": 0.8784615384615385,
+  "positive_accuracy": 0.6141104294478528,
+  "rho_au_entropy_sample_mean": 0.1719544839307284,
+  "rho_au_entropy_flattened": 0.12806576176673373,
+  "rho_au_worker_rating_entropy": -0.0059355915714617655,
+  "rho_au_entropy_known_majority_pooled": 0.03415012533050021,
+  "rho_au_binary_entropy_no_unknown_votes_pooled": -0.0437226296774944,
+  "per_aspect": {
+    "food": {
+      "accuracy": 0.76,
+      "negative_accuracy": 0.8601823708206687,
+      "positive_accuracy": 0.6680613668061367,
+      "known_count": 1375,
+      "unknown_count": 314,
+      "rho_au_entropy": 0.2825794429518546,
+      "rho_au_entropy_known_majority": 0.23851038703985894,
+      "rho_au_binary_entropy_no_unknown_votes": 0.06941830989325411
+    },
+    "service": {
+      "accuracy": 0.7490134175217048,
+      "negative_accuracy": 0.8251833740831296,
+      "positive_accuracy": 0.6102449888641426,
+      "known_count": 1267,
+      "unknown_count": 422,
+      "rho_au_entropy": 0.09985173410459647,
+      "rho_au_entropy_known_majority": -0.0360280286079302,
+      "rho_au_binary_entropy_no_unknown_votes": -0.10380489024431747
+    },
+    "ambiance": {
+      "accuracy": 0.8077601410934744,
+      "negative_accuracy": 0.9193742478941035,
+      "positive_accuracy": 0.5016501650165016,
+      "known_count": 1134,
+      "unknown_count": 555,
+      "rho_au_entropy": 0.07192340355623207,
+      "rho_au_entropy_known_majority": 0.10757299474993448,
+      "rho_au_binary_entropy_no_unknown_votes": -0.006291546744402689
+    },
+    "noise": {
+      "accuracy": 0.8568840579710145,
+      "negative_accuracy": 0.9013785790031813,
+      "positive_accuracy": 0.5962732919254659,
+      "known_count": 1104,
+      "unknown_count": 585,
+      "rho_au_entropy": -0.06237570350658192,
+      "rho_au_entropy_known_majority": -0.09310056993465413,
+      "rho_au_binary_entropy_no_unknown_votes": -0.0789230915743516
+    }
+  },
+  "counts": {
+    "test_examples": 1689,
+    "known_concepts": 4880,
+    "unknown_concepts": 1876,
+    "negative_concepts": 3250,
+    "positive_concepts": 1630
+  }
+}
