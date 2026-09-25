@@ -41,6 +41,16 @@ RUNS = {
     "cebab_3class_answerdotai_ModernBERT_base_seed2024_100ep": ("cebab3", "answerdotai/ModernBERT-base", 2024),
 }
 
+# Retraining campaign (fixed CEBaB labels, seed 42 added, ablations, AmbigQA*).
+for _seed in (42, 123, 2024):
+    for _tag in ("100ep_fixed", "100ep_fixed_noale", "100ep_fixed_decorr5"):
+        RUNS[f"cebab_3class_distilbert_seed{_seed}_{_tag}"] = ("cebab3", "distilbert", _seed)
+    RUNS[f"cebab_3class_roberta_base_seed{_seed}_100ep_fixed"] = ("cebab3", "roberta-base", _seed)
+    RUNS[f"ambigqa_distilbert_seed{_seed}_100ep"] = ("ambigqa", "distilbert", _seed)
+RUNS["hatexplain_distilbert_seed42_100ep"] = ("hatexplain", "distilbert", 42)
+RUNS["goemotions_distilbert_seed42_100ep"] = ("goemotions", "distilbert", 42)
+RUNS["maqa_distilbert_seed42_100ep"] = ("maqa", "distilbert", 42)
+
 ENTROPY_KEYS = ("annotator_entropy", "_annotator_entropy", "_rating_entropy")
 
 
@@ -153,6 +163,27 @@ def cbm_eval(run_id, kind, encoder, seed, ckpt_path, device):
                     out["H"].append(np.asarray(batch[key], dtype=np.float32))
                     break
 
+    n_mc = int(os.environ.get("REEVAL_MC", "0"))
+    if n_mc:
+        # MC dropout baseline: frozen encoder stays deterministic; dropout in the
+        # trainable heads is sampled n_mc times.
+        for name, module in model.named_modules():
+            if isinstance(module, torch.nn.Dropout) and not name.startswith("encoder"):
+                module.train()
+        torch.manual_seed(seed)
+        passes = []
+        with torch.inference_mode():
+            for _ in range(n_mc):
+                probs = [model(input_ids=b["input_ids"].to(device), attention_mask=b["attention_mask"].to(device))["probs"].cpu().numpy()
+                         for b in test_loader]
+                passes.append(np.concatenate(probs))
+        model.eval()
+        mc = np.stack(passes)                       # [T, N, J]
+        mean = mc.mean(0)
+        ent = lambda p: -(p * np.log(p + 1e-12)).sum(-1)
+        out["mc_probs"] = [mean]
+        out["mc_entropy"] = [ent(mean)]
+        out["mc_mutual_info"] = [ent(mean) - ent(mc).mean(0)]
     arrays = {k: np.concatenate(v) for k, v in out.items() if v}
     meta = {
         "run_id": run_id,
@@ -167,7 +198,7 @@ def cbm_eval(run_id, kind, encoder, seed, ckpt_path, device):
     return arrays, meta
 
 
-def maqa_eval(run_id, seed, ckpt_path, device):
+def maqa_eval(run_id, seed, ckpt_path, device, subset=""):
     import torch
     from torch.utils.data import DataLoader
 
@@ -179,6 +210,9 @@ def maqa_eval(run_id, seed, ckpt_path, device):
     encoder_name = "distilbert-base-uncased"
     encoder, tokenizer = experiment.load_encoder_with_quantization(encoder_name, "none", device)
     raw = load_combined_maqa_ambigqa()
+    if subset:
+        # Same split as MAQA*, restricted to one source (as in training).
+        raw = {k: [x for x in v if x.get("dataset") == subset] for k, v in raw.items()}
     data = {}
     for split in ("train", "validation", "test"):
         processed = []
@@ -243,6 +277,7 @@ def maqa_eval(run_id, seed, ckpt_path, device):
     meta = {
         "run_id": run_id,
         "kind": "maqa",
+        "qa_subset": subset or None,
         "encoder": encoder_name,
         "seed": seed,
         "checkpoint_epoch": int(ckpt.get("epoch", -1)),
@@ -281,8 +316,8 @@ def main() -> None:
             print(f"skip {run_id}: no checkpoint")
             continue
         print(f"== {run_id} on {device}", flush=True)
-        if kind == "maqa":
-            arrays, meta = maqa_eval(run_id, seed, ckpt_path, device)
+        if kind in ("maqa", "ambigqa"):
+            arrays, meta = maqa_eval(run_id, seed, ckpt_path, device, subset="ambigqa" if kind == "ambigqa" else "")
         else:
             arrays, meta = cbm_eval(run_id, kind, encoder, seed, ckpt_path, device)
         run_out = out_root / run_id

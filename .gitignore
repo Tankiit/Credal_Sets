@@ -8,6 +8,7 @@ outputs/*
 !outputs/icml_2026_reeval/
 !outputs/icml_2026_multiseed/
 outputs/icml_2026_reeval_*.log
+outputs/icml_2026_reeval/.eval_*.log
 
 # Large model / data files
 *.pt

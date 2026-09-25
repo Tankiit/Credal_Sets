@@ -109,6 +109,10 @@ def train_one(
     phased_schedule: bool = False,
     worker_review_entropy: bool = False,
     binary_concept_entropy: bool = False,
+    mask_unannotated: bool = False,
+    aleatoric_weight: float = -1.0,
+    decorr_weight: float = 0.0,
+    qa_subset: str = "",
 ) -> dict:
     import os
     import random
@@ -137,7 +141,7 @@ def train_one(
     elif dataset == "cebab" and cebab_three_class:
         run_id = f"cebab_3class_{encoder_tag}_seed{seed}"
     else:
-        run_id = f"{dataset}_{encoder_tag}_seed{seed}"
+        run_id = f"{qa_subset or dataset}_{encoder_tag}_seed{seed}"
     if run_tag:
         run_id = f"{run_id}_{run_tag}"
     if phased_schedule:
@@ -169,7 +173,24 @@ def train_one(
                 item for item in raw_data
                 if str(item.get("review_majority", "")).strip() in {"1", "2", "3", "4", "5"}
             ]
+            if mask_unannotated:
+                # Keep only rows the original processor keeps, so raw and
+                # processed items stay aligned one-to-one.
+                raw_data = [r for r in raw_data if (r.get("description") or "").strip()]
             processed = original_process(raw_data)
+            if mask_unannotated:
+                assert len(processed) == len(raw_data)
+                aspects = ("food", "service", "ambiance", "noise")
+                for item, raw in zip(processed, raw_data):
+                    assert item["text"] == raw["description"]
+                    for j, aspect in enumerate(aspects):
+                        if raw.get(f"{aspect}_aspect_majority") not in ("Negative", "Positive", "unknown"):
+                            # No annotators ('') or no majority: no point label
+                            # and no entropy. Label 1 removes the aspect from the
+                            # concept, error, and entropy losses; H = -1 marks it
+                            # for the unknown-AU term patched below.
+                            item["concepts"][j] = 1
+                            item["_concept_entropies"][j] = -1.0
             for item in processed:
                 rating = item["label"] + 1
                 if cebab_binary:
@@ -228,6 +249,56 @@ def train_one(
 
     # The branch's CLI does not persist final test metrics. Mark the evaluation
     # following load_best_model() as test evaluation and save its complete dict.
+    import torch.nn.functional as F
+    import VCBM
+
+    model_cls = VCBM.HybridCredalCBM
+    if aleatoric_weight >= 0 or mask_unannotated or decorr_weight > 0:
+        original_init = model_cls.__init__
+        original_losses = model_cls._compute_losses
+
+        def init_with_weights(self, config, *args, **kwargs):
+            original_init(self, config, *args, **kwargs)
+            if aleatoric_weight >= 0:
+                # aleatoric_weight=0 also disables the unknown-AU term (0.1 x weight).
+                self.config.aleatoric_weight = aleatoric_weight
+
+        def losses_with_patches(self, result, labels, concept_labels, annotator_entropy, batch=None):
+            losses = original_losses(self, result, labels, concept_labels, annotator_entropy, batch)
+            if mask_unannotated and "aleatoric_unknown" in losses and annotator_entropy is not None:
+                # Only aspects whose annotators chose "unknown" are pushed towards
+                # high AU; unannotated aspects (H = -1) are left unsupervised.
+                keep = (concept_labels == 1) & (annotator_entropy >= 0)
+                new = (F.mse_loss(result["aleatoric"][keep], torch.ones_like(result["aleatoric"][keep]))
+                       if keep.any() else result["aleatoric"].sum() * 0.0)
+                w = 0.1 * self.config.aleatoric_weight
+                losses["loss"] = losses["loss"] + w * (new - losses["aleatoric_unknown"])
+                losses["aleatoric_unknown"] = new
+            if decorr_weight > 0:
+                # Squared Pearson correlation of the per-example scores, as in the
+                # MAQA v7b loss; this couples the two heads' gradients.
+                eu = result["epistemic"].mean(dim=-1)
+                au = result["aleatoric"].mean(dim=-1)
+                eu_c, au_c = eu - eu.mean(), au - au.mean()
+                corr = (eu_c * au_c).mean() / (eu.std() * au.std() + 1e-8)
+                losses["decorr"] = corr ** 2
+                losses["loss"] = losses["loss"] + decorr_weight * losses["decorr"]
+            return losses
+
+        model_cls.__init__ = init_with_weights
+        model_cls._compute_losses = losses_with_patches
+
+    if dataset == "maqa" and qa_subset:
+        original_qa_loader = experiment.load_combined_maqa_ambigqa
+
+        def qa_subset_loader(*args, **kwargs):
+            # Same 80/10/10 split of the combined pool, restricted to one source,
+            # so the subset's test questions are a subset of the MAQA* test set.
+            splits = original_qa_loader(*args, **kwargs)
+            return {k: [x for x in v if x.get("dataset") == qa_subset] for k, v in splits.items()}
+
+        experiment.load_combined_maqa_ambigqa = qa_subset_loader
+
     trainer_cls = experiment.HybridCredalCBMTrainer
     original_load = trainer_cls.load_best_model
     original_evaluate = trainer_cls.evaluate
@@ -325,6 +396,10 @@ def train_one(
         "phased_schedule": phased_schedule,
         "worker_review_entropy": worker_review_entropy,
         "binary_concept_entropy": binary_concept_entropy,
+        "mask_unannotated": mask_unannotated,
+        "aleatoric_weight": aleatoric_weight if aleatoric_weight >= 0 else "default (2.0)",
+        "decorr_weight": decorr_weight,
+        "qa_subset": qa_subset or None,
         "phase_epochs": {
             "task_concept_warmup": [1, 20],
             "uncertainty_ramp": [21, 40],
@@ -607,6 +682,10 @@ def main(
     phased_schedule: bool = False,
     worker_review_entropy: bool = False,
     binary_concept_entropy: bool = False,
+    mask_unannotated: bool = False,
+    aleatoric_weight: float = -1.0,
+    decorr_weight: float = 0.0,
+    qa_subset: str = "",
     eval_concepts: bool = False,
     eval_binary_runs: bool = False,
     eval_encoder_filter: str = "",
@@ -668,6 +747,10 @@ def main(
             phased_schedule,
             worker_review_entropy,
             binary_concept_entropy,
+            mask_unannotated,
+            aleatoric_weight,
+            decorr_weight,
+            qa_subset,
         )
         for dataset, epochs in epoch_config
         if dataset in requested
