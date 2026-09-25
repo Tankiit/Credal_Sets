@@ -4,95 +4,95 @@
 
 | Run | Train | Eval | #Concepts | Rank | Unconstrained dim | Max logit error | Condition # | Baseline accuracy |
 |---|---|---|---|---|---|---|---|---|
-| cub_dataset | 9430 | 2358 | 624 | 624 (full rank) | 624 | 4.37e-11 | 3.3077 | 0.8694 |
-| cubs_dataset | 115 | 29 | 624 | 624 (full rank) | 624 | 1.14e-12 | 3.3077 | 0.2069 |
+| cub_dataset | 9430 | 2358 | 624 | 624 (RANK DEFICIT) | 1872 | 6.84e-10 | 3.9893 | 0.8830 |
+| cubs_dataset | 115 | 29 | 624 | 624 (full rank) | 624 | 3.41e-12 | 3.2289 | 0.3103 |
 | shapes3d_dataset | 384000 | 96000 | 8 | 8 (full rank) | 8 | 7.39e-13 | 2.9424 | 0.9844 |
 
 ## cub_dataset
 
-- Source: `ignore/results_experiments/cbm_results/cub_dataset/audit.json`
-- backend=`native`, epochs=`100`, seed=`0`
+- Source: `ignore/results_experiments/cem_results/cub_dataset/audit.json`
+- backend=`cem`, epochs=`100`, seed=`0`
 - train_samples=`9430`, eval_samples=`2358`
-- num_concepts=`624`, readout_rank=`624`, unconstrained_dim=`624` ✅ full rank
+- num_concepts=`624`, readout_rank=`624`, unconstrained_dim=`1872` ⚠️ RANK DEFICIT
 
 ### Equivalence check
 
 | max_readout_error | max_logit_error | condition_number |
 |---|---|---|
-| 0.0 | 4.3655745685100555e-11 | 3.307747675534512 |
+| 0.0 | 6.83940015733242e-10 | 3.9892863517874915 |
 
 ### equivalence.baseline (aggregated over 624 concepts)
 
 | field | min / mean / max |
 |---|---|
-| own_concept_abs_correlation | min=0.0014 mean=0.0656 max=0.3126 |
-| cross_concept_abs_correlation | min=0.1195 mean=0.2050 max=0.3816 |
-| own_correlation_share | min=0.0000 mean=0.0020 max=0.0087 |
-| block_task_probe_accuracy | min=0.0127 mean=0.0221 max=0.0339 |
-| block_head_frobenius_norm | min=18.8347 mean=24.0519 max=30.9922 |
+| own_concept_abs_correlation | min=0.0063 mean=0.0682 max=0.2561 |
+| cross_concept_abs_correlation | min=0.1216 mean=0.1952 max=0.5663 |
+| own_correlation_share | min=0.0002 mean=0.0019 max=0.0075 |
+| block_task_probe_accuracy | min=0.0293 mean=0.0578 max=0.0941 |
+| block_head_frobenius_norm | min=23.3524 mean=33.4481 max=44.1868 |
 
 ### equivalence.transformed (aggregated over 624 concepts)
 
 | field | min / mean / max |
 |---|---|
-| own_concept_abs_correlation | min=0.0025 mean=0.0659 max=0.3126 |
-| cross_concept_abs_correlation | min=0.1182 mean=0.2056 max=0.3957 |
-| own_correlation_share | min=0.0001 mean=0.0020 max=0.0086 |
-| block_task_probe_accuracy | min=0.0140 mean=0.0220 max=0.0348 |
-| block_head_frobenius_norm | min=19.9972 mean=26.1869 max=33.1540 |
+| own_concept_abs_correlation | min=0.0063 mean=0.0685 max=0.2554 |
+| cross_concept_abs_correlation | min=0.1225 mean=0.1937 max=0.5663 |
+| own_correlation_share | min=0.0002 mean=0.0019 max=0.0070 |
+| block_task_probe_accuracy | min=0.0293 mean=0.0576 max=0.0891 |
+| block_head_frobenius_norm | min=28.5753 mean=37.5347 max=48.1315 |
 
 ### structural (aggregated over 624 concepts)
 
 | field | min / mean / max |
 |---|---|
-| own_concept_abs_correlation | min=0.0014 mean=0.0656 max=0.3126 |
-| cross_concept_abs_correlation | min=0.1195 mean=0.2050 max=0.3816 |
-| own_correlation_share | min=0.0000 mean=0.0020 max=0.0087 |
-| block_task_probe_accuracy | min=0.0127 mean=0.0221 max=0.0339 |
-| block_head_frobenius_norm | min=0.0000 mean=24.0131 max=30.9922 |
+| own_concept_abs_correlation | min=0.0063 mean=0.0682 max=0.2561 |
+| cross_concept_abs_correlation | min=0.1216 mean=0.1952 max=0.5663 |
+| own_correlation_share | min=0.0002 mean=0.0019 max=0.0075 |
+| block_task_probe_accuracy | min=0.0293 mean=0.0578 max=0.0941 |
+| block_head_frobenius_norm | min=0.0000 mean=33.3992 max=44.1868 |
 
 ### informational (aggregated over 624 concepts)
 
 | field | min / mean / max |
 |---|---|
-| own_concept_abs_correlation | min=0.0014 mean=0.0656 max=0.3126 |
-| cross_concept_abs_correlation | min=0.0621 mean=0.2048 max=0.3816 |
-| own_correlation_share | min=0.0000 mean=0.0020 max=0.0087 |
-| block_task_probe_accuracy | min=0.0051 mean=0.0220 max=0.0339 |
-| block_head_frobenius_norm | min=18.8347 mean=24.0519 max=30.9922 |
+| own_concept_abs_correlation | min=0.0063 mean=0.0681 max=0.2561 |
+| cross_concept_abs_correlation | min=0.0744 mean=0.1950 max=0.5663 |
+| own_correlation_share | min=0.0002 mean=0.0019 max=0.0075 |
+| block_task_probe_accuracy | min=0.0055 mean=0.0577 max=0.0941 |
+| block_head_frobenius_norm | min=23.3524 mean=33.4481 max=44.1868 |
 
 ### Consequence (substitution) test
 
-- baseline_accuracy=`0.8693808317184448`, replacement=`within_split_random_donor`
-- accuracy_drop across 624 concepts: min=-0.0025 mean=-0.0004 max=0.0013
+- baseline_accuracy=`0.8829516768455505`, replacement=`within_split_random_donor`
+- accuracy_drop across 624 concepts: min=-0.0021 mean=0.0001 max=0.0025
 
 **Most impactful concepts (largest accuracy drop when substituted):**
 
 | concept_id | accuracy_drop |
 |---|---|
-| 314 | 0.0013 |
-| 563 | 0.0013 |
-| 59 | 0.0008 |
-| 62 | 0.0008 |
-| 68 | 0.0008 |
+| 68 | 0.0025 |
+| 388 | 0.0025 |
+| 90 | 0.0017 |
+| 118 | 0.0017 |
+| 151 | 0.0017 |
 
 **Least impactful / negative-drop concepts:**
 
 | concept_id | accuracy_drop |
 |---|---|
-| 493 | -0.0025 |
-| 574 | -0.0025 |
-| 70 | -0.0021 |
-| 158 | -0.0021 |
-| 269 | -0.0021 |
+| 612 | -0.0021 |
+| 262 | -0.0013 |
+| 267 | -0.0013 |
+| 278 | -0.0013 |
+| 336 | -0.0013 |
 
-tensorboard_log_dir: `results/real/tensorboard/real-native-coordinates-seed0-20260917T153822-ff1b2428`
+tensorboard_log_dir: `ignore/results_experiments/cem_results/cub_dataset/tensorboard/real-cem-coordinates-seed0-20260924T144812-2abb521f`
 
 ---
 
 ## cubs_dataset
 
-- Source: `ignore/results_experiments/cbm_results/cubs_dataset/audit.json`
+- Source: `ignore/results_experiments/cem_results/cubs_dataset/audit.json`
 - backend=`native`, epochs=`100`, seed=`0`
 - train_samples=`115`, eval_samples=`29`
 - num_concepts=`624`, readout_rank=`624`, unconstrained_dim=`624` ✅ full rank
@@ -101,62 +101,62 @@ tensorboard_log_dir: `results/real/tensorboard/real-native-coordinates-seed0-202
 
 | max_readout_error | max_logit_error | condition_number |
 |---|---|---|
-| 0.0 | 1.1368683772161603e-12 | 3.307747675534512 |
+| 0.0 | 3.410605131648481e-12 | 3.228857863059529 |
 
 ### equivalence.baseline (aggregated over 624 concepts)
 
 | field | min / mean / max |
 |---|---|
-| own_concept_abs_correlation | min=0.0000 mean=0.2263 max=0.6125 |
-| cross_concept_abs_correlation | min=0.4629 mean=0.6235 max=0.8694 |
-| own_correlation_share | min=0.0000 mean=0.0016 max=0.0049 |
-| block_task_probe_accuracy | min=0.0000 mean=0.0585 max=0.1724 |
-| block_head_frobenius_norm | min=2.2502 mean=2.6159 max=2.9250 |
+| own_concept_abs_correlation | min=0.0000 mean=0.2266 max=0.6436 |
+| cross_concept_abs_correlation | min=0.4681 mean=0.6274 max=0.8155 |
+| own_correlation_share | min=0.0000 mean=0.0017 max=0.0053 |
+| block_task_probe_accuracy | min=0.0000 mean=0.0559 max=0.2069 |
+| block_head_frobenius_norm | min=2.3609 mean=2.6737 max=3.0177 |
 
 ### equivalence.transformed (aggregated over 624 concepts)
 
 | field | min / mean / max |
 |---|---|
-| own_concept_abs_correlation | min=0.0000 mean=0.2265 max=0.6010 |
-| cross_concept_abs_correlation | min=0.4396 mean=0.6216 max=0.8694 |
-| own_correlation_share | min=0.0000 mean=0.0016 max=0.0047 |
-| block_task_probe_accuracy | min=0.0000 mean=0.0566 max=0.1724 |
-| block_head_frobenius_norm | min=1.9942 mean=2.7722 max=3.8663 |
+| own_concept_abs_correlation | min=0.0000 mean=0.2251 max=0.6436 |
+| cross_concept_abs_correlation | min=0.4463 mean=0.6292 max=0.8759 |
+| own_correlation_share | min=0.0000 mean=0.0016 max=0.0055 |
+| block_task_probe_accuracy | min=0.0000 mean=0.0555 max=0.1724 |
+| block_head_frobenius_norm | min=1.9351 mean=2.8295 max=4.0787 |
 
 ### structural (aggregated over 624 concepts)
 
 | field | min / mean / max |
 |---|---|
-| own_concept_abs_correlation | min=0.0000 mean=0.2263 max=0.6125 |
-| cross_concept_abs_correlation | min=0.4629 mean=0.6235 max=0.8694 |
-| own_correlation_share | min=0.0000 mean=0.0016 max=0.0049 |
-| block_task_probe_accuracy | min=0.0000 mean=0.0585 max=0.1724 |
-| block_head_frobenius_norm | min=0.0000 mean=2.6118 max=2.9250 |
+| own_concept_abs_correlation | min=0.0000 mean=0.2266 max=0.6436 |
+| cross_concept_abs_correlation | min=0.4681 mean=0.6274 max=0.8155 |
+| own_correlation_share | min=0.0000 mean=0.0017 max=0.0053 |
+| block_task_probe_accuracy | min=0.0000 mean=0.0559 max=0.2069 |
+| block_head_frobenius_norm | min=0.0000 mean=2.6695 max=3.0177 |
 
 ### informational (aggregated over 624 concepts)
 
 | field | min / mean / max |
 |---|---|
-| own_concept_abs_correlation | min=0.0000 mean=0.2268 max=0.6125 |
-| cross_concept_abs_correlation | min=0.4629 mean=0.6235 max=0.8694 |
-| own_correlation_share | min=0.0000 mean=0.0016 max=0.0049 |
-| block_task_probe_accuracy | min=0.0000 mean=0.0584 max=0.1724 |
-| block_head_frobenius_norm | min=2.2502 mean=2.6159 max=2.9250 |
+| own_concept_abs_correlation | min=0.0000 mean=0.2264 max=0.6436 |
+| cross_concept_abs_correlation | min=0.4681 mean=0.6273 max=0.8155 |
+| own_correlation_share | min=0.0000 mean=0.0017 max=0.0053 |
+| block_task_probe_accuracy | min=0.0000 mean=0.0557 max=0.2069 |
+| block_head_frobenius_norm | min=2.3609 mean=2.6737 max=3.0177 |
 
 ### Consequence (substitution) test
 
-- baseline_accuracy=`0.2068965584039688`, replacement=`within_split_random_donor`
-- accuracy_drop across 624 concepts: min=0.0000 mean=0.0000 max=0.0000
+- baseline_accuracy=`0.3103448152542114`, replacement=`within_split_random_donor`
+- accuracy_drop across 624 concepts: min=0.0000 mean=0.0098 max=0.0690
 
 **Most impactful concepts (largest accuracy drop when substituted):**
 
 | concept_id | accuracy_drop |
 |---|---|
-| 0 | 0.0000 |
-| 1 | 0.0000 |
-| 2 | 0.0000 |
-| 3 | 0.0000 |
-| 4 | 0.0000 |
+| 38 | 0.0690 |
+| 220 | 0.0690 |
+| 234 | 0.0690 |
+| 299 | 0.0690 |
+| 516 | 0.0690 |
 
 **Least impactful / negative-drop concepts:**
 
@@ -164,17 +164,17 @@ tensorboard_log_dir: `results/real/tensorboard/real-native-coordinates-seed0-202
 |---|---|
 | 0 | 0.0000 |
 | 1 | 0.0000 |
-| 2 | 0.0000 |
 | 3 | 0.0000 |
 | 4 | 0.0000 |
+| 6 | 0.0000 |
 
-tensorboard_log_dir: `results_experiments/cubs_dataset/tensorboard/real-native-coordinates-seed0-20260924T131039-062cb18c`
+tensorboard_log_dir: `ignore/results_experiments/cem_results/cubs_dataset/tensorboard/real-native-coordinates-seed0-20260924T144821-2168a2c2`
 
 ---
 
 ## shapes3d_dataset
 
-- Source: `ignore/results_experiments/cbm_results/shapes3d_dataset/audit.json`
+- Source: `ignore/results_experiments/cem_results/shapes3d_dataset/audit.json`
 - backend=`native`, epochs=`100`, seed=`0`
 - train_samples=`384000`, eval_samples=`96000`
 - num_concepts=`8`, readout_rank=`8`, unconstrained_dim=`8` ✅ full rank
@@ -250,6 +250,6 @@ tensorboard_log_dir: `results_experiments/cubs_dataset/tensorboard/real-native-c
 | 2 | 0.2477 |
 | 5 | 0.2629 |
 
-tensorboard_log_dir: `ignore/results_experiments/shapes3d_dataset/tensorboard/real-native-coordinates-seed0-20260924T134914-0a1c2fc8`
+tensorboard_log_dir: `ignore/results_experiments/cem_results/shapes3d_dataset/tensorboard/real-native-coordinates-seed0-20260924T144826-61dd031c`
 
 ---
