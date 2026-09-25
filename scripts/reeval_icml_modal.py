@@ -35,6 +35,10 @@ RUNS = {
     "goemotions_seed2024_100ep": ("goemotions", "distilbert", 2024),
     "maqa_seed123_100ep": ("maqa", "distilbert", 123),
     "maqa_seed2024_100ep": ("maqa", "distilbert", 2024),
+    "cebab_3class_microsoft_deberta_v3_base_seed123_100ep": ("cebab3", "microsoft/deberta-v3-base", 123),
+    "cebab_3class_microsoft_deberta_v3_base_seed2024_100ep": ("cebab3", "microsoft/deberta-v3-base", 2024),
+    "cebab_3class_answerdotai_ModernBERT_base_seed123_100ep": ("cebab3", "answerdotai/ModernBERT-base", 123),
+    "cebab_3class_answerdotai_ModernBERT_base_seed2024_100ep": ("cebab3", "answerdotai/ModernBERT-base", 2024),
 }
 
 ENTROPY_KEYS = ("annotator_entropy", "_annotator_entropy", "_rating_entropy")
@@ -122,7 +126,8 @@ def cbm_eval(run_id, kind, encoder, seed, ckpt_path, device):
         prior_sigma=cfg["prior_sigma"],
         error_scale=cfg["error_scale"],
     )
-    model = HybridCredalCBM(model_config).to(device)
+    # transformers>=5 may load encoder weights in half precision; training ran in fp32.
+    model = HybridCredalCBM(model_config).float().to(device)
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
@@ -211,7 +216,7 @@ def maqa_eval(run_id, seed, ckpt_path, device):
         batch_size=16, shuffle=False, collate_fn=maqa_collate_fn,
     )
     seed_all(seed)
-    out = {k: [] for k in ("eu", "au_with_H_input", "au_no_H_input", "H", "y_pred", "y_true")}
+    out = {k: [] for k in ("eu", "au_with_H_input", "au_no_H_input", "H", "y_pred", "y_true", "maxprob")}
     items = iter(data["test"])
     with torch.inference_mode():
         for batch in test_loader:
@@ -227,8 +232,12 @@ def maqa_eval(run_id, seed, ckpt_path, device):
             mu = clean.mu.cpu().numpy()
             for row in mu:
                 item = next(items)
-                out["y_pred"].append(int(np.argmax(row[: item["num_answers"]])))
+                logits = row[: item["num_answers"]]
+                out["y_pred"].append(int(np.argmax(logits)))
                 out["y_true"].append(item["dominant_answer_idx"])
+                # Softmax over the valid answers, as in the v7b answer loss.
+                z = np.exp(logits - logits.max())
+                out["maxprob"].append(float(z.max() / z.sum()))
 
     arrays = {k: np.asarray(np.concatenate(v) if isinstance(v[0], np.ndarray) else v) for k, v in out.items()}
     meta = {
@@ -239,7 +248,7 @@ def maqa_eval(run_id, seed, ckpt_path, device):
         "checkpoint_epoch": int(ckpt.get("epoch", -1)),
         "checkpoint_rule": "lowest validation loss (train_maqa_model)",
         "loss_version": "v7b",
-        "lambda_decorr": 20.0,
+        "lambda_decorr": 5.0,  # CONFIG_V7B in maqa_credal_loss_v7b_fixed.py at 532fd05
         "note": "sigma_ale head takes ground-truth entropy as input; au_no_H_input zeroes it",
         "accuracy_definition": "argmax of answer logits over valid answers == majority answer",
     }
@@ -261,7 +270,9 @@ def main() -> None:
 
     import torch
 
-    device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+    device = os.environ.get("REEVAL_DEVICE") or (
+        "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+    )  # REEVAL_DEVICE=cpu works around an MPS matmul assertion with DeBERTa-v3
     selected = args.runs.split(",") if args.runs else list(RUNS)
     for run_id in selected:
         kind, encoder, seed = RUNS[run_id]

@@ -143,9 +143,20 @@ Only the mean-H row changes; accuracies and AURCs don't depend on H.
 |---|---|---|
 | DistilBERT | 80.7 ± 0.1 → **73.6 ± 0.3** | 0.13 ± 0.01 → **0.23 ± 0.04** |
 | RoBERTa | 82.1 ± 0.4 → **74.5 ± 1.1** | 0.18 ± 0.03 → **0.30 ± 0.03** |
-| DeBERTa-v3 | 79.4 ± 0.1 → **cannot rescore** | 0.05 ± 0.06 → **cannot rescore** |
+| DeBERTa-v3 | 79.4 ± 0.1 → **69.2 ± 0.4** | 0.05 ± 0.06 → **0.19 (seed 123 only)** |
+| ModernBERT | 77.2 ± 0.6 → **66.7 ± 1.8** | 0.09 ± 0.01 → **0.20 ± 0.01** |
 
-DeBERTa has no saved test arrays; it must be re-evaluated from its checkpoint.
+DeBERTa and ModernBERT were downloaded from the Modal volume `icml-2026-credal-results` and re-evaluated. Task accuracies reproduce the logged values exactly.
+
+Evaluation settings, and why:
+- **CPU:** DeBERTa-v3 triggers an MPS matmul assertion (`REEVAL_DEVICE=cpu`).
+- **fp32:** transformers 5 loads the encoder in fp16, while training ran in fp32.
+
+**The DeBERTa-v3 seed-2024 ambiguity head is constant.** Its per-example SD is 5e-8, with 2 distinct values over 1,689 reviews. The logged ρ(EU,AU) = +0.23 for that seed came from floating-point ties; this re-evaluation gets −0.004. Every U_ale-dependent value for DeBERTa is therefore reported from seed 123 only: ρ(EU,AU) = −0.49, ρ(U_ale,H) = 0.19. The claim that DeBERTa has "opposite-sign seeds" is withdrawn.
+
+AUROC(EU), previously "—":
+- DeBERTa 0.60 ± 0.00 (MaxProb 0.80)
+- ModernBERT 0.59 ± 0.01 (MaxProb 0.74)
 
 ### Per-seed table (`tab:per-seed`, l. 707–712)
 
@@ -168,7 +179,7 @@ DeBERTa has no saved test arrays; it must be re-evaluated from its checkpoint.
 
 These come from runs without saved per-example arrays that used the same loader:
 - **Earlier five-class campaign:** `tab:matrix-runs` and the sweep tables at l. 765 onwards. Concept accuracy 84.9–95.0 and ρ(AU,H) 0.34–0.37 were computed with phantom Negatives. The five-class path also gave reviews without a majority rating a 3-star label.
-- **Other encoders:** DeBERTa and ModernBERT in `tab:encoder-ablation`, `RESULTS.md` and `tmp_modal_pull/concept_metrics/`. Their concept accuracies and ρ(AU,H) include unannotated slots.
+- **Other encoders:** `RESULTS.md` and `tmp_modal_pull/concept_metrics/` still hold the pre-mask concept accuracies and ρ(AU,H). The re-evaluated values are in `outputs/icml_2026_reeval/`.
 
 ## 5. What does not change
 
@@ -176,3 +187,19 @@ These come from runs without saved per-example arrays that used the same loader:
 - The reduction check in `reduction_check.txt`.
 - All MAQA* values.
 - The HateXplain and GoEmotions EU columns.
+
+## 6. Further findings (same session)
+
+- **MAQA\* was trained with a decorrelation penalty.** `CONFIG_V7B` in `maqa_credal_loss_v7b_fixed.py` at 532fd05 sets λ_decorr = 5.0, and the history logs a nonzero `loss_decorr`. The paper said 20, and "no configuration in Table 1 has a decorrelation term". Both are corrected in the tex, and the MAQA\* run manifests now say 5.0.
+- **The abstract still says** "across four benchmarks … with no decorrelation penalty … |ρ| ≤ 0.09". That is now supported only on CEBaB:
+  - HateXplain and GoEmotions are undefined (constant ambiguity head).
+  - MAQA\* was trained with a penalty.
+- **MAQA\* MaxProb** (largest softmax over valid answers) is now saved; AUROC is 0.63 ± 0.00, against 0.50 for EU.
+- **Paired bootstrap** (2,000 resamples, `extra_diagnostics.json`): AUROC(MaxProb) − AUROC(EU) > 0 in all 14 runs, and every 95% CI excludes 0.
+- **Stratified AUROC:**
+  - MAQA\* (entropy tertiles, cuts 0.45 / 0.69 nats): EU 0.48 / 0.51 / 0.49, MaxProb 0.62 / 0.57 / 0.53. The old 0.76 / 0.71 / 0.65 bins cannot come from these runs.
+  - HateXplain (H = 0 vs 0.579): EU 0.63 / 0.58, MaxProb 0.77 / 0.59.
+- **Provenance:**
+  - No three-class seed-42 run exists.
+  - 82.3% and the QA stress run (0.85 / 0.91) have no source on disk or in git.
+  - CEBaB test n = 886 exists only in the older `~/Downloads/iclr2027_conference-2.tex`; the current split is HF `test`, 1,689 reviews with a majority rating.

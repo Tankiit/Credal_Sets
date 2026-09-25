@@ -25,6 +25,7 @@ from sklearn.metrics import roc_auc_score
 ASPECTS = ["food", "service", "ambiance", "noise"]
 LABEL = {"Negative": 0, "unknown": 1, "Positive": 2}
 N_BOOT = 1000
+COLLAPSED_SD = 1e-3  # per-example U_ale SD below this = collapsed head
 
 
 def parse_dist(d):
@@ -54,13 +55,17 @@ def raw_masks():
 
 
 def rho(a, b):
-    return float(spearmanr(a, b)[0]) if np.std(a) > 0 and np.std(b) > 0 else math.nan
+    if not (np.isfinite(a).all() and np.isfinite(b).all()) or np.std(a) == 0 or np.std(b) == 0:
+        return math.nan
+    return float(spearmanr(a, b)[0])
 
 
 def boot_ci(fn, n, seed):
     rng = np.random.default_rng(seed)
     vals = [fn(rng.integers(0, n, n)) for _ in range(N_BOOT)]
     vals = np.array([v for v in vals if math.isfinite(v)])
+    if vals.size == 0:
+        return [math.nan, math.nan]
     return [float(np.percentile(vals, 2.5)), float(np.percentile(vals, 97.5))]
 
 
@@ -112,6 +117,11 @@ def rescore(run_dir, masks):
     au_matched = masked_mean(au, h_valid)
     n = len(err)
 
+    if au_all.std() < COLLAPSED_SD:
+        # A constant ambiguity head (e.g. DeBERTa-v3 seed 2024) has no ranking;
+        # any rank correlation with it reflects floating-point ties, not signal.
+        au = np.full_like(au, np.nan)
+        au_all = au_matched = np.full(n, np.nan)
     pooled = lambda idx: rho(au[idx][h_valid[idx]], H[idx][h_valid[idx]])
     out = {
         "run_id": run_dir.name, "seed": seed, "n": n,
@@ -156,7 +166,10 @@ def rescore(run_dir, masks):
 
 def seed_mean_sd(runs, getter):
     v = np.array([getter(r) for r in runs], dtype=float)
-    return {"per_seed": v.tolist(), "mean": float(v.mean()), "sd": float(v.std(ddof=1)) if len(v) > 1 else 0.0}
+    ok = v[np.isfinite(v)]  # seeds with an undefined value (collapsed head) are dropped, not averaged in
+    return {"per_seed": v.tolist(), "n_valid": int(ok.size),
+            "mean": float(ok.mean()) if ok.size else math.nan,
+            "sd": float(ok.std(ddof=1)) if ok.size > 1 else math.nan}
 
 
 def main():

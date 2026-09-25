@@ -1,0 +1,12 @@
+{
+  "run_id": "cebab_3class_answerdotai_ModernBERT_base_seed2024_100ep",
+  "kind": "cebab3",
+  "encoder": "answerdotai/ModernBERT-base",
+  "seed": 2024,
+  "checkpoint_epoch": 46,
+  "checkpoint_rule": "best validation task accuracy (HybridCredalCBMTrainer.fit)",
+  "lambda_d": 0.0,
+  "H_source": "annotator_entropy",
+  "n_test": 1689,
+  "accuracy": 0.6956779159265838
+}
