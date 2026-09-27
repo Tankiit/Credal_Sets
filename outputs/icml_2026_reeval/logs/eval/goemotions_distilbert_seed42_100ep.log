@@ -1,0 +1,64 @@
+== goemotions_distilbert_seed42_100ep on mps
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+`trust_remote_code` is not supported anymore.
+Please check that the Hugging Face dataset 'google-research-datasets/go_emotions' isn't based on a loading script and remove `trust_remote_code`.
+If the dataset is based on a loading script, please ask the dataset author to remove it and convert it to a standard format like Parquet.
+`trust_remote_code` is not supported anymore.
+Please check that the Hugging Face dataset 'google-research-datasets/go_emotions' isn't based on a loading script and remove `trust_remote_code`.
+If the dataset is based on a loading script, please ask the dataset author to remove it and convert it to a standard format like Parquet.
+`trust_remote_code` is not supported anymore.
+Please check that the Hugging Face dataset 'google-research-datasets/go_emotions' isn't based on a loading script and remove `trust_remote_code`.
+If the dataset is based on a loading script, please ask the dataset author to remove it and convert it to a standard format like Parquet.
+Warning: MAQA components not available: No module named 'maqa_credal_loss_v3'
+
+Loading dataset: goemotions
+  HF path: google-research-datasets/go_emotions
+  Loaded 43410 examples from goemotions/train
+  Loaded 5426 examples from goemotions/val
+  Loaded 5427 examples from goemotions/test
+
+  Summary:
+    Task: emotion
+    Classes: 28 []
+    Concepts: 28 ['admiration', 'amusement', 'anger', 'annoyance', 'approval']...
+    Sizes: train=43410, val=5426, test=5427
+    Labels: {27: 12823, 2: 1547, 14: 510, 3: 2138, 26: 751, 15: 2096, 8: 543, 0: 4130, 6: 1268, 1: 2244, 5: 966, 12: 248, 16: 65, 17: 1013, 25: 874, 7: 1772, 10: 1651, 20: 974, 4: 2596, 13: 700, 9: 1028, 24: 404, 18: 1533, 22: 698, 11: 580, 23: 96, 21: 57, 19: 105}
+    Unknown rates: admiration:0.03, amusement:0.02, anger:0.01, annoyance:0.02
+
+Loading weights:   0%|          | 0/100 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 100/100 [00:00<00:00, 14708.60it/s]
+[1mDistilBertModel LOAD REPORT[0m from: distilbert-base-uncased
+Key                     | Status     |  | 
+------------------------+------------+--+-
+vocab_transform.weight  | UNEXPECTED |  | 
+vocab_transform.bias    | UNEXPECTED |  | 
+vocab_layer_norm.weight | UNEXPECTED |  | 
+vocab_projector.bias    | UNEXPECTED |  | 
+vocab_layer_norm.bias   | UNEXPECTED |  | 
+
+Notes:
+- UNEXPECTED:	can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+
+======================================================================
+HYBRID CREDAL CBM WITH STRUCTURAL SEPARATION
+======================================================================
+Encoder: distilbert-base-uncased
+Concepts: 28 ['admiration', 'amusement', 'anger', 'annoyance', 'approval', 'caring', 'confusion', 'curiosity', 'desire', 'disappointment', 'disapproval', 'disgust', 'embarrassment', 'excitement', 'fear', 'gratitude', 'grief', 'joy', 'love', 'nervousness', 'optimism', 'pride', 'realization', 'relief', 'remorse', 'sadness', 'surprise', 'neutral']
+
+HYBRID APPROACH:
+  • EU = log(Σ_epi) — DERIVED from credal geometry
+  • Σ_epi SUPERVISED by concept errors (input-dependent!)
+  • KL regularization prevents overfitting
+
+PARAMETERS:
+  • Prior σ: 0.5
+  • Error scale: 1.0
+  • σ range: [0.01, 2.0]
+
+LOSS WEIGHTS:
+  • Error supervision: 1.0
+  • KL regularization: 0.01
+  • Aleatoric: 2.0
+======================================================================
+
+{"run_id": "goemotions_distilbert_seed42_100ep", "kind": "goemotions", "encoder": "distilbert-base-uncased", "seed": 42, "checkpoint_epoch": 92, "checkpoint_rule": "best validation task accuracy (HybridCredalCBMTrainer.fit)", "lambda_d": 0.0, "H_source": null, "n_test": 5427, "accuracy": 0.4483139856274185}

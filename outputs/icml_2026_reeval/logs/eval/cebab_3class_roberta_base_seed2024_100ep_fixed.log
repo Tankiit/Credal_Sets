@@ -1,0 +1,114 @@
+== cebab_3class_roberta_base_seed2024_100ep_fixed on mps
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Warning: MAQA components not available: No module named 'maqa_credal_loss_v3'
+
+Processing train...
+
+Processing CEBaB:   0%|          | 0/9848 [00:00<?, ?it/s]
+Processing CEBaB:  27%|██▋       | 2620/9848 [00:00<00:00, 26193.41it/s]
+Processing CEBaB:  53%|█████▎    | 5240/9848 [00:00<00:00, 18052.15it/s]
+Processing CEBaB:  80%|████████  | 7897/9848 [00:00<00:00, 21174.78it/s]
+Processing CEBaB: 100%|██████████| 9848/9848 [00:00<00:00, 21945.99it/s]
+
+Processing validation...
+
+Processing CEBaB:   0%|          | 0/1673 [00:00<?, ?it/s]
+Processing CEBaB: 100%|██████████| 1673/1673 [00:00<00:00, 26953.80it/s]
+
+Processing test...
+
+Processing CEBaB:   0%|          | 0/1689 [00:00<?, ?it/s]
+Processing CEBaB: 100%|██████████| 1689/1689 [00:00<00:00, 26717.02it/s]
+
+============================================================
+Dataset Statistics
+============================================================
+
+Train:
+  Samples: 9848
+    Rating 1: 3875 (39.3%)
+    Rating 2: 2604 (26.4%)
+    Rating 3: 3369 (34.2%)
+    Rating 4: 0 (0.0%)
+    Rating 5: 0 (0.0%)
+  Concept unknown rates:
+    food: 17.11%
+    service: 25.93%
+    ambiance: 34.65%
+    noise: 40.67%
+  Mean disagreement: 0.176 ± 0.135
+  Mean rating entropy: 0.335 ± 0.183
+
+Validation:
+  Samples: 1673
+    Rating 1: 503 (30.1%)
+    Rating 2: 452 (27.0%)
+    Rating 3: 718 (42.9%)
+    Rating 4: 0 (0.0%)
+    Rating 5: 0 (0.0%)
+  Concept unknown rates:
+    food: 16.68%
+    service: 26.00%
+    ambiance: 32.58%
+    noise: 34.49%
+  Mean disagreement: 0.135 ± 0.114
+  Mean rating entropy: 0.318 ± 0.194
+
+Test:
+  Samples: 1689
+    Rating 1: 548 (32.4%)
+    Rating 2: 461 (27.3%)
+    Rating 3: 680 (40.3%)
+    Rating 4: 0 (0.0%)
+    Rating 5: 0 (0.0%)
+  Concept unknown rates:
+    food: 18.59%
+    service: 24.99%
+    ambiance: 32.86%
+    noise: 34.64%
+  Mean disagreement: 0.153 ± 0.120
+  Mean rating entropy: 0.321 ± 0.185
+
+Loading weights:   0%|          | 0/197 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 197/197 [00:00<00:00, 7729.45it/s]
+[1mRobertaModel LOAD REPORT[0m from: roberta-base
+Key                             | Status     | 
+--------------------------------+------------+-
+roberta.embeddings.position_ids | UNEXPECTED | 
+lm_head.layer_norm.bias         | UNEXPECTED | 
+lm_head.bias                    | UNEXPECTED | 
+lm_head.layer_norm.weight       | UNEXPECTED | 
+lm_head.dense.weight            | UNEXPECTED | 
+lm_head.dense.bias              | UNEXPECTED | 
+pooler.dense.weight             | MISSING    | 
+pooler.dense.bias               | MISSING    | 
+
+Notes:
+- UNEXPECTED:	can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+- MISSING:	those params were newly initialized because missing from the checkpoint. Consider training on your downstream task.
+/Users/tanmoy/anaconda3/envs/torch-multimodal/lib/python3.12/site-packages/torch/utils/data/dataloader.py:775: UserWarning: 'pin_memory' argument is set as true but not supported on MPS now, device pinned memory won't be used.
+  super().__init__(loader)
+
+======================================================================
+HYBRID CREDAL CBM WITH STRUCTURAL SEPARATION
+======================================================================
+Encoder: roberta-base
+Concepts: 4 ['food', 'service', 'ambiance', 'noise']
+
+HYBRID APPROACH:
+  • EU = log(Σ_epi) — DERIVED from credal geometry
+  • Σ_epi SUPERVISED by concept errors (input-dependent!)
+  • KL regularization prevents overfitting
+
+PARAMETERS:
+  • Prior σ: 0.5
+  • Error scale: 2.0
+  • σ range: [0.01, 2.0]
+
+LOSS WEIGHTS:
+  • Error supervision: 1.0
+  • KL regularization: 0.01
+  • Aleatoric: 2.0
+======================================================================
+
+{"run_id": "cebab_3class_roberta_base_seed2024_100ep_fixed", "kind": "cebab3", "encoder": "roberta-base", "seed": 2024, "checkpoint_epoch": 56, "checkpoint_rule": "best validation task accuracy (HybridCredalCBMTrainer.fit)", "lambda_d": 0.0, "H_source": "annotator_entropy", "n_test": 1689, "accuracy": 0.7838957963291888}

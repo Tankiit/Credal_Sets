@@ -1,0 +1,98 @@
+== hatexplain_distilbert_seed42_100ep on mps
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Warning: MAQA components not available: No module named 'maqa_credal_loss_v3'
+
+============================================================
+Loading HateXplain Dataset (Direct)
+============================================================
+Loading HateXplain from local directory: data/hatexplain
+  Loaded label encoder with classes: [np.str_('hatespeech'), np.str_('normal'), np.str_('offensive')]
+  Loaded dataset with 20148 samples
+
+Splitting data:   0%|          | 0/20148 [00:00<?, ?it/s]
+Splitting data: 100%|██████████| 20148/20148 [00:00<00:00, 2825370.68it/s]
+  Train: 15383 samples
+  Val: 1922 samples
+  Test: 1924 samples
+
+Processing train...
+
+Processing HateXplain:   0%|          | 0/15383 [00:00<?, ?it/s]
+Processing HateXplain:  25%|██▌       | 3903/15383 [00:00<00:00, 17279.84it/s]
+Processing HateXplain: 100%|██████████| 15383/15383 [00:00<00:00, 47849.67it/s]
+
+Processing validation...
+
+Processing HateXplain:   0%|          | 0/1922 [00:00<?, ?it/s]
+Processing HateXplain: 100%|██████████| 1922/1922 [00:00<00:00, 116768.33it/s]
+
+Processing test...
+
+Processing HateXplain:   0%|          | 0/1924 [00:00<?, ?it/s]
+Processing HateXplain: 100%|██████████| 1924/1924 [00:00<00:00, 120589.37it/s]
+
+============================================================
+Dataset Statistics
+============================================================
+
+Train:
+  Samples: 15383
+    hatespeech: 4748 (30.9%)
+    normal: 6251 (40.6%)
+    offensive: 4384 (28.5%)
+  Target unknown rate: 0.07%
+  Offensive unknown rate: 28.41%
+
+Validation:
+  Samples: 1922
+    hatespeech: 593 (30.9%)
+    normal: 781 (40.6%)
+    offensive: 548 (28.5%)
+  Target unknown rate: 0.05%
+  Offensive unknown rate: 28.72%
+
+Test:
+  Samples: 1924
+    hatespeech: 594 (30.9%)
+    normal: 782 (40.6%)
+    offensive: 548 (28.5%)
+  Target unknown rate: 0.00%
+  Offensive unknown rate: 28.33%
+
+Loading weights:   0%|          | 0/100 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 100/100 [00:00<00:00, 8458.82it/s]
+[1mDistilBertModel LOAD REPORT[0m from: distilbert-base-uncased
+Key                     | Status     |  | 
+------------------------+------------+--+-
+vocab_transform.weight  | UNEXPECTED |  | 
+vocab_layer_norm.bias   | UNEXPECTED |  | 
+vocab_layer_norm.weight | UNEXPECTED |  | 
+vocab_transform.bias    | UNEXPECTED |  | 
+vocab_projector.bias    | UNEXPECTED |  | 
+
+Notes:
+- UNEXPECTED:	can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+
+======================================================================
+HYBRID CREDAL CBM WITH STRUCTURAL SEPARATION
+======================================================================
+Encoder: distilbert-base-uncased
+Concepts: 2 ['has_target', 'is_offensive']
+
+HYBRID APPROACH:
+  • EU = log(Σ_epi) — DERIVED from credal geometry
+  • Σ_epi SUPERVISED by concept errors (input-dependent!)
+  • KL regularization prevents overfitting
+
+PARAMETERS:
+  • Prior σ: 0.5
+  • Error scale: 1.0
+  • σ range: [0.01, 2.0]
+
+LOSS WEIGHTS:
+  • Error supervision: 1.0
+  • KL regularization: 0.01
+  • Aleatoric: 2.0
+======================================================================
+
+{"run_id": "hatexplain_distilbert_seed42_100ep", "kind": "hatexplain", "encoder": "distilbert-base-uncased", "seed": 42, "checkpoint_epoch": 43, "checkpoint_rule": "best validation task accuracy (HybridCredalCBMTrainer.fit)", "lambda_d": 0.0, "H_source": "_annotator_entropy", "n_test": 1924, "accuracy": 0.579002079002079}

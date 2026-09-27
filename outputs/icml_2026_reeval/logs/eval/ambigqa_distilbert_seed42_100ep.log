@@ -1,0 +1,47 @@
+== ambigqa_distilbert_seed42_100ep on mps
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Warning: MAQA components not available: No module named 'maqa_credal_loss_v3'
+
+Loading weights:   0%|          | 0/100 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 100/100 [00:00<00:00, 1776.89it/s]
+[1mDistilBertModel LOAD REPORT[0m from: distilbert-base-uncased
+Key                     | Status     |  | 
+------------------------+------------+--+-
+vocab_transform.bias    | UNEXPECTED |  | 
+vocab_transform.weight  | UNEXPECTED |  | 
+vocab_projector.bias    | UNEXPECTED |  | 
+vocab_layer_norm.weight | UNEXPECTED |  | 
+vocab_layer_norm.bias   | UNEXPECTED |  | 
+
+Notes:
+- UNEXPECTED:	can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+
+============================================================
+Loading Combined MAQA + AmbigQA Dataset
+============================================================
+
+Loading MAQA-Star...
+  ✓ MAQA: 592 samples
+Loading AmbigQA-Star...
+  ✓ AmbigQA: 4377 samples
+
+✓ Combined: 4969 total samples
+
+Splits:
+  Train: 3975
+  Val: 496
+  Test: 498
+  ✓ Initialized σ_epi bias → target ~0.2
+  ✓ Initialized σ_ale bias → target ~0.5
+
+============================================================
+CredalMAQA_V7b Model (FIXED)
+============================================================
+  Encoder hidden: 768
+  Num answers: 9
+  σ_ale head input: h + entropy (dim=769)
+  σ_epi head input: h only (dim=768)
+  This fixes the ρ(AU, Entropy) ≈ 0 problem!
+============================================================
+
+{"run_id": "ambigqa_distilbert_seed42_100ep", "kind": "maqa", "qa_subset": "ambigqa", "encoder": "distilbert-base-uncased", "seed": 42, "checkpoint_epoch": 98, "checkpoint_rule": "lowest validation loss (train_maqa_model)", "loss_version": "v7b", "lambda_decorr": 5.0, "note": "sigma_ale head takes ground-truth entropy as input; au_no_H_input zeroes it", "accuracy_definition": "argmax of answer logits over valid answers == majority answer", "n_test": 421, "accuracy": 0.5130641330166271}

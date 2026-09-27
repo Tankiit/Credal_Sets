@@ -3,7 +3,7 @@ __pycache__/
 *.py[cod]
 
 # Local training artifacts
-logs/
+/logs/
 outputs/*
 !outputs/icml_2026_reeval/
 !outputs/icml_2026_multiseed/
