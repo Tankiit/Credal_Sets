@@ -1,0 +1,18 @@
+{
+  "invisible_dims": 392,
+  "concept_layer_dim": 448,
+  "rotate": 1.0,
+  "mix": 1.0,
+  "shift": 0.0,
+  "seed": 0,
+  "cond_B": 23.95480148498235,
+  "split": "test",
+  "max_abs_d_logits": 9.5367431640625e-06,
+  "max_abs_d_concept_probs": 5.364418029785156e-07,
+  "rel_change_z": 2.3882648944854736,
+  "mean_cos_z": 0.33914947509765625,
+  "intervention_max_abs_d_logits": 1.1444091796875e-05,
+  "intervention_pred_agreement": 1.0,
+  "intervention_acc_original": 0.8425873995139278,
+  "intervention_acc_twin": 0.8425873995139278
+}

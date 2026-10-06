@@ -1,0 +1,186 @@
+
+Model: cebab-cem-s0   dataset: cebab   split: val
+
+====================================================================================================
+Example #788
+  Text: LOVE Otto!! Everyone could not say enough about how delicious the food and wine was, but it's just very loud inside.
+  True answer: 4_stars   Model's answer: 4_stars (81% sure)   ✓ correct
+  All answers: 1_star 0%  2_stars 0%  3_stars 15%  4_stars 81%  5_stars 4%
+
+  concept               human label  model thinks                      push towards '4_stars'
+  food_pos              yes          ██████████████████··   90%        +0.73
+  food_neg              no           █···················    3%        +0.95
+  service_pos           no           ██··················    8%        +0.13
+  service_neg           no           ····················    1%        +0.76
+  ambiance_pos          no           ███████·············   34%        +0.18
+  ambiance_neg          no           ███·················   16%        +0.38
+  noise_pos             no           ███·················   13%        +0.40
+  noise_neg             yes          █████████████████···   84%        +0.37
+  (constant, same for every text)                                       -0.07
+  TOTAL lead of '4_stars' over the average answer                       +3.84
+
+====================================================================================================
+Example #1552
+  Text: Very nice ambiance. The food was okay, but not worth the prices charged, IMHO. City Table *did* introduce me to a fine Pinot Noir, however -- the 2008 Hob Nob. Loved it!
+  True answer: 3_stars   Model's answer: 3_stars (66% sure)   ✓ correct
+  All answers: 1_star 0%  2_stars 6%  3_stars 66%  4_stars 28%  5_stars 0%
+
+  concept               human label  model thinks                      push towards '3_stars'
+  food_pos              no           ██████████████······   68%        +0.59  ← disagrees with human
+  food_neg              yes          ██████··············   28%        +0.29  ← disagrees with human
+  service_pos           no           █···················    3%        +0.43
+  service_neg           no           ██··················    9%        +0.58
+  ambiance_pos          yes          █████████···········   47%        +0.30  ← disagrees with human
+  ambiance_neg          no           ████████████········   61%        +0.39  ← disagrees with human
+  noise_pos             yes          █···················    7%        +0.27  ← disagrees with human
+  noise_neg             no           ██··················   12%        +0.24
+  (constant, same for every text)                                       -0.02
+  TOTAL lead of '3_stars' over the average answer                       +3.07
+
+====================================================================================================
+Example #861
+  Text: Great service.
+  True answer: 4_stars   Model's answer: 5_stars (64% sure)   ✗ wrong
+  All answers: 1_star 0%  2_stars 0%  3_stars 1%  4_stars 35%  5_stars 64%
+
+  concept               human label  model thinks                      push towards '5_stars'
+  food_pos              no           ····················    0%        -1.11
+  food_neg              no           ····················    0%        +1.89
+  service_pos           yes          ███████████████████·   93%        +0.71
+  service_neg           no           ····················    0%        +1.40
+  ambiance_pos          no           ····················    0%        +0.34
+  ambiance_neg          no           ····················    0%        +1.11
+  noise_pos             no           ····················    0%        -0.37
+  noise_neg             no           ····················    0%        +1.11
+  (constant, same for every text)                                       +0.00
+  TOTAL lead of '5_stars' over the average answer                       +5.07
+
+====================================================================================================
+Example #82
+  Text: Service was rushed. Pasta tasted wonderful and straight out of a five star restaurant - just what I expected from an Italian restaurant of this caliber. Veal chop was tasty, but overpriced.
+  True answer: 4_stars   Model's answer: 3_stars (58% sure)   ✗ wrong
+  All answers: 1_star 5%  2_stars 33%  3_stars 58%  4_stars 4%  5_stars 0%
+
+  concept               human label  model thinks                      push towards '3_stars'
+  food_pos              yes          █████████████·······   63%        +0.61
+  food_neg              no           ██████████████······   68%        +0.14  ← disagrees with human
+  service_pos           no           ███████·············   36%        +0.30
+  service_neg           yes          █████████████████···   83%        +0.50
+  ambiance_pos          no           █···················    6%        +0.28
+  ambiance_neg          no           ██··················    8%        +0.28
+  noise_pos             no           ····················    0%        +0.19
+  noise_neg             no           ····················    2%        +0.18
+  (constant, same for every text)                                       -0.02
+  TOTAL lead of '3_stars' over the average answer                       +2.48
+
+====================================================================================================
+Example #530
+  Text: Waitstaff was pleasant and took only 15 minutes to receive the lunch order!
+  True answer: 5_stars   Model's answer: 5_stars (41% sure)   ✓ correct
+  All answers: 1_star 0%  2_stars 3%  3_stars 16%  4_stars 39%  5_stars 41%
+
+  concept               human label  model thinks                      push towards '5_stars'
+  food_pos              no           ██··················    8%        -0.71
+  food_neg              no           ███·················   17%        +0.81
+  service_pos           yes          ██████████████████··   91%        +0.43
+  service_neg           no           █···················    6%        +0.65
+  ambiance_pos          no           ····················    0%        +0.03
+  ambiance_neg          no           ····················    1%        +0.72
+  noise_pos             no           ····················    0%        -0.50
+  noise_neg             no           ····················    0%        +0.75
+  (constant, same for every text)                                       +0.00
+  TOTAL lead of '5_stars' over the average answer                       +2.17
+
+====================================================================================================
+Example #1047
+  Text: Sometimes a winner...great neighborhood place to greet friends but the food is not always great
+  True answer: 3_stars   Model's answer: 3_stars (39% sure)   ✓ correct
+  All answers: 1_star 0%  2_stars 1%  3_stars 39%  4_stars 35%  5_stars 24%
+
+  concept               human label  model thinks                      push towards '3_stars'
+  food_pos              no           ███████████████████·   93%        +0.36  ← disagrees with human
+  food_neg              yes          █···················    7%        +0.21  ← disagrees with human
+  service_pos           no           ····················    2%        +0.47
+  service_neg           no           ····················    1%        +0.35
+  ambiance_pos          no           ████················   21%        +0.20
+  ambiance_neg          no           ███·················   13%        +0.32
+  noise_pos             no           ····················    1%        +0.16
+  noise_neg             no           ····················    0%        +0.08
+  (constant, same for every text)                                       -0.02
+  TOTAL lead of '3_stars' over the average answer                       +2.13
+
+====================================================================================================
+Example #995
+  Text: Nice service.
+  True answer: 4_stars   Model's answer: 4_stars (63% sure)   ✓ correct
+  All answers: 1_star 0%  2_stars 1%  3_stars 25%  4_stars 63%  5_stars 10%
+
+  concept               human label  model thinks                      push towards '4_stars'
+  food_pos              no           ····················    0%        -0.16
+  food_neg              no           ····················    0%        +0.96
+  service_pos           yes          ██████████··········   49%        +0.32  ← disagrees with human
+  service_neg           no           █···················    6%        +0.65
+  ambiance_pos          no           ····················    0%        +0.23
+  ambiance_neg          no           ····················    0%        +0.43
+  noise_pos             no           ····················    0%        +0.32
+  noise_neg             no           ····················    0%        +0.16
+  (constant, same for every text)                                       -0.07
+  TOTAL lead of '4_stars' over the average answer                       +2.85
+
+====================================================================================================
+Example #829
+  Text: Always dependably good service, but the food is mediocre.
+  True answer: 3_stars   Model's answer: 3_stars (80% sure)   ✓ correct
+  All answers: 1_star 0%  2_stars 5%  3_stars 80%  4_stars 15%  5_stars 0%
+
+  concept               human label  model thinks                      push towards '3_stars'
+  food_pos              no           ████████████········   61%        +0.77  ← disagrees with human
+  food_neg              yes          ████████████········   59%        +0.35
+  service_pos           yes          ██████████████······   72%        +0.58
+  service_neg           no           ██████··············   31%        +0.79
+  ambiance_pos          no           ····················    1%        +0.20
+  ambiance_neg          no           ····················    1%        +0.52
+  noise_pos             no           ····················    0%        +0.34
+  noise_neg             no           ····················    0%        +0.34
+  (constant, same for every text)                                       -0.02
+  TOTAL lead of '3_stars' over the average answer                       +3.87
+
+====================================================================================================
+Example #1605
+  Text: Absolutely the worst service we have ever had.Very disapointed for a Herco operation .
+  True answer: 1_star   Model's answer: 1_star (76% sure)   ✓ correct
+  All answers: 1_star 76%  2_stars 22%  3_stars 2%  4_stars 0%  5_stars 0%
+
+  concept               human label  model thinks                      push towards '1_star'
+  food_pos              no           ····················    1%        +1.09
+  food_neg              no           ██··················    9%        +0.15
+  service_pos           no           ███·················   14%        +0.72
+  service_neg           yes          ██████████████████··   90%        +0.65
+  ambiance_pos          no           ····················    0%        +0.54
+  ambiance_neg          no           █···················    4%        +0.04
+  noise_pos             no           ····················    0%        +0.87
+  noise_neg             no           ····················    0%        +0.41
+  (constant, same for every text)                                       +0.01
+  TOTAL lead of '1_star' over the average answer                        +4.48
+
+====================================================================================================
+Example #621
+  Text: Noisy!!!! Service was inadequate as was the food.  We will not return.
+  True answer: 1_star   Model's answer: 1_star (65% sure)   ✓ correct
+  All answers: 1_star 65%  2_stars 33%  3_stars 2%  4_stars 0%  5_stars 0%
+
+  concept               human label  model thinks                      push towards '1_star'
+  food_pos              no           ███·················   16%        +0.36
+  food_neg              yes          █████████████·······   65%        +0.77
+  service_pos           no           ███·················   13%        +0.64
+  service_neg           yes          ██████████████······   68%        +0.49
+  ambiance_pos          no           ····················    1%        +0.57
+  ambiance_neg          yes          █████████···········   47%        +0.12  ← disagrees with human
+  noise_pos             no           █···················    4%        +0.65
+  noise_neg             yes          ██████████████████··   92%        +1.02
+  (constant, same for every text)                                       +0.01
+  TOTAL lead of '1_star' over the average answer                        +4.64
+
+====================================================================================================
+8/10 of these examples answered correctly.
+

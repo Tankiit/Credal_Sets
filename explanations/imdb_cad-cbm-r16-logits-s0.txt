@@ -1,0 +1,206 @@
+
+Model: imdb_cad-cbm-r16-logits-s0   dataset: imdb_cad   split: val
+
+====================================================================================================
+Example #432
+  Text: There wasn't much thought put into the story line on many fronts. This is a good action movie but that's about it. - The movie states that the lycans were kept to protect the vampires during the day. Yet they are kept in cages and have collars on their necks. So they can't turn into their wolf form or do anything any other slave can't do. How does this protect the vampires during the day? Who are  …
+  True answer: negative   Model's answer: negative (100% sure)   ✓ correct
+  All answers: negative 100%  positive 0%
+
+  concept               human label  model thinks                      push towards 'negative'
+  editing_pos           no           ····················    1%        -0.51
+  storyline_pos         no           ····················    1%        +0.38
+  emotional_arousal_pos no           ····················    1%        +0.32
+  background_setting_posno           █···················    5%        +0.27
+  acting_pos            no           █···················    3%        -0.21
+  storyline_neg         yes          ██████████████████··   91%        +0.12
+  soundtrack_neg        no           ██··················   10%        +0.07
+  emotional_arousal_neg no           ████████████████····   80%        +0.06  ← disagrees with human
+  (residual: 16 unlabelled numbers)                                     +2.64
+  (other concepts)                                                      -0.09
+  (constant, same for every text)                                       +0.02
+  TOTAL lead of 'negative' over the average answer                      +3.07
+
+====================================================================================================
+Example #197
+  Text: Probably the best comedy in a long time. keeps you laughing nonstop! the acting is good and there are a lot of hilarious cameos such as Ben stiller as the guitar store guy. The plot wasn't as good as i had hoped but the comedy makes up for that. I can only hope for a sequel cause it seems like they can still do so much more. Even though it was 1 hour and 40 minutes long i still wanted more at the  …
+  True answer: positive   Model's answer: positive (100% sure)   ✓ correct
+  All answers: negative 0%  positive 100%
+
+  concept               human label  model thinks                      push towards 'positive'
+  editing_neg           no           ····················    0%        +0.49
+  storyline_pos         yes          ████████████████████   98%        +0.32
+  storyline_neg         no           ····················    0%        +0.31
+  emotional_arousal_pos yes          ████████████████████   99%        +0.29
+  emotional_arousal_neg no           ····················    0%        +0.26
+  acting_neg            no           ····················    1%        +0.25
+  soundtrack_neg        no           ····················    0%        -0.21
+  cinematography_neg    no           ····················    0%        -0.19
+  (residual: 16 unlabelled numbers)                                     +3.29
+  (other concepts)                                                      +0.06
+  (constant, same for every text)                                       -0.02
+  TOTAL lead of 'positive' over the average answer                      +4.86
+
+====================================================================================================
+Example #388
+  Text: Love trap is a "must see" independent film. When I sat down to watch the movie, I came in with low expectations, but left with a blessing. The story is poetic, substantive, and creative. The writer pulls you in further and further which each scene, allowing you to relate to the realistic characters that every one can identify with. The movie allowed me to reflect on my life and what I consider lov …
+  True answer: positive   Model's answer: positive (99% sure)   ✓ correct
+  All answers: negative 1%  positive 99%
+
+  concept               human label  model thinks                      push towards 'positive'
+  editing_neg           no           ····················    1%        +0.34
+  acting_neg            no           ····················    2%        +0.19
+  storyline_neg         no           █···················    3%        +0.18
+  emotional_arousal_neg no           ····················    2%        +0.17
+  editing_pos           no           ████················   20%        +0.16
+  storyline_pos         yes          █████████████████···   86%        +0.15
+  soundtrack_neg        no           ····················    1%        -0.15
+  cinematography_neg    no           ····················    1%        -0.14
+  (residual: 16 unlabelled numbers)                                     +1.56
+  (other concepts)                                                      +0.10
+  (constant, same for every text)                                       -0.02
+  TOTAL lead of 'positive' over the average answer                      +2.55
+
+====================================================================================================
+Example #455
+  Text: My 15 year old daughter asked me to watch this movie with her on Cable TV. As someone who saw Revenge of The Nerds in a movie theater, I found this movie to be an extremely predictable remake of it. The Nerds were simply replaced by Dorks. I drove her crazy by being able to predict precisely what would happen in each scene. The cast was cute, especially Amanda Bynes. Screenwriter Chad Creasey shou …
+  True answer: negative   Model's answer: negative (93% sure)   ✓ correct
+  All answers: negative 93%  positive 7%
+
+  concept               human label  model thinks                      push towards 'negative'
+  editing_pos           no           ····················    1%        -0.53
+  background_setting_posno           █···················    3%        +0.30
+  storyline_pos         no           █···················    7%        +0.22
+  editing_neg           no           █···················    5%        -0.22
+  emotional_arousal_pos no           █···················    6%        +0.17
+  soundtrack_neg        no           ····················    2%        +0.13
+  acting_pos            yes          ██··················   11%        -0.12  ← disagrees with human
+  cinematography_neg    no           ····················    2%        +0.11
+  (residual: 16 unlabelled numbers)                                     +1.37
+  (other concepts)                                                      -0.17
+  (constant, same for every text)                                       +0.02
+  TOTAL lead of 'negative' over the average answer                      +1.28
+
+====================================================================================================
+Example #215
+  Text: Moon Child is the story of two brothers and a friend trying to make it in a futuristic, economically-unstable Japan. After a cunning disaster gone wrong, someone new enters young Sho's life, a special friend by the name of Kei. Years later they have grown rather close, and have found ways to combine both their talents into one unstoppable team. During another escapade, they encounter a new friend  …
+  True answer: positive   Model's answer: positive (100% sure)   ✓ correct
+  All answers: negative 0%  positive 100%
+
+  concept               human label  model thinks                      push towards 'positive'
+  editing_neg           no           ····················    0%        +0.46
+  acting_neg            no           ····················    0%        +0.28
+  storyline_neg         no           ····················    1%        +0.27
+  emotional_arousal_neg no           ····················    0%        +0.27
+  storyline_pos         yes          ███████████████████·   96%        +0.26
+  editing_pos           no           ██··················   11%        +0.23
+  soundtrack_neg        no           ····················    0%        -0.21
+  emotional_arousal_pos yes          ███████████████████·   95%        +0.19
+  (residual: 16 unlabelled numbers)                                     +2.84
+  (other concepts)                                                      -0.20
+  (constant, same for every text)                                       -0.02
+  TOTAL lead of 'positive' over the average answer                      +4.39
+
+====================================================================================================
+Example #20
+  Text: yes barney is nonsense now but when i was a kid it made perfect sense. i haven't gotten any smarter but i enjoyed it. as a child i was mocked because no one could say my name so i changed it. ever since i was 4 I've gone by the name Tina from barney because i could relate to her being from a different culture. i'm 17 now and barney is a huge part of my life . ...my name came from it.... i cant dis …
+  True answer: positive   Model's answer: positive (57% sure)   ✓ correct
+  All answers: negative 43%  positive 57%
+
+  concept               human label  model thinks                      push towards 'positive'
+  editing_pos           no           ····················    2%        +0.42
+  background_setting_posno           █···················    7%        -0.22
+  acting_pos            no           █···················    4%        +0.20
+  storyline_pos         no           ██··················    9%        -0.20
+  emotional_arousal_pos no           ██··················    8%        -0.16
+  editing_neg           no           ███·················   13%        +0.14
+  soundtrack_neg        no           █···················    7%        -0.09
+  cinematography_pos    no           ····················    2%        +0.09
+  (residual: 16 unlabelled numbers)                                     -0.07
+  (other concepts)                                                      +0.06
+  (constant, same for every text)                                       -0.02
+  TOTAL lead of 'positive' over the average answer                      +0.15
+
+====================================================================================================
+Example #132
+  Text: Bad, bad, and did I mention bad? Aside from the comical monster terrorizing the workers the funniest part of the movie was when surveyors are in the desert and one comments that they have an hour of daylight left, but you can clearly see by their shadows, and the bright sky, that it's probably only 2 or 2:30 in the afternoon. Talk about consistency. READ THE SCRIPT director! The only cool part of  …
+  True answer: negative   Model's answer: negative (99% sure)   ✓ correct
+  All answers: negative 99%  positive 1%
+
+  concept               human label  model thinks                      push towards 'negative'
+  editing_pos           no           █···················    3%        -0.41
+  storyline_pos         no           █···················    4%        +0.27
+  emotional_arousal_pos no           █···················    3%        +0.22
+  background_setting_posno           ███·················   13%        +0.17
+  acting_pos            no           ██··················    9%        -0.14
+  editing_neg           yes          ████················   21%        -0.10  ← disagrees with human
+  soundtrack_neg        no           █···················    7%        +0.09
+  storyline_neg         yes          █████████████████···   83%        +0.08
+  (residual: 16 unlabelled numbers)                                     +2.24
+  (other concepts)                                                      +0.02
+  (constant, same for every text)                                       +0.02
+  TOTAL lead of 'negative' over the average answer                      +2.45
+
+====================================================================================================
+Example #494
+  Text: Not as well known as the English, American, German and French cinema, though cinema from Sweden from the '20's was also quite good, interesting and revolutionary. This is a movie that is made great by its story. The story is told in 'A Christmas Carol' kind of way, in which the death himself confronts the deceased with his past, present and what could have been. It's of course a story that concent …
+  True answer: positive   Model's answer: positive (100% sure)   ✓ correct
+  All answers: negative 0%  positive 100%
+
+  concept               human label  model thinks                      push towards 'positive'
+  editing_neg           no           ····················    1%        +0.35
+  acting_neg            no           ····················    1%        +0.21
+  emotional_arousal_neg no           ····················    1%        +0.20
+  storyline_neg         no           █···················    3%        +0.19
+  editing_pos           no           ████················   19%        +0.17
+  storyline_pos         yes          █████████████████···   87%        +0.16
+  soundtrack_neg        no           ····················    1%        -0.16
+  cinematography_neg    no           ····················    1%        -0.15
+  (residual: 16 unlabelled numbers)                                     +1.71
+  (other concepts)                                                      +0.11
+  (constant, same for every text)                                       -0.02
+  TOTAL lead of 'positive' over the average answer                      +2.77
+
+====================================================================================================
+Example #261
+  Text: First off I'd like to point out that Sam Niel is nowhere to be seen in this film. What's a movie without Sam Niel. Did anyone see Event Horizon. D-Wars did have potential a movie about a dragon that controls lizards with rocket launchers does sound cool but sadly isn't. Nope, no Sam Niel, no good movie. I recommend taking the 5 dollars or so it takes to rent D-Wars and adding 10 to that five and b …
+  True answer: negative   Model's answer: negative (97% sure)   ✓ correct
+  All answers: negative 97%  positive 3%
+
+  concept               human label  model thinks                      push towards 'negative'
+  editing_pos           no           ····················    2%        -0.43
+  storyline_pos         no           █···················    3%        +0.29
+  emotional_arousal_pos no           █···················    3%        +0.23
+  background_setting_posno           █···················    7%        +0.22
+  acting_pos            no           █···················    5%        -0.17
+  editing_neg           no           ████················   22%        -0.09
+  soundtrack_neg        no           ██··················    8%        +0.08
+  cinematography_neg    no           ██··················   12%        +0.06
+  (residual: 16 unlabelled numbers)                                     +1.60
+  (other concepts)                                                      -0.05
+  (constant, same for every text)                                       +0.02
+  TOTAL lead of 'negative' over the average answer                      +1.74
+
+====================================================================================================
+Example #248
+  Text: Probably the finest fantasy film ever made. Sumptuous colour, spectacular sets, incredible, spot-on Miklos Rosza musical score that is perfect for each scene and mood. Acting is superb as well in what could have been stiff and pretentious in lesser hands, but here the poetic dialog is deftly, sensitively spoken (the humour is subtle and delightful as well). Doubtless Spielberg and Lucas were enthr …
+  True answer: positive   Model's answer: positive (100% sure)   ✓ correct
+  All answers: negative 0%  positive 100%
+
+  concept               human label  model thinks                      push towards 'positive'
+  editing_neg           no           ····················    1%        +0.38
+  storyline_pos         yes          ███████████████████·   97%        +0.30
+  storyline_neg         no           ····················    0%        +0.29
+  emotional_arousal_neg no           ····················    0%        +0.28
+  emotional_arousal_pos yes          ████████████████████   99%        +0.27
+  acting_neg            no           ····················    1%        +0.25
+  soundtrack_neg        no           ····················    1%        -0.15
+  cinematography_neg    no           ····················    1%        -0.15
+  (residual: 16 unlabelled numbers)                                     +3.71
+  (other concepts)                                                      +0.04
+  (constant, same for every text)                                       -0.02
+  TOTAL lead of 'positive' over the average answer                      +5.20
+
+====================================================================================================
+10/10 of these examples answered correctly.
+
