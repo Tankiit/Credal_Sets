@@ -28,12 +28,24 @@ python twin.py runs/cebab-cem-s0               # -> runs/cebab-cem-s0/twins/<tag
 The first `train.py` call on a dataset embeds the texts with a frozen encoder and caches
 the features in `cache/`. That takes a few minutes; every later run takes seconds.
 
+To see how a model reasons on individual examples:
+
+```bash
+python explain.py runs/cebab-cbm-s0            # -> per-concept breakdown of 10 validation examples
+```
+
+How to read the outputs: [runs/README.md](runs/README.md) (scores and twin reports) and
+[explanations/README.md](explanations/README.md) (per-example explanations).
+
 ## Layout
 
 ```
 download.py                 CLI: download + standardize datasets
 train.py                    CLI: train a CBM / CEM
 twin.py                     CLI: build + verify the twin of a trained model
+explain.py                  CLI: per-concept breakdown of a model's answers
+runs/                       trained models, scores, twins (guide: runs/README.md)
+explanations/               explain.py outputs (guide: explanations/README.md)
 concept_datasets/           one file per dataset, each with download()
     cebab.py  goemotions.py  civil_comments.py  imdb_cad.py
     _common.py              common on-disk format (documented there)

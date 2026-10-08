@@ -2,9 +2,3 @@ cache/
 .venv/
 data/
 __pycache__/
-
-# Trained models and twins (model.pt, twins/*.pt), anywhere in the project.
-# The small result files next to them (metrics.json, *.report.json) stay tracked.
-*.pt
-*.pth
-*.ckpt
