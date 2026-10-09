@@ -20,6 +20,7 @@ from concept_models.models import load_model
 from concept_models.reparam import make_twin
 from concept_models.training import predict
 from explain import contributions
+from cebab_edits import compare_model_and_twin, load_edit_pairs
 
 sig = lambda v: 1 / (1 + np.exp(-v))
 
@@ -196,51 +197,25 @@ def d_push(m, twin, f):
         return 0.0
 
 
-def d_cebab_edit_effect(m, twin, dataset, split="test") -> float:
-    """Compute change in counterfactual edit logit shift between original and twin model on CEBaB dataset under intervention."""
+def cebab_edit_effect_rows(m, twin, dataset, split="test") -> list[dict]:
+    """Evaluate validated aspect-specific CEBaB original-to-edit interventions.
+
+    This is the B1 data source.  It never falls back to arbitrary row pairs or
+    silently replaces a loader failure with a zero.
+    """
     if dataset != "cebab":
+        return []
+    pairs = load_edit_pairs(split)
+    feats = get_sweep_features(dataset, split, m.config["encoder"], m.config)
+    return compare_model_and_twin(m, twin, feats, pairs)
+
+
+def d_cebab_edit_effect(m, twin, dataset, split="test") -> float:
+    """Maximum absolute twin-vs-model targeted CEBaB expected-effect gap."""
+    rows = cebab_edit_effect_rows(m, twin, dataset, split)
+    if not rows:
         return 0.0
-
-    try:
-        records = load_split(dataset, split)
-        groups = {}
-        for i, rec in enumerate(records):
-            orig_id = rec.get("info", {}).get("original_id")
-            if orig_id:
-                groups.setdefault(orig_id, []).append(i)
-
-        pair_orig = []
-        pair_edit = []
-        for indices in groups.values():
-            if len(indices) >= 2:
-                pair_orig.append(indices[0])
-                pair_edit.append(indices[1])
-
-        if not pair_orig:
-            return 0.0
-
-        feats = get_sweep_features(dataset, split, m.config["encoder"], m.config)
-        X_orig = feats["X"][pair_orig]
-        X_edit = feats["X"][pair_edit]
-
-        # Intervene on concept layer during edit evaluation if concept labels exist
-        if "C" in feats:
-            C_edit = feats["C"][pair_edit]
-            mask = torch.ones_like(C_edit, dtype=torch.bool)
-            orig_logits_a = predict(m, X_orig)["logits"]
-            orig_logits_b = predict(m, X_edit, C_edit, mask)["logits"]
-            orig_shift = orig_logits_b - orig_logits_a
-
-            twin_logits_a = predict(twin, X_orig)["logits"]
-            twin_logits_b = predict(twin, X_edit, C_edit, mask)["logits"]
-            twin_shift = twin_logits_b - twin_logits_a
-        else:
-            orig_shift = predict(m, X_edit)["logits"] - predict(m, X_orig)["logits"]
-            twin_shift = predict(twin, X_edit)["logits"] - predict(twin, X_orig)["logits"]
-
-        return float(np.abs(orig_shift - twin_shift).max())
-    except Exception:
-        return 0.0
+    return float(max(abs(row["twin_minus_model_expected_effect"]) for row in rows))
 
 
 # ---- 3. One cell of the sweep ----------------------------------------------

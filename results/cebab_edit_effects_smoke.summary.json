@@ -1,0 +1,20 @@
+{
+  "run": "cebab-cbm-r16-logits-s0",
+  "split": "test",
+  "n_pairs": 1002,
+  "transform": {
+    "invisible_dims": 16,
+    "concept_layer_dim": 24,
+    "rotate": 1.0,
+    "mix": 1.0,
+    "shift": 0.0,
+    "seed": 0,
+    "cond_B": 5.383536388653285
+  },
+  "human_effect_mean": -0.22255489021956087,
+  "model_human_spearman": 0.28628817351361685,
+  "twin_human_spearman": -0.0010637065994063865,
+  "mean_abs_twin_model_effect_gap": 0.26305633236072257,
+  "max_abs_twin_model_effect_gap": 1.5690579414367676,
+  "label_change_disagreements": 268
+}
