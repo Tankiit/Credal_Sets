@@ -36,7 +36,10 @@ image = (
     )
     .add_local_dir("concept_models", remote_path=f"{REMOTE_ROOT}/concept_models")
     .add_local_dir("concept_datasets", remote_path=f"{REMOTE_ROOT}/concept_datasets")
+    .add_local_dir("data/cebab", remote_path=f"{REMOTE_ROOT}/data/cebab")
     .add_local_file("train_concept_models.py", remote_path=f"{REMOTE_ROOT}/train_concept_models.py")
+    .add_local_file("cebab_edits.py", remote_path=f"{REMOTE_ROOT}/cebab_edits.py")
+    .add_local_file("modal_cebab_b1.py", remote_path=f"{REMOTE_ROOT}/modal_cebab_b1.py")
 )
 
 COMMON = dict(
@@ -137,6 +140,34 @@ def torch_concepts_all(epochs: int = 50, learning_rate: float = 1e-3) -> list[di
     return completed
 
 
+@app.function(**COMMON)
+def cebab_b1_residual_twins(n_tseeds: int = 20, mix: float = 1.0) -> list[dict]:
+    """B1: CEBaB human edit effects for all residual-CBM seeds and gauge twins."""
+    if REMOTE_ROOT not in sys.path:
+        sys.path.insert(0, REMOTE_ROOT)
+    from modal_cebab_b1 import evaluate_checkpoint, save_jsonl
+
+    data_file = Path("/artifacts/prepared/cebab/test.pt")
+    if not data_file.exists():
+        raise FileNotFoundError("Prepared CEBaB test features are missing")
+    output = Path("/artifacts/analysis/cebab_b1_residual_torch_concepts")
+    output.mkdir(parents=True, exist_ok=True)
+    summaries, rows = [], []
+    for seed in SEEDS:
+        checkpoint = Path(f"/artifacts/runs/cebab-residual-cbm-torch-concepts-s{seed}/best.pt")
+        if not checkpoint.exists():
+            raise FileNotFoundError(f"Missing residual checkpoint: {checkpoint}")
+        seed_summaries, seed_rows = evaluate_checkpoint(
+            checkpoint, data_file, n_tseeds=n_tseeds, mix=mix, device="cuda"
+        )
+        summaries.extend(seed_summaries)
+        rows.extend(seed_rows)
+    save_jsonl(summaries, output / "summary.jsonl")
+    save_jsonl(rows, output / "effects.jsonl")
+    results.commit()
+    return summaries
+
+
 @app.local_entrypoint()
 def sweep(epochs: int = 50, learning_rate: float = 1e-3) -> None:
     """Prepare each dataset once, then run CBM/CEM across seeds sequentially on one T4."""
@@ -155,6 +186,12 @@ def sweep_torch_concepts(epochs: int = 50, learning_rate: float = 1e-3) -> None:
         for architecture in ("cbm", "residual-cbm"):
             for seed in SEEDS:
                 print(train_one.remote(dataset, architecture, seed, epochs, learning_rate, "torch-concepts"))
+
+
+@app.local_entrypoint()
+def cebab_b1(n_tseeds: int = 20, mix: float = 1.0) -> None:
+    """Run all 3 CEBaB residual-CBM seeds × n gauge twins on Modal."""
+    print(cebab_b1_residual_twins.remote(n_tseeds, mix))
 
 
 @app.local_entrypoint()
