@@ -1,0 +1,166 @@
+
+Model: civil_comments-pyc-hyper-lr0.001-p8-s0   dataset: civil_comments   split: val
+
+====================================================================================================
+Example #3155
+  Text: Plain and simple Trump is a fraud and a buffoon and it is really sad that you find anything redeeming about the man at all let alone as a candidate to lead this country that I loved enough to put my life on the line for it Dick. Trump is a loser and anyone who supports him ditto that.
+  True answer: toxic   Model's answer: toxic (96% sure)   ✓ correct
+  All answers: non_toxic 4%  toxic 96%
+
+  concept               human label  model thinks                      push towards 'toxic'
+  severe_toxicity       no           ····················    1%        +0.02
+  obscene               yes          ██··················   12%        +0.43  ← disagrees with human
+  threat                no           ····················    0%        +0.00
+  insult                yes          ████████████████████   99%        +1.30
+  identity_attack       no           █···················    5%        +0.07
+  sexual_explicit       no           █···················    3%        +0.03
+  (constant, same for every text)                                       -0.23
+  TOTAL lead of 'toxic' over the average answer                         +1.64
+
+====================================================================================================
+Example #3445
+  Text: these stories truly represent the worst of CBC for me...mindless drivel...attempting to be clever...always negative.
+  True answer: toxic   Model's answer: non_toxic (53% sure)   ✗ wrong
+  All answers: non_toxic 53%  toxic 47%
+
+  concept               human label  model thinks                      push towards 'non_toxic'
+  severe_toxicity       no           ····················    1%        -0.00
+  obscene               no           █···················    6%        +0.04
+  threat                no           ····················    2%        -0.01
+  insult                yes          █████████████·······   66%        -0.16
+  identity_attack       no           ██··················   12%        -0.03
+  sexual_explicit       no           ····················    1%        -0.01
+  (constant, same for every text)                                       +0.23
+  TOTAL lead of 'non_toxic' over the average answer                     +0.06
+
+====================================================================================================
+Example #331
+  Text: I would suggest that the current crossing safety measures are very adequate WITHOUT the train horns.  The issue is not that individuals don't know a train is coming.  The barriers are "down", the lights are flashing, the bells are ringing.  Persons who are struck by trains at such crossing knowingly disregard the existing warnings and barriers.  They're in a hurry and don't want to wait for "that  …
+  True answer: toxic   Model's answer: non_toxic (94% sure)   ✗ wrong
+  All answers: non_toxic 94%  toxic 6%
+
+  concept               human label  model thinks                      push towards 'non_toxic'
+  severe_toxicity       no           ····················    1%        +0.03
+  obscene               yes          ███·················   16%        +0.96  ← disagrees with human
+  threat                no           ····················    2%        +0.02
+  insult                yes          ████················   20%        +0.08  ← disagrees with human
+  identity_attack       no           ····················    1%        +0.01
+  sexual_explicit       no           ····················    2%        +0.01
+  (constant, same for every text)                                       +0.23
+  TOTAL lead of 'non_toxic' over the average answer                     +1.34
+
+====================================================================================================
+Example #2121
+  Text: Do all that, make $150,000 a year, live on the street for 10 years, and you still can't afford a house in Vancouver
+  True answer: non_toxic   Model's answer: non_toxic (92% sure)   ✓ correct
+  All answers: non_toxic 92%  toxic 8%
+
+  concept               human label  model thinks                      push towards 'non_toxic'
+  severe_toxicity       no           ····················    1%        +0.05
+  obscene               no           █···················    4%        +0.77
+  threat                no           ····················    1%        +0.03
+  insult                no           █···················    3%        +0.09
+  identity_attack       no           ····················    1%        +0.06
+  sexual_explicit       no           ····················    1%        +0.03
+  (constant, same for every text)                                       +0.23
+  TOTAL lead of 'non_toxic' over the average answer                     +1.24
+
+====================================================================================================
+Example #4188
+  Text: Murkowski is not going anywhere. She isn't going to be out of a job. Alaskans showed by their passively accepting Walker's raid on PFD citizens are to lazy to act.
+  True answer: non_toxic   Model's answer: toxic (56% sure)   ✗ wrong
+  All answers: non_toxic 44%  toxic 56%
+
+  concept               human label  model thinks                      push towards 'toxic'
+  severe_toxicity       no           ····················    1%        +0.01
+  obscene               no           ██··················   11%        -0.05
+  threat                no           █···················    5%        +0.01
+  insult                no           ███████████·········   57%        +0.35  ← disagrees with human
+  identity_attack       no           █···················    5%        +0.02
+  sexual_explicit       no           ····················    1%        +0.01
+  (constant, same for every text)                                       -0.23
+  TOTAL lead of 'toxic' over the average answer                         +0.11
+
+====================================================================================================
+Example #3980
+  Text: That's because it is irrelevant. We have troops in Muslim countries... guess that means we deserve a good massacre or two.
+  True answer: toxic   Model's answer: toxic (87% sure)   ✓ correct
+  All answers: non_toxic 13%  toxic 87%
+
+  concept               human label  model thinks                      push towards 'toxic'
+  severe_toxicity       no           █···················    4%        +0.06
+  obscene               no           █···················    5%        +0.10
+  threat                yes          █████···············   24%        +0.21  ← disagrees with human
+  insult                yes          ████████████········   62%        +0.23
+  identity_attack       yes          █████████████████···   87%        +0.55
+  sexual_explicit       no           █···················    3%        +0.02
+  (constant, same for every text)                                       -0.23
+  TOTAL lead of 'toxic' over the average answer                         +0.94
+
+====================================================================================================
+Example #3317
+  Text: Unquestionably and without a doubt, viewing pornography made me a better partner in bed.
+  True answer: non_toxic   Model's answer: non_toxic (59% sure)   ✓ correct
+  All answers: non_toxic 59%  toxic 41%
+
+  concept               human label  model thinks                      push towards 'non_toxic'
+  severe_toxicity       no           ····················    1%        +0.00
+  obscene               no           ██··················   12%        +0.23
+  threat                no           ····················    0%        -0.00
+  insult                no           █████···············   26%        +0.02
+  identity_attack       no           ····················    2%        +0.00
+  sexual_explicit       yes          ███████████·········   57%        -0.31
+  (constant, same for every text)                                       +0.23
+  TOTAL lead of 'non_toxic' over the average answer                     +0.17
+
+====================================================================================================
+Example #2484
+  Text: "...Trump hates veterans and war heros, so he gets called out for being a coward...."  Wrong.  Trump hates anyone who opposes him in the least bit, no matter who they are.  LOL
+  True answer: toxic   Model's answer: toxic (96% sure)   ✓ correct
+  All answers: non_toxic 4%  toxic 96%
+
+  concept               human label  model thinks                      push towards 'toxic'
+  severe_toxicity       no           ····················    1%        +0.03
+  obscene               no           ██··················   10%        +0.39
+  threat                no           ····················    2%        +0.02
+  insult                yes          ███████████████████·   97%        +1.33
+  identity_attack       no           █···················    6%        +0.09
+  sexual_explicit       no           ····················    1%        +0.01
+  (constant, same for every text)                                       -0.23
+  TOTAL lead of 'toxic' over the average answer                         +1.64
+
+====================================================================================================
+Example #3904
+  Text: JB:  How many people live in Colorado?
+  True answer: non_toxic   Model's answer: non_toxic (97% sure)   ✓ correct
+  All answers: non_toxic 97%  toxic 3%
+
+  concept               human label  model thinks                      push towards 'non_toxic'
+  severe_toxicity       no           ····················    0%        +0.03
+  obscene               no           █···················    5%        +1.38
+  threat                no           ····················    0%        +0.01
+  insult                no           ····················    1%        +0.03
+  identity_attack       no           ····················    0%        +0.03
+  sexual_explicit       no           ····················    0%        +0.01
+  (constant, same for every text)                                       +0.23
+  TOTAL lead of 'non_toxic' over the average answer                     +1.72
+
+====================================================================================================
+Example #2933
+  Text: Obama:  ".......by almost any measure we are better off than when I took office".  Fact:  Record Number of Americans Not in Labor Force Record Number of Women Not Participating in the Labor Force Percentage of Americans Not in Labor Force Remains at 36-Year High Price Index for Meats, Poultry, Fish & Eggs Rockets to All-Time High Obama's Balloon: Federal Student Loan Debt Up 517% in 5 Years Debt U …
+  True answer: non_toxic   Model's answer: non_toxic (75% sure)   ✓ correct
+  All answers: non_toxic 75%  toxic 25%
+
+  concept               human label  model thinks                      push towards 'non_toxic'
+  severe_toxicity       no           ····················    1%        +0.00
+  obscene               no           ██··················   10%        +0.27
+  threat                no           ····················    1%        +0.00
+  insult                no           ███████·············   35%        +0.04
+  identity_attack       no           █···················    5%        +0.01
+  sexual_explicit       no           █···················    3%        -0.01
+  (constant, same for every text)                                       +0.23
+  TOTAL lead of 'non_toxic' over the average answer                     +0.55
+
+====================================================================================================
+7/10 of these examples answered correctly.
+

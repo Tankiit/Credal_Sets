@@ -28,6 +28,19 @@ from concept_models.models import load_model
 
 def contributions(model, x: torch.Tensor) -> tuple[torch.Tensor, list[str] | None, torch.Tensor, dict]:
     """Per-concept terms of the task logits: (terms (n, k [+1], classes), extra names, bias, out)."""
+    kind = model.config["kind"]
+    if kind == "pyc-hyper":  # logits = W(x) p + b
+        out = model(x)
+        terms = out["concept_probs"].unsqueeze(-1) * out["concept_weights"].transpose(1, 2)
+        return terms, None, model.task_bias.detach(), out
+    if kind in ("pyc-cbm", "pyc-cem"):
+        lin = model.predictor.predictor
+        W, bias = lin.weight.detach(), lin.bias.detach()
+        out = model(x)
+        if kind == "pyc-cbm":
+            return out["concept_probs"].unsqueeze(-1) * W.T.unsqueeze(0), None, bias, out
+        z = out["z"].view(len(x), model.k, model.m)
+        return torch.einsum("bkm,ckm->bkc", z, W.view(-1, model.k, model.m)), None, bias, out
     if len(model.head) != 1:
         raise ValueError("only a linear head can be split into per-concept terms")
     W, bias = model.head[0].weight.detach(), model.head[0].bias.detach()  # (classes, in)

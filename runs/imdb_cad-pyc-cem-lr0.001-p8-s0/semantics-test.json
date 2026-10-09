@@ -1,0 +1,205 @@
+{
+  "run": "imdb_cad-pyc-cem-lr0.001-p8-s0",
+  "kind": "pyc-cem",
+  "split": "test",
+  "concept_names": [
+    "acting_pos",
+    "acting_neg",
+    "storyline_pos",
+    "storyline_neg",
+    "emotional_arousal_pos",
+    "emotional_arousal_neg",
+    "cinematography_pos",
+    "cinematography_neg",
+    "soundtrack_pos",
+    "soundtrack_neg",
+    "directing_pos",
+    "directing_neg",
+    "background_setting_pos",
+    "background_setting_neg",
+    "editing_pos",
+    "editing_neg"
+  ],
+  "class_names": [
+    "negative",
+    "positive"
+  ],
+  "task_acc": 0.878000020980835,
+  "concepts": {
+    "acting_pos": {
+      "base_rate": 0.3540000021457672,
+      "mean_prob": 0.37670060992240906,
+      "auc": 0.8857287785765511
+    },
+    "acting_neg": {
+      "base_rate": 0.23199999332427979,
+      "mean_prob": 0.20105275511741638,
+      "auc": 0.8807695761494253
+    },
+    "storyline_pos": {
+      "base_rate": 0.38999998569488525,
+      "mean_prob": 0.38516637682914734,
+      "auc": 0.9219503993274485
+    },
+    "storyline_neg": {
+      "base_rate": 0.40400001406669617,
+      "mean_prob": 0.39270323514938354,
+      "auc": 0.9070702372250647
+    },
+    "emotional_arousal_pos": {
+      "base_rate": 0.35600000619888306,
+      "mean_prob": 0.36245936155319214,
+      "auc": 0.9107404564170563
+    },
+    "emotional_arousal_neg": {
+      "base_rate": 0.3580000102519989,
+      "mean_prob": 0.34584739804267883,
+      "auc": 0.9420456325379836
+    },
+    "cinematography_pos": {
+      "base_rate": 0.13199999928474426,
+      "mean_prob": 0.1461281031370163,
+      "auc": 0.8712819438625891
+    },
+    "cinematography_neg": {
+      "base_rate": 0.04800000041723251,
+      "mean_prob": 0.047025833278894424,
+      "auc": 0.8486519607843137
+    },
+    "soundtrack_pos": {
+      "base_rate": 0.09000000357627869,
+      "mean_prob": 0.09838322550058365,
+      "auc": 0.77001221001221
+    },
+    "soundtrack_neg": {
+      "base_rate": 0.04600000008940697,
+      "mean_prob": 0.03195653483271599,
+      "auc": 0.8304621274268527
+    },
+    "directing_pos": {
+      "base_rate": 0.25,
+      "mean_prob": 0.2686029076576233,
+      "auc": 0.8881493333333333
+    },
+    "directing_neg": {
+      "base_rate": 0.1899999976158142,
+      "mean_prob": 0.16770696640014648,
+      "auc": 0.8935932423651722
+    },
+    "background_setting_pos": {
+      "base_rate": 0.14399999380111694,
+      "mean_prob": 0.18123961985111237,
+      "auc": 0.7769665109034267
+    },
+    "background_setting_neg": {
+      "base_rate": 0.10599999874830246,
+      "mean_prob": 0.08974115550518036,
+      "auc": 0.7153349373179688
+    },
+    "editing_pos": {
+      "base_rate": 0.07999999821186066,
+      "mean_prob": 0.07038295269012451,
+      "auc": 0.8293478260869566
+    },
+    "editing_neg": {
+      "base_rate": 0.10999999940395355,
+      "mean_prob": 0.0926327034831047,
+      "auc": 0.8520122574055159
+    }
+  },
+  "cace": {
+    "acting_pos": {
+      "negative": -0.06832265853881836,
+      "positive": 0.06832268834114075
+    },
+    "acting_neg": {
+      "negative": 0.04506906867027283,
+      "positive": -0.04506903886795044
+    },
+    "storyline_pos": {
+      "negative": -0.15563157200813293,
+      "positive": 0.15563157200813293
+    },
+    "storyline_neg": {
+      "negative": 0.12139874696731567,
+      "positive": -0.12139877676963806
+    },
+    "emotional_arousal_pos": {
+      "negative": -0.11853760480880737,
+      "positive": 0.11853757500648499
+    },
+    "emotional_arousal_neg": {
+      "negative": 0.11274716258049011,
+      "positive": -0.1127471923828125
+    },
+    "cinematography_pos": {
+      "negative": -0.024002641439437866,
+      "positive": 0.024002671241760254
+    },
+    "cinematography_neg": {
+      "negative": 0.036220669746398926,
+      "positive": -0.036220699548721313
+    },
+    "soundtrack_pos": {
+      "negative": -0.03130713105201721,
+      "positive": 0.031307101249694824
+    },
+    "soundtrack_neg": {
+      "negative": 0.022839844226837158,
+      "positive": -0.022839874029159546
+    },
+    "directing_pos": {
+      "negative": -0.07337149977684021,
+      "positive": 0.0733715295791626
+    },
+    "directing_neg": {
+      "negative": 0.04519215226173401,
+      "positive": -0.045192182064056396
+    },
+    "background_setting_pos": {
+      "negative": -0.047760963439941406,
+      "positive": 0.047760993242263794
+    },
+    "background_setting_neg": {
+      "negative": 0.030434131622314453,
+      "positive": -0.030434131622314453
+    },
+    "editing_pos": {
+      "negative": -0.05276116728782654,
+      "positive": 0.052761197090148926
+    },
+    "editing_neg": {
+      "negative": 0.027402669191360474,
+      "positive": -0.027402669191360474
+    }
+  },
+  "ncc": null,
+  "interventions": {
+    "n_concepts_replaced": [
+      0,
+      1,
+      4,
+      8,
+      12,
+      16
+    ],
+    "task_acc": {
+      "uncertainty": {
+        "0": 0.878000020980835,
+        "1": 0.8940000534057617,
+        "4": 0.9200000166893005,
+        "8": 0.9280000329017639,
+        "12": 0.9360000491142273,
+        "16": 0.9340000152587891
+      },
+      "random": {
+        "0": 0.878000020980835,
+        "1": 0.8880000710487366,
+        "4": 0.9040000438690186,
+        "8": 0.9280000329017639,
+        "12": 0.9220000505447388,
+        "16": 0.9340000152587891
+      }
+    }
+  }
+}

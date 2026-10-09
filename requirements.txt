@@ -7,3 +7,4 @@ numpy
 pandas
 scikit-learn
 tqdm
+pytorch-concepts==1.0.0a5   # PyC models (pyc-*) and semantics.py

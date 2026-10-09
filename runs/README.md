@@ -5,7 +5,8 @@ scores in `metrics.json`, and the twin checks in `twins/*.report.json`.
 
 ## Folder names
 
-`<dataset>-<model>[-r16][-logits]-s<seed>`, for example `cebab-cbm-r16-logits-s0`.
+`<dataset>-<model>[-r16][-logits][-lr<lr>-p<patience>]-s<seed>`, for example
+`cebab-cbm-r16-logits-lr0.001-p8-s0`.
 
 | Part | Meaning |
 |---|---|
@@ -14,6 +15,9 @@ scores in `metrics.json`, and the twin checks in `twins/*.report.json`.
 | `cem` | Concept Embedding Model: each concept is a vector of 16 numbers instead of one |
 | `-r16` | the CBM also has 16 extra "free" numbers (the residual) that are never compared to any label |
 | `-logits` | the CBM's final layer reads the raw concept scores instead of probabilities (needed for the twin's `mix` option) |
+| `pyc-cbm`, `pyc-cem`, `pyc-hyper` | models built from PyC (pytorch-concepts) layers, see the main README |
+| `-lr0.001-p8` | starting learning rate 0.001, patience 8: after 8 epochs without improvement the learning rate is lowered (×0.3) and training continues, until it would go below 1e-5 |
+| no `-lr…-p…` | the first runs: learning rate 0.001, training **stopped** after 8 epochs without improvement |
 | `-s0` | random seed 0 |
 
 There are 4 models per dataset, from the most constrained to the most free:
@@ -43,8 +47,9 @@ The file has four parts:
 - `args`: the options used to train the model
 - `config`: the model's size (number of concepts, classes, layers)
 - `metrics`: the scores (below)
-- `history`: the validation loss after each training pass ("epoch"). Lower is better. Training
-  stops automatically when it stops improving.
+- `history`: the validation loss and learning rate (`lr`) after each training pass ("epoch").
+  Lower loss is better. In the `-lr…-p…` runs the learning rate drops each time the loss stops
+  improving, so you can see in `lr` how many times it was lowered.
 
 `metrics` has scores for the `val` split (used to decide when to stop training) and the
 `test` split (never seen during training). **Report the `test` numbers.**
@@ -122,9 +127,26 @@ What we found: for the **CEM** twins, agreement is 1.0, so interventions are foo
 interventions catch the twin. The mixing hid a copy of the concepts in the residual, and
 that copy is not corrected.
 
+## `semantics-test.json` (PyC models only): what does each concept do?
+
+Written by `python semantics.py runs/<run>`.
+
+| Field | Meaning |
+|---|---|
+| `concepts` | per concept: `auc`, `base_rate` (share of texts where it is on), `mean_prob` |
+| `cace` | per concept and answer: probability of that answer when the concept is forced on, minus when forced off, averaged over texts. Positive = the concept pushes towards that answer. |
+| `weights` | `pyc-cbm`: the concept → answer weights. `pyc-hyper`: their average over texts (`weights_std_over_texts`: how much they vary from text to text) |
+| `ncc` | how many concepts are needed to explain 95% of a decision (`null` for `pyc-cem`) |
+| `interventions` | task accuracy when the `n` least certain (`uncertainty`) or `n` random concepts are replaced by the human labels |
+
 ## Rebuilding these files
 
 ```bash
-python train.py --dataset cebab --model cem      # -> runs/cebab-cem-s0/metrics.json
-python twin.py runs/cebab-cem-s0                 # -> runs/cebab-cem-s0/twins/*.report.json
+python train.py --dataset cebab --model cem      # -> runs/cebab-cem-lr0.001-p8-s0/metrics.json
+python twin.py runs/cebab-cem-lr0.001-p8-s0      # -> runs/cebab-cem-lr0.001-p8-s0/twins/*.report.json
+python train.py --dataset cebab --model pyc-cem  # -> runs/cebab-pyc-cem-lr0.001-p8-s0/metrics.json
+python semantics.py runs/cebab-pyc-cem-lr0.001-p8-s0   # -> .../semantics-test.json
+
+# the first runs (stop at the first plateau, at most 60 epochs; 100 for imdb_cad):
+python train.py --dataset cebab --model cem --lr_factor 0 --epochs 60 --name cebab-cem-s0
 ```

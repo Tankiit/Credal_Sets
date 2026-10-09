@@ -1,0 +1,246 @@
+{
+  "run": "imdb_cad-pyc-cbm-lr0.001-p8-s0",
+  "kind": "pyc-cbm",
+  "split": "test",
+  "concept_names": [
+    "acting_pos",
+    "acting_neg",
+    "storyline_pos",
+    "storyline_neg",
+    "emotional_arousal_pos",
+    "emotional_arousal_neg",
+    "cinematography_pos",
+    "cinematography_neg",
+    "soundtrack_pos",
+    "soundtrack_neg",
+    "directing_pos",
+    "directing_neg",
+    "background_setting_pos",
+    "background_setting_neg",
+    "editing_pos",
+    "editing_neg"
+  ],
+  "class_names": [
+    "negative",
+    "positive"
+  ],
+  "task_acc": 0.8940000534057617,
+  "concepts": {
+    "acting_pos": {
+      "base_rate": 0.3540000021457672,
+      "mean_prob": 0.3793584108352661,
+      "auc": 0.8933725140368368
+    },
+    "acting_neg": {
+      "base_rate": 0.23199999332427979,
+      "mean_prob": 0.21969598531723022,
+      "auc": 0.8816226652298851
+    },
+    "storyline_pos": {
+      "base_rate": 0.38999998569488525,
+      "mean_prob": 0.3941447138786316,
+      "auc": 0.9283228247162673
+    },
+    "storyline_neg": {
+      "base_rate": 0.40400001406669617,
+      "mean_prob": 0.41162434220314026,
+      "auc": 0.9150109641836667
+    },
+    "emotional_arousal_pos": {
+      "base_rate": 0.35600000619888306,
+      "mean_prob": 0.37801995873451233,
+      "auc": 0.9114732360946333
+    },
+    "emotional_arousal_neg": {
+      "base_rate": 0.3580000102519989,
+      "mean_prob": 0.374798983335495,
+      "auc": 0.948206547277189
+    },
+    "cinematography_pos": {
+      "base_rate": 0.13199999928474426,
+      "mean_prob": 0.15601614117622375,
+      "auc": 0.8747032537355118
+    },
+    "cinematography_neg": {
+      "base_rate": 0.04800000041723251,
+      "mean_prob": 0.052117202430963516,
+      "auc": 0.8502275910364145
+    },
+    "soundtrack_pos": {
+      "base_rate": 0.09000000357627869,
+      "mean_prob": 0.10932989418506622,
+      "auc": 0.8053724053724054
+    },
+    "soundtrack_neg": {
+      "base_rate": 0.04600000008940697,
+      "mean_prob": 0.0377848781645298,
+      "auc": 0.832923161060979
+    },
+    "directing_pos": {
+      "base_rate": 0.25,
+      "mean_prob": 0.2774827480316162,
+      "auc": 0.8953386666666666
+    },
+    "directing_neg": {
+      "base_rate": 0.1899999976158142,
+      "mean_prob": 0.1873517781496048,
+      "auc": 0.8930214424951268
+    },
+    "background_setting_pos": {
+      "base_rate": 0.14399999380111694,
+      "mean_prob": 0.19120435416698456,
+      "auc": 0.7914070612668743
+    },
+    "background_setting_neg": {
+      "base_rate": 0.10599999874830246,
+      "mean_prob": 0.0888710618019104,
+      "auc": 0.7314592039170993
+    },
+    "editing_pos": {
+      "base_rate": 0.07999999821186066,
+      "mean_prob": 0.07752525061368942,
+      "auc": 0.8389130434782608
+    },
+    "editing_neg": {
+      "base_rate": 0.10999999940395355,
+      "mean_prob": 0.10915568470954895,
+      "auc": 0.8576915219611848
+    }
+  },
+  "cace": {
+    "acting_pos": {
+      "negative": -0.08330285549163818,
+      "positive": 0.08330294489860535
+    },
+    "acting_neg": {
+      "negative": 0.07547008991241455,
+      "positive": -0.07547000050544739
+    },
+    "storyline_pos": {
+      "negative": -0.04400858283042908,
+      "positive": 0.04400858283042908
+    },
+    "storyline_neg": {
+      "negative": 0.08113762736320496,
+      "positive": -0.08113759756088257
+    },
+    "emotional_arousal_pos": {
+      "negative": -0.1460743546485901,
+      "positive": 0.14607447385787964
+    },
+    "emotional_arousal_neg": {
+      "negative": 0.1455923616886139,
+      "positive": -0.14559245109558105
+    },
+    "cinematography_pos": {
+      "negative": -0.10741615295410156,
+      "positive": 0.10741609334945679
+    },
+    "cinematography_neg": {
+      "negative": 0.09072282910346985,
+      "positive": -0.09072276949882507
+    },
+    "soundtrack_pos": {
+      "negative": -0.05258834362030029,
+      "positive": 0.05258828401565552
+    },
+    "soundtrack_neg": {
+      "negative": 0.09074443578720093,
+      "positive": -0.09074440598487854
+    },
+    "directing_pos": {
+      "negative": -0.06702971458435059,
+      "positive": 0.06702971458435059
+    },
+    "directing_neg": {
+      "negative": 0.07421371340751648,
+      "positive": -0.07421368360519409
+    },
+    "background_setting_pos": {
+      "negative": -0.06580385565757751,
+      "positive": 0.06580391526222229
+    },
+    "background_setting_neg": {
+      "negative": 0.03145572543144226,
+      "positive": -0.03145572543144226
+    },
+    "editing_pos": {
+      "negative": -0.05828374624252319,
+      "positive": 0.05828380584716797
+    },
+    "editing_neg": {
+      "negative": 0.09413444995880127,
+      "positive": -0.09413444995880127
+    }
+  },
+  "weights": {
+    "negative": {
+      "acting_pos": -0.4651077687740326,
+      "acting_neg": 0.16024497151374817,
+      "storyline_pos": -0.04890536144375801,
+      "storyline_neg": 0.4822131097316742,
+      "emotional_arousal_pos": -0.5064113140106201,
+      "emotional_arousal_neg": 0.5546769499778748,
+      "cinematography_pos": -0.37691202759742737,
+      "cinematography_neg": 0.4422416687011719,
+      "soundtrack_pos": -0.10740958154201508,
+      "soundtrack_neg": 0.28485649824142456,
+      "directing_pos": -0.2752886712551117,
+      "directing_neg": 0.05368059128522873,
+      "background_setting_pos": -0.265261173248291,
+      "background_setting_neg": 0.1651483178138733,
+      "editing_pos": -0.014211395755410194,
+      "editing_neg": 0.2854928970336914
+    },
+    "positive": {
+      "acting_pos": 0.13954196870326996,
+      "acting_neg": -0.40259629487991333,
+      "storyline_pos": 0.2799789607524872,
+      "storyline_neg": -0.0931984931230545,
+      "emotional_arousal_pos": 0.4781869947910309,
+      "emotional_arousal_neg": -0.41429057717323303,
+      "cinematography_pos": 0.44617223739624023,
+      "cinematography_neg": -0.2561038136482239,
+      "soundtrack_pos": 0.30396783351898193,
+      "soundtrack_neg": -0.4163065552711487,
+      "directing_pos": 0.22716177999973297,
+      "directing_neg": -0.5028637051582336,
+      "background_setting_pos": 0.2389754056930542,
+      "background_setting_neg": -0.0804796814918518,
+      "editing_pos": 0.44303351640701294,
+      "editing_neg": -0.42752012610435486
+    }
+  },
+  "ncc": {
+    "all_classes": 7.759000301361084,
+    "predicted_class": 7.9120001792907715
+  },
+  "interventions": {
+    "n_concepts_replaced": [
+      0,
+      1,
+      4,
+      8,
+      12,
+      16
+    ],
+    "task_acc": {
+      "uncertainty": {
+        "0": 0.8940000534057617,
+        "1": 0.8940000534057617,
+        "4": 0.9120000600814819,
+        "8": 0.9260000586509705,
+        "12": 0.9200000166893005,
+        "16": 0.9140000343322754
+      },
+      "random": {
+        "0": 0.8940000534057617,
+        "1": 0.8960000276565552,
+        "4": 0.9140000343322754,
+        "8": 0.906000018119812,
+        "12": 0.9100000262260437,
+        "16": 0.9140000343322754
+      }
+    }
+  }
+}

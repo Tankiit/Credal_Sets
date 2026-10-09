@@ -1,0 +1,206 @@
+
+Model: goemotions-cbm-r16-lr0.001-p8-s0   dataset: goemotions   split: val
+
+====================================================================================================
+Example #3155
+  Text: That sounds great, I *love* Rogue One. It's also the movie that's perfectly safe for TLJ fans to despise.
+  True answer: positive   Model's answer: positive (85% sure)   ✓ correct
+  All answers: positive 85%  negative 4%  ambiguous 1%  neutral 10%
+
+  concept               human label  model thinks                      push towards 'positive'
+  approval              no           ███████·············   33%        +0.03
+  neutral               no           ████················   21%        -0.03
+  optimism              no           ██··················   11%        +0.02
+  disapproval           no           ██··················   11%        -0.01
+  desire                no           █···················    4%        +0.01
+  amusement             no           ····················    2%        +0.00
+  admiration            yes          ███·················   16%        -0.00  ← disagrees with human
+  excitement            no           █···················    3%        -0.00
+  (residual: 16 unlabelled numbers)                                     +2.44
+  (other concepts)                                                      +0.00
+  (constant, same for every text)                                       +0.02
+  TOTAL lead of 'positive' over the average answer                      +2.48
+
+====================================================================================================
+Example #3445
+  Text: What a good pupper
+  True answer: positive   Model's answer: positive (95% sure)   ✓ correct
+  All answers: positive 95%  negative 0%  ambiguous 0%  neutral 4%
+
+  concept               human label  model thinks                      push towards 'positive'
+  admiration            yes          ███████████████████·   95%        -0.02
+  neutral               no           ██··················    9%        -0.01
+  pride                 no           ····················    1%        +0.00
+  approval              no           ····················    2%        +0.00
+  optimism              no           ····················    1%        +0.00
+  love                  no           █···················    7%        +0.00
+  excitement            no           ····················    1%        -0.00
+  surprise              no           ····················    1%        -0.00
+  (residual: 16 unlabelled numbers)                                     +3.54
+  (other concepts)                                                      +0.00
+  (constant, same for every text)                                       +0.02
+  TOTAL lead of 'positive' over the average answer                      +3.53
+
+====================================================================================================
+Example #331
+  Text: Lol it was worse for them last year
+  True answer: positive   Model's answer: negative (69% sure)   ✗ wrong
+  All answers: positive 17%  negative 69%  ambiguous 1%  neutral 12%
+
+  concept               human label  model thinks                      push towards 'negative'
+  amusement             yes          ████················   21%        -0.02  ← disagrees with human
+  neutral               no           ███·················   14%        +0.01
+  disgust               no           ███·················   14%        -0.01
+  annoyance             no           ██··················   10%        +0.01
+  disappointment        no           ███·················   15%        -0.00
+  embarrassment         no           █···················    3%        -0.00
+  approval              no           ····················    1%        -0.00
+  anger                 no           ····················    2%        +0.00
+  (residual: 16 unlabelled numbers)                                     +1.90
+  (other concepts)                                                      +0.00
+  (constant, same for every text)                                       -0.03
+  TOTAL lead of 'negative' over the average answer                      +1.85
+
+====================================================================================================
+Example #2121
+  Text: It’s neither. It’s an acrostic, lol.
+  True answer: neutral   Model's answer: positive (43% sure)   ✗ wrong
+  All answers: positive 43%  negative 13%  ambiguous 12%  neutral 32%
+
+  concept               human label  model thinks                      push towards 'positive'
+  amusement             no           ███████·············   34%        +0.08
+  neutral               yes          ██████··············   28%        -0.04  ← disagrees with human
+  confusion             no           ██··················   10%        +0.01
+  approval              no           █···················    7%        +0.01
+  disapproval           no           █···················    6%        -0.01
+  annoyance             no           █···················    3%        -0.00
+  realization           no           ····················    2%        +0.00
+  curiosity             no           █···················    4%        +0.00
+  (residual: 16 unlabelled numbers)                                     +0.62
+  (other concepts)                                                      +0.00
+  (constant, same for every text)                                       +0.02
+  TOTAL lead of 'positive' over the average answer                      +0.69
+
+====================================================================================================
+Example #4188
+  Text: Who still unironically says SJWs? You look like an idiot saying that.
+  True answer: negative   Model's answer: negative (45% sure)   ✓ correct
+  All answers: positive 2%  negative 45%  ambiguous 14%  neutral 39%
+
+  concept               human label  model thinks                      push towards 'negative'
+  neutral               no           ███████████·········   53%        +0.05  ← disagrees with human
+  annoyance             yes          █████···············   27%        +0.02  ← disagrees with human
+  anger                 no           ███·················   14%        +0.01
+  confusion             no           █···················    6%        +0.00
+  approval              no           ····················    2%        -0.00
+  curiosity             no           ██··················    9%        +0.00
+  realization           no           ····················    2%        -0.00
+  disgust               no           ····················    2%        -0.00
+  (residual: 16 unlabelled numbers)                                     +1.05
+  (other concepts)                                                      -0.00
+  (constant, same for every text)                                       -0.03
+  TOTAL lead of 'negative' over the average answer                      +1.09
+
+====================================================================================================
+Example #3980
+  Text: Lip injections only cost $700 and I saved up for months. But I’m broke currently
+  True answer: negative   Model's answer: negative (39% sure)   ✓ correct
+  All answers: positive 19%  negative 39%  ambiguous 9%  neutral 33%
+
+  concept               human label  model thinks                      push towards 'negative'
+  neutral               no           ███████·············   35%        +0.03
+  approval              no           █···················    3%        -0.00
+  admiration            no           █···················    3%        -0.00
+  caring                no           ····················    2%        +0.00
+  disappointment        yes          █···················    5%        -0.00  ← disagrees with human
+  realization           no           ····················    2%        -0.00
+  annoyance             no           ····················    2%        +0.00
+  amusement             no           ····················    1%        -0.00
+  (residual: 16 unlabelled numbers)                                     +0.59
+  (other concepts)                                                      +0.00
+  (constant, same for every text)                                       -0.03
+  TOTAL lead of 'negative' over the average answer                      +0.58
+
+====================================================================================================
+Example #3317
+  Text: Right. Lol Then they try to gaslight the audience. As if we cant pause and rewind.
+  True answer: positive   Model's answer: positive (76% sure)   ✓ correct
+  All answers: positive 76%  negative 6%  ambiguous 0%  neutral 18%
+
+  concept               human label  model thinks                      push towards 'positive'
+  amusement             yes          █████···············   25%        +0.06  ← disagrees with human
+  neutral               no           ███████·············   33%        -0.05
+  approval              no           ████················   20%        +0.02
+  realization           no           █···················    5%        +0.00
+  annoyance             no           █···················    7%        -0.00
+  disapproval           no           ····················    2%        -0.00
+  optimism              no           ····················    1%        +0.00
+  admiration            no           █···················    4%        -0.00
+  (residual: 16 unlabelled numbers)                                     +2.21
+  (other concepts)                                                      +0.00
+  (constant, same for every text)                                       +0.02
+  TOTAL lead of 'positive' over the average answer                      +2.26
+
+====================================================================================================
+Example #2484
+  Text: damn, Now THAT's detail.
+  True answer: neutral   Model's answer: neutral (59% sure)   ✓ correct
+  All answers: positive 7%  negative 19%  ambiguous 16%  neutral 59%
+
+  concept               human label  model thinks                      push towards 'neutral'
+  surprise              no           ██··················    8%        +0.01
+  admiration            no           █···················    5%        +0.01
+  anger                 no           █···················    5%        -0.00
+  neutral               yes          ████████████········   58%        -0.00
+  approval              no           █···················    4%        -0.00
+  curiosity             no           █···················    3%        -0.00
+  disappointment        no           ····················    2%        +0.00
+  disgust               no           ····················    1%        +0.00
+  (residual: 16 unlabelled numbers)                                     +1.13
+  (other concepts)                                                      -0.00
+  (constant, same for every text)                                       +0.02
+  TOTAL lead of 'neutral' over the average answer                       +1.14
+
+====================================================================================================
+Example #3904
+  Text: Lead is probably 5-7 points, similar to 2018. The race was closer than expected, so there’s no reason to lose hope.
+  True answer: positive   Model's answer: positive (46% sure)   ✓ correct
+  All answers: positive 46%  negative 19%  ambiguous 10%  neutral 24%
+
+  concept               human label  model thinks                      push towards 'positive'
+  optimism              yes          ██████··············   32%        +0.06  ← disagrees with human
+  neutral               no           ████················   20%        -0.03
+  approval              yes          ██··················    9%        +0.01  ← disagrees with human
+  disapproval           no           █···················    4%        -0.00
+  disappointment        no           █···················    6%        +0.00
+  confusion             no           █···················    3%        +0.00
+  desire                no           ····················    2%        +0.00
+  caring                no           █···················    4%        +0.00
+  (residual: 16 unlabelled numbers)                                     +0.69
+  (other concepts)                                                      +0.00
+  (constant, same for every text)                                       +0.02
+  TOTAL lead of 'positive' over the average answer                      +0.76
+
+====================================================================================================
+Example #2933
+  Text: And that is exactly why I never got that shit done, even though it interests me greatly.
+  True answer: positive   Model's answer: positive (33% sure)   ✓ correct
+  All answers: positive 33%  negative 28%  ambiguous 6%  neutral 32%
+
+  concept               human label  model thinks                      push towards 'positive'
+  neutral               no           ██████··············   29%        -0.04
+  approval              yes          ████················   19%        +0.02  ← disagrees with human
+  disapproval           no           ███·················   17%        -0.01
+  optimism              no           █···················    6%        +0.01
+  annoyance             no           ██··················   11%        -0.01
+  disappointment        no           ██··················   10%        +0.00
+  realization           no           █···················    3%        +0.00
+  amusement             no           ····················    1%        +0.00
+  (residual: 16 unlabelled numbers)                                     +0.47
+  (other concepts)                                                      +0.00
+  (constant, same for every text)                                       +0.02
+  TOTAL lead of 'positive' over the average answer                      +0.48
+
+====================================================================================================
+8/10 of these examples answered correctly.
+

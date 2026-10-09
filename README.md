@@ -4,7 +4,9 @@ A concept model compares its concept layer `z` to the concept labels only throug
 `R`. Anything `R` cannot see is not pinned down by training. This repo:
 
 1. downloads 4 text datasets with concept annotations into one common format,
-2. trains **CBM** and **CEM** models on them,
+2. trains **CBM** and **CEM** models on them, plus three models built from the
+   [PyC](https://pytorch-concepts.readthedocs.io/en/latest/guides/using_low_level.html)
+   low-level API (`pyc-cbm`, `pyc-cem`, `pyc-hyper`),
 3. builds the **twin** of a trained model: `z` moved along directions `R` ignores, head
    compensated. The task logits and concept probabilities stay identical (up to float
    precision) while the internals change. The twin is then ready for any diagnostic.
@@ -21,8 +23,8 @@ pip install -r requirements.txt
 
 ```bash
 python download.py all                         # -> data/<dataset>/{train,val,test}.jsonl + meta.json
-python train.py --dataset cebab --model cem    # -> runs/cebab-cem-s0/{model.pt,metrics.json}
-python twin.py runs/cebab-cem-s0               # -> runs/cebab-cem-s0/twins/<tag>.pt + report.json
+python train.py --dataset cebab --model cem    # -> runs/cebab-cem-lr0.001-p8-s0/{model.pt,metrics.json}
+python twin.py runs/cebab-cem-lr0.001-p8-s0    # -> runs/cebab-cem-lr0.001-p8-s0/twins/<tag>.pt + report.json
 ```
 
 The first `train.py` call on a dataset embeds the texts with a frozen encoder and caches
@@ -34,6 +36,14 @@ To see how a model reasons on individual examples:
 python explain.py runs/cebab-cbm-s0            # -> per-concept breakdown of 10 validation examples
 ```
 
+For the PyC models, the concept-level read-out (CaCE per concept, concept -> answer weights,
+NCC, intervention curves by policy), all computed with PyC tools:
+
+```bash
+python train.py --dataset cebab --model pyc-cem
+python semantics.py runs/cebab-pyc-cem-lr0.001-p8-s0   # -> runs/<run>/semantics-test.json
+```
+
 How to read the outputs: [runs/README.md](runs/README.md) (scores and twin reports) and
 [explanations/README.md](explanations/README.md) (per-example explanations).
 
@@ -41,9 +51,10 @@ How to read the outputs: [runs/README.md](runs/README.md) (scores and twin repor
 
 ```
 download.py                 CLI: download + standardize datasets
-train.py                    CLI: train a CBM / CEM
+train.py                    CLI: train a CBM / CEM / PyC model
 twin.py                     CLI: build + verify the twin of a trained model
 explain.py                  CLI: per-concept breakdown of a model's answers
+semantics.py                CLI: concept-level read-out of a PyC model, with PyC tools
 runs/                       trained models, scores, twins (guide: runs/README.md)
 explanations/               explain.py outputs (guide: explanations/README.md)
 concept_datasets/           one file per dataset, each with download()
@@ -51,6 +62,7 @@ concept_datasets/           one file per dataset, each with download()
     _common.py              common on-disk format (documented there)
 concept_models/
     models.py               CBM, CEM (concept layer z, readout R, head)
+    pyc_models.py           pyc-cbm, pyc-cem, pyc-hyper (PyC low-level layers)
     reparam.py              the construction (invisible_map, make_twin)
     features.py             frozen-encoder features + cache
     training.py             joint training, evaluation
@@ -105,6 +117,27 @@ Model options:
   logits into the residual.
 - **Training:** joint, `task CE + concept_weight · concept BCE`, with `concept_weight = 5`
   by default. CEM uses random interventions during training (`--p_int 0.25`).
+- **Learning rate:** starts at `--lr` (1e-3). When the validation loss has not improved for
+  `--patience` (8) epochs, the best weights are restored and the learning rate is multiplied
+  by `--lr_factor` (0.3); training stops when the next rate would be below `--min_lr` (1e-5),
+  or after `--epochs` (300). `--lr_factor 0` stops at the first plateau, which is how the
+  runs without `-lr…-p…` in their name were trained (patience 8, at most 60 / 100 epochs).
+
+### PyC models (`concept_models/pyc_models.py`)
+
+Built from PyC low-level layers (`pytorch-concepts==1.0.0a5`), on the same trunk and with
+the same training and evaluation. Concepts are named with PyC `Annotations`
+(`model.annotate(out["concept_probs"])["food_pos"]`).
+
+| `--model` | concept encoder | task predictor |
+|---|---|---|
+| `pyc-cbm` | `LinearEmbeddingToConcept` | `LinearConceptToConcept` on concept probs (same function class as `cbm`: a cross-check) |
+| `pyc-cem` | `LinearEmbeddingEncoder` (one embedding per concept) → shared `LinearEmbeddingToConcept` | `MixConceptEmbeddingToConcept`: `c±` from a Linear + LeakyReLU of the embedding, mixed by `p` |
+| `pyc-hyper` | `LinearEmbeddingToConcept` | `HyperlinearConceptEmbeddingToConcept`: per-text concept weights `W(x)` from class embeddings, `logits = W(x) p + b` |
+
+`pyc-cem` differs from `cem`: the concept is read from one embedding rather than from
+`[c+; c-]`, and `c±` come out of a nonlinearity. The PyC models have no `readout_blocks`, so
+`twin.py` does not apply to them.
 - **Head:** `--head linear` (default) or `mlp`.
 
 ## The construction (`concept_models/reparam.py`)

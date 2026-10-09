@@ -7,6 +7,13 @@ how much each concept pushed it towards its answer.
 The file name is the model's name, for example `cebab-cbm-s0.txt` is the plain CBM on
 CEBaB. See [runs/README.md](../runs/README.md) for what the names mean.
 
+There are two generations of files, on the **same 10 examples** per dataset, so they can be
+compared side by side:
+
+- `<dataset>-<model>-s0.txt`: the first runs (training stopped at the first plateau).
+- `<dataset>-<model>-lr0.001-p8-s0.txt`: the runs where the learning rate is lowered at each
+  plateau, including the three PyC models (`pyc-cbm`, `pyc-cem`, `pyc-hyper`).
+
 ## One example, explained
 
 ```
@@ -65,6 +72,13 @@ concept explanation is mostly decoration.
 a concept can push even when it is *absent*. For example, "food is NOT bad" can push towards
 5 stars. The numbers are correct but less intuitive than in a CBM.
 
+**PyC files.** `pyc-cbm` reads like a CBM (and gives the same numbers as `cbm`).
+`pyc-cem` reads like a CEM: a concept can push even when it is absent. In `pyc-hyper`, the
+weight of each concept is **recomputed for every text**, so the pushes of one example
+cannot be carried over to another, and absent concepts often push towards the chosen
+answer too (a 7% concept times a large weight). For what a concept does on average over
+all texts, see `semantics-test.json` in the run folder (`cace`, `weights`).
+
 **Datasets with many concepts.** For GoEmotions (28) and IMDB (16), only the 8 concepts with
 the largest push are listed. The rest are summed into `(other concepts)`.
 
@@ -76,6 +90,7 @@ python explain.py runs/cebab-cbm-s0 --n 20 --seed 1          # 20 other examples
 python explain.py runs/cebab-cbm-s0 --ids 829 1047           # specific examples
 python explain.py runs/goemotions-cem-s0 --top 6             # only the 6 strongest concepts
 python explain.py runs/cebab-cbm-s0 > explanations/cebab-cbm-s0.txt   # save to a file
+python explain.py runs/cebab-pyc-hyper-lr0.001-p8-s0                  # works for PyC models too
 ```
 
 The same `--seed` gives the same examples for every model on a dataset, so the files can be

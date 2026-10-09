@@ -164,6 +164,9 @@ MODELS = {"cbm": CBM, "cem": CEM}
 
 
 def build_model(config: dict) -> ConceptModel:
+    if config["kind"].startswith("pyc-"):  # imported lazily: needs pytorch-concepts
+        from .pyc_models import PYC_MODELS
+        return PYC_MODELS[config["kind"]](config)
     return MODELS[config["kind"]](config)
 
 

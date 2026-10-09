@@ -17,9 +17,16 @@ def loss_fn(out, y, c_target, concept_weight):
 
 
 def fit(model: ConceptModel, train: dict, val: dict, concept_weight: float = 1.0,
-        epochs: int = 60, lr: float = 1e-3, weight_decay: float = 1e-4, batch_size: int = 256,
-        patience: int = 8, soft_concepts: bool = False, device: str = "cuda", seed: int = 0):
-    """Train with early stopping on the validation joint loss; returns the history."""
+        epochs: int = 300, lr: float = 1e-3, weight_decay: float = 1e-4, batch_size: int = 256,
+        patience: int = 8, lr_factor: float = 0.3, min_lr: float = 1e-5,
+        soft_concepts: bool = False, device: str = "cuda", seed: int = 0):
+    """Train on the validation joint loss; returns the history.
+
+    Whenever the loss has not improved for ``patience`` epochs, the best weights so far are
+    restored and the learning rate is multiplied by ``lr_factor``; training goes on until the
+    next drop would go below ``min_lr`` (or ``epochs`` is reached).  ``lr_factor = 0`` gives
+    plain early stopping (stop at the first plateau), as in the first runs.
+    """
     if device == "cuda" and not torch.cuda.is_available():
         device = "mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu"
     torch.manual_seed(seed)
@@ -30,6 +37,7 @@ def fit(model: ConceptModel, train: dict, val: dict, concept_weight: float = 1.0
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     best, best_state, bad, history = float("inf"), None, 0, []
     for epoch in range(epochs):
+        cur_lr = opt.param_groups[0]["lr"]
         model.train()
         for idx in torch.randperm(len(X), device=device).split(batch_size):
             loss, _, _ = loss_fn(model(X[idx], C[idx]), y[idx], C[idx], concept_weight)
@@ -39,14 +47,24 @@ def fit(model: ConceptModel, train: dict, val: dict, concept_weight: float = 1.0
         model.eval()
         with torch.no_grad():
             vloss, vtask, vconcept = (v.item() for v in loss_fn(model(Xv), yv, Cv, concept_weight))
-        history.append({"epoch": epoch, "val_loss": vloss, "val_task": vtask, "val_concept": vconcept})
-        print(f"  epoch {epoch:3d}  val loss {vloss:.4f} (task {vtask:.4f}, concept {vconcept:.4f})")
+        history.append({"epoch": epoch, "lr": cur_lr, "val_loss": vloss, "val_task": vtask,
+                        "val_concept": vconcept})
+        print(f"  epoch {epoch:3d}  lr {cur_lr:.1e}  val loss {vloss:.4f} "
+              f"(task {vtask:.4f}, concept {vconcept:.4f})")
         if vloss < best - 1e-4:
             best, best_state, bad = vloss, copy.deepcopy(model.state_dict()), 0
         else:
             bad += 1
             if bad >= patience:
-                break
+                new_lr = cur_lr * lr_factor
+                if new_lr < min_lr * (1 - 1e-6):
+                    break
+                model.load_state_dict(best_state)
+                for group in opt.param_groups:
+                    group["lr"] = new_lr
+                bad = 0
+                print(f"  -> no improvement for {patience} epochs: back to the best weights, "
+                      f"lr {cur_lr:.1e} -> {new_lr:.1e}")
     model.load_state_dict(best_state)
     model.eval()
     if hasattr(model, "calibrate_interventions"):
