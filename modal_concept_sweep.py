@@ -20,7 +20,7 @@ import modal
 
 APP_NAME = "credal-concept-sweep"
 DATASETS = ("cebab", "goemotions", "civil_comments", "imdb_cad")
-ARCHITECTURES = ("cbm", "cem")
+ARCHITECTURES = ("cbm", "residual-cbm", "cem")
 SEEDS = (0, 1, 2)
 REMOTE_ROOT = "/root/credal-sets"
 
@@ -32,7 +32,7 @@ image = (
     .pip_install(
         "torch>=2.4,<3", "transformers>=4.44,<5", "datasets>=3,<5",
         "huggingface_hub", "numpy>=1.26,<3", "pandas>=2.2", "scikit-learn>=1.4",
-        "tensorboard>=2.18", "tqdm", "sentencepiece", "protobuf",
+        "tensorboard>=2.18", "torch-concepts==1.0.0a5", "tqdm", "sentencepiece", "protobuf",
     )
     .add_local_dir("concept_models", remote_path=f"{REMOTE_ROOT}/concept_models")
     .add_local_dir("concept_datasets", remote_path=f"{REMOTE_ROOT}/concept_datasets")
@@ -66,13 +66,13 @@ def prepare_dataset(dataset: str, embed_batch_size: int = 128) -> dict:
 
 @app.function(**COMMON)
 def train_one(dataset: str, architecture: str, seed: int, epochs: int = 50,
-              learning_rate: float = 1e-3) -> dict:
-    if dataset not in DATASETS or architecture not in ARCHITECTURES or seed not in SEEDS:
-        raise ValueError("Unsupported dataset, architecture, or seed")
+              learning_rate: float = 1e-3, backend: str = "torch") -> dict:
+    if dataset not in DATASETS or architecture not in ARCHITECTURES or seed not in SEEDS or backend not in {"torch", "torch-concepts"}:
+        raise ValueError("Unsupported dataset, architecture, seed, or backend")
     data = f"/artifacts/prepared/{dataset}"
     if not all((Path(data) / f"{split}.pt").exists() for split in ("train", "val", "test")):
         raise FileNotFoundError(f"Prepared data missing for {dataset}; run prepare_dataset first.")
-    name = f"{dataset}-{architecture}-s{seed}"
+    name = f"{dataset}-{architecture}-{backend}-s{seed}"
     out = f"/artifacts/runs/{name}"
     metrics = Path(out) / "metrics.json"
     if not metrics.exists():
@@ -80,7 +80,7 @@ def train_one(dataset: str, architecture: str, seed: int, epochs: int = 50,
             sys.executable, "train_concept_models.py", "train", "--data", data,
             "--arch", architecture, "--out", out, "--epochs", str(epochs),
             "--patience", str(epochs), "--lr", str(learning_rate), "--batch-size", "256",
-            "--seed", str(seed), "--device", "cuda",
+            "--seed", str(seed), "--backend", backend, "--device", "cuda",
             "--tensorboard-dir", f"/artifacts/tensorboard/{name}",
         ])
         results.commit()
@@ -95,4 +95,14 @@ def sweep(epochs: int = 50, learning_rate: float = 1e-3) -> None:
         for architecture in ARCHITECTURES:
             for seed in SEEDS:
                 print(train_one.remote(dataset, architecture, seed, epochs, learning_rate))
+
+
+@app.local_entrypoint()
+def sweep_torch_concepts(epochs: int = 50, learning_rate: float = 1e-3) -> None:
+    """Compare vanilla and residual CBMs through Torch Concepts' low-level layers."""
+    for dataset in DATASETS:
+        print(prepare_dataset.remote(dataset))
+        for architecture in ("cbm", "residual-cbm"):
+            for seed in SEEDS:
+                print(train_one.remote(dataset, architecture, seed, epochs, learning_rate, "torch-concepts"))
 
