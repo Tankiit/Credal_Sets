@@ -1,0 +1,144 @@
+{
+  "run": "civil_comments-pyc-hyper-lr0.001-p8-s2",
+  "kind": "pyc-hyper",
+  "split": "test",
+  "concept_names": [
+    "severe_toxicity",
+    "obscene",
+    "threat",
+    "insult",
+    "identity_attack",
+    "sexual_explicit"
+  ],
+  "class_names": [
+    "non_toxic",
+    "toxic"
+  ],
+  "task_acc": 0.7824999690055847,
+  "concepts": {
+    "severe_toxicity": {
+      "base_rate": 0.012799999676644802,
+      "mean_prob": 0.013383413664996624,
+      "auc": 0.7265672482779579
+    },
+    "obscene": {
+      "base_rate": 0.1023000031709671,
+      "mean_prob": 0.11329268664121628,
+      "auc": 0.7600962098099945
+    },
+    "threat": {
+      "base_rate": 0.04490000009536743,
+      "mean_prob": 0.047981806099414825,
+      "auc": 0.9071894895974
+    },
+    "insult": {
+      "base_rate": 0.5209000110626221,
+      "mean_prob": 0.5157964825630188,
+      "auc": 0.8762912310906108
+    },
+    "identity_attack": {
+      "base_rate": 0.125900000333786,
+      "mean_prob": 0.12906904518604279,
+      "auc": 0.9036646703169737
+    },
+    "sexual_explicit": {
+      "base_rate": 0.03999999910593033,
+      "mean_prob": 0.044494885951280594,
+      "auc": 0.8809572916666666
+    }
+  },
+  "cace": {
+    "severe_toxicity": {
+      "non_toxic": -0.07896173000335693,
+      "toxic": 0.07896178960800171
+    },
+    "obscene": {
+      "non_toxic": 0.011813342571258545,
+      "toxic": -0.011813312768936157
+    },
+    "threat": {
+      "non_toxic": -0.08769124746322632,
+      "toxic": 0.08769121766090393
+    },
+    "insult": {
+      "non_toxic": -0.018659472465515137,
+      "toxic": 0.018659472465515137
+    },
+    "identity_attack": {
+      "non_toxic": -0.0681728720664978,
+      "toxic": 0.06817296147346497
+    },
+    "sexual_explicit": {
+      "non_toxic": -0.04947051405906677,
+      "toxic": 0.049470454454422
+    }
+  },
+  "weights": {
+    "non_toxic": {
+      "severe_toxicity": 2.192221164703369,
+      "obscene": 4.783959865570068,
+      "threat": 0.740325391292572,
+      "insult": 0.4993361234664917,
+      "identity_attack": 0.9858015179634094,
+      "sexual_explicit": 2.5120127201080322
+    },
+    "toxic": {
+      "severe_toxicity": -0.07165729254484177,
+      "obscene": -0.8920159935951233,
+      "threat": 0.35205790400505066,
+      "insult": -1.4928452968597412,
+      "identity_attack": -0.5806496739387512,
+      "sexual_explicit": 1.255865454673767
+    }
+  },
+  "weights_std_over_texts": {
+    "non_toxic": {
+      "severe_toxicity": 6.525871753692627,
+      "obscene": 10.016255378723145,
+      "threat": 2.4981918334960938,
+      "insult": 3.6166608333587646,
+      "identity_attack": 4.325288772583008,
+      "sexual_explicit": 3.6137025356292725
+    },
+    "toxic": {
+      "severe_toxicity": 2.4850127696990967,
+      "obscene": 3.329040765762329,
+      "threat": 0.9215490221977234,
+      "insult": 1.6168566942214966,
+      "identity_attack": 1.3709449768066406,
+      "sexual_explicit": 0.8498079180717468
+    }
+  },
+  "ncc": {
+    "all_classes": 3.37925,
+    "predicted_class": 3.7519
+  },
+  "interventions": {
+    "n_concepts_replaced": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      6
+    ],
+    "task_acc": {
+      "uncertainty": {
+        "0": 0.7824999690055847,
+        "1": 0.8129000067710876,
+        "2": 0.8389999866485596,
+        "3": 0.8471999764442444,
+        "4": 0.8474999666213989,
+        "6": 0.8459999561309814
+      },
+      "random": {
+        "0": 0.7824999690055847,
+        "1": 0.7924000024795532,
+        "2": 0.7991999983787537,
+        "3": 0.8119999766349792,
+        "4": 0.8260999917984009,
+        "6": 0.8459999561309814
+      }
+    }
+  }
+}
