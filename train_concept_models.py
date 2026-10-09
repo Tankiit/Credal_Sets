@@ -203,9 +203,18 @@ def concept_loss(raw, c, mask, model):
     return torch.stack(terms).mean() if terms else raw.sum() * 0
 
 
-def task_loss(logits, y, schema):
-    return (F.cross_entropy(logits, y.long()) if schema["task_type"] == "multiclass"
-            else F.binary_cross_entropy_with_logits(logits, y.float()))
+def task_loss(logits, y, schema, loss_name: str = "cross_entropy"):
+    if schema["task_type"] == "multilabel":
+        return F.binary_cross_entropy_with_logits(logits, y.float())
+    if loss_name == "cross_entropy":
+        return F.cross_entropy(logits, y.long())
+    if loss_name == "mse":
+        target = F.one_hot(y.long(), num_classes=schema["n_tasks"]).to(logits.dtype)
+        # Sum per-class squared error, then average examples.  Averaging over
+        # classes would reduce this term by 1 / n_tasks relative to CE and
+        # unintentionally let concept supervision dominate the joint loss.
+        return F.mse_loss(logits.softmax(-1), target, reduction="none").sum(-1).mean()
+    raise ValueError(f"Unknown multiclass task loss: {loss_name}")
 
 
 def load_data(folder):
@@ -255,7 +264,7 @@ def evaluate(model, loader, device, desc: str = "Evaluating"):
     for x, c, y, mask in tqdm(loader, desc=desc, leave=False):
         x, c, y, mask = [v.to(device) for v in (x, c, y, mask)]
         logits, trace = model(x, return_trace=True)
-        task_sum += float(task_loss(logits, y, model.schema)) * len(x)
+        task_sum += float(task_loss(logits, y, model.schema, model.config.get("task_loss", "cross_entropy"))) * len(x)
         n += len(x)
         if model.schema["task_type"] == "multiclass":
             correct += int((logits.argmax(-1) == y).sum())
@@ -304,9 +313,10 @@ def train(args):
         torch.mps.manual_seed(args.seed)
     torch.use_deterministic_algorithms(True, warn_only=True)
     schema, splits, _ = load_data(args.data)
+    task_loss_name = getattr(args, "task_loss", "cross_entropy")
     config = {"arch": args.arch, "feature_dim": splits["train"].tensors[0].shape[1],
               "embedding_dim": args.embedding_dim, "residual_dim": args.residual_dim,
-              "backend": args.backend}
+              "backend": args.backend, "task_loss": task_loss_name}
     if args.embedding_dim < 1:
         raise ValueError("embedding_dim must be positive.")
     model = ConceptModel(config, schema).to(args.device)
@@ -333,7 +343,7 @@ def train(args):
         for x, c, y, mask in pbar:
             x, c, y, mask = [v.to(args.device) for v in (x, c, y, mask)]
             logits, trace = model(x, return_trace=True)
-            loss = task_loss(logits, y, schema) + args.lambda_concept * concept_loss(trace["concept_raw"], c, mask, model)
+            loss = task_loss(logits, y, schema, task_loss_name) + args.lambda_concept * concept_loss(trace["concept_raw"], c, mask, model)
             if not bool(torch.isfinite(loss)):
                 raise FloatingPointError("Nonfinite training loss.")
             optimizer.zero_grad(set_to_none=True)
@@ -515,6 +525,8 @@ def main():
     t.add_argument("--epochs", type=int, default=100); t.add_argument("--batch-size", type=int, default=128)
     t.add_argument("--lr", type=float, default=1e-3); t.add_argument("--weight-decay", type=float, default=1e-4)
     t.add_argument("--lambda-concept", type=float, default=1.); t.add_argument("--patience", type=int, default=10)
+    t.add_argument("--task-loss", choices=["cross_entropy", "mse"], default="cross_entropy",
+                   help="multiclass task objective; MSE compares softmax probabilities to one-hot labels")
     default_dev = get_default_device()
     t.add_argument("--seed", type=int, default=0); t.add_argument("--device", default=default_dev)
     t.add_argument("--tensorboard-dir", help="Event-file directory (default: <out>/tensorboard)")

@@ -32,7 +32,7 @@ image = (
     .pip_install(
         "torch>=2.4,<3", "transformers>=4.44,<5", "datasets>=3,<5",
         "huggingface_hub", "numpy>=1.26,<3", "pandas>=2.2", "scikit-learn>=1.4",
-        "tensorboard>=2.18", "torch-concepts==1.0.0a5", "tqdm", "sentencepiece", "protobuf",
+        "tensorboard>=2.18", "pytorch_concepts==1.0.0a5", "tqdm", "sentencepiece", "protobuf",
     )
     .add_local_dir("concept_models", remote_path=f"{REMOTE_ROOT}/concept_models")
     .add_local_dir("concept_datasets", remote_path=f"{REMOTE_ROOT}/concept_datasets")
@@ -66,13 +66,13 @@ def prepare_dataset(dataset: str, embed_batch_size: int = 128) -> dict:
 
 @app.function(**COMMON)
 def train_one(dataset: str, architecture: str, seed: int, epochs: int = 50,
-              learning_rate: float = 1e-3, backend: str = "torch") -> dict:
-    if dataset not in DATASETS or architecture not in ARCHITECTURES or seed not in SEEDS or backend not in {"torch", "torch-concepts"}:
+              learning_rate: float = 1e-3, backend: str = "torch", task_loss: str = "cross_entropy") -> dict:
+    if dataset not in DATASETS or architecture not in ARCHITECTURES or seed not in SEEDS or backend not in {"torch", "torch-concepts"} or task_loss not in {"cross_entropy", "mse"}:
         raise ValueError("Unsupported dataset, architecture, seed, or backend")
     data = f"/artifacts/prepared/{dataset}"
     if not all((Path(data) / f"{split}.pt").exists() for split in ("train", "val", "test")):
         raise FileNotFoundError(f"Prepared data missing for {dataset}; run prepare_dataset first.")
-    name = f"{dataset}-{architecture}-{backend}-s{seed}"
+    name = f"{dataset}-{architecture}-{backend}-{task_loss}-s{seed}"
     out = f"/artifacts/runs/{name}"
     metrics = Path(out) / "metrics.json"
     if not metrics.exists():
@@ -80,11 +80,35 @@ def train_one(dataset: str, architecture: str, seed: int, epochs: int = 50,
             sys.executable, "train_concept_models.py", "train", "--data", data,
             "--arch", architecture, "--out", out, "--epochs", str(epochs),
             "--patience", str(epochs), "--lr", str(learning_rate), "--batch-size", "256",
-            "--seed", str(seed), "--backend", backend, "--device", "cuda",
+            "--seed", str(seed), "--backend", backend, "--task-loss", task_loss, "--device", "cuda",
             "--tensorboard-dir", f"/artifacts/tensorboard/{name}",
         ])
         results.commit()
     return {"run": name, "metrics": str(metrics), "tensorboard": f"/artifacts/tensorboard/{name}"}
+
+
+@app.function(**COMMON)
+def cebab_cbm_mse_all(epochs: int = 50, learning_rate: float = 1e-3) -> list[dict]:
+    """Run every MSE seed in one durable remote task (safe to rerun)."""
+    data = "/artifacts/prepared/cebab"
+    if not all((Path(data) / f"{split}.pt").exists() for split in ("train", "val", "test")):
+        raise FileNotFoundError("Prepared CEBaB data is missing")
+    completed = []
+    for seed in SEEDS:
+        name = f"cebab-cbm-torch-mse-s{seed}"
+        out = Path(f"/artifacts/runs/{name}")
+        metrics = out / "metrics.json"
+        if not metrics.exists():
+            run([
+                sys.executable, "train_concept_models.py", "train", "--data", data,
+                "--arch", "cbm", "--out", str(out), "--epochs", str(epochs),
+                "--patience", str(epochs), "--lr", str(learning_rate), "--batch-size", "256",
+                "--seed", str(seed), "--backend", "torch", "--task-loss", "mse", "--device", "cuda",
+                "--tensorboard-dir", f"/artifacts/tensorboard/{name}",
+            ])
+            results.commit()
+        completed.append({"run": name, "metrics": str(metrics)})
+    return completed
 
 
 @app.local_entrypoint()
@@ -105,4 +129,11 @@ def sweep_torch_concepts(epochs: int = 50, learning_rate: float = 1e-3) -> None:
         for architecture in ("cbm", "residual-cbm"):
             for seed in SEEDS:
                 print(train_one.remote(dataset, architecture, seed, epochs, learning_rate, "torch-concepts"))
+
+
+@app.local_entrypoint()
+def cebab_cbm_mse(epochs: int = 50, learning_rate: float = 1e-3) -> None:
+    """Controlled 5-class CEBaB CBM comparison with a categorical MSE task loss."""
+    print(prepare_dataset.remote("cebab"))
+    print(cebab_cbm_mse_all.remote(epochs, learning_rate))
 
