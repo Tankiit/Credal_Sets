@@ -63,7 +63,7 @@ else:
     config.update(emb_dim=args.emb_dim, p_int=args.p_int)
 model = build_model(config)
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+device = "cuda" if torch.cuda.is_available() else ("mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu")
 print(f"\nTraining {args.model} on {args.dataset} ({config['n_concepts']} concepts, "
       f"{config['n_classes']} classes) on {device}")
 history = fit(model, feats["train"], feats["val"], concept_weight=args.concept_weight,

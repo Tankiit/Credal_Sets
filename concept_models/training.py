@@ -20,6 +20,8 @@ def fit(model: ConceptModel, train: dict, val: dict, concept_weight: float = 1.0
         epochs: int = 60, lr: float = 1e-3, weight_decay: float = 1e-4, batch_size: int = 256,
         patience: int = 8, soft_concepts: bool = False, device: str = "cuda", seed: int = 0):
     """Train with early stopping on the validation joint loss; returns the history."""
+    if device == "cuda" and not torch.cuda.is_available():
+        device = "mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu"
     torch.manual_seed(seed)
     target = "C_soft" if soft_concepts else "C"
     X, y, C = (train[k].to(device) for k in ("X", "y", target))

@@ -2,3 +2,12 @@ cache/
 .venv/
 data/
 __pycache__/
+.DS_Store
+*_data/
+results/modal_concept_sweep/
+results/modal_runs_download/
+runs/auditable-*
+Multi_Sets/
+Optimization/
+Patch_Uncertainty/
+Random_Sets/

@@ -1,0 +1,11 @@
+{
+  "concept_auc_raw_orig": 0.5281380949278689,
+  "concept_auc_raw_twin": 0.5266390276724353,
+  "concept_auc_r_orig": 0.5332360161420336,
+  "concept_auc_r_twin": 0.5332990987604354,
+  "run": "cebab-cbm-r16-logits-s0",
+  "mix": 1.0,
+  "rotate": 1.0,
+  "shift": 0.0,
+  "seed": 0
+}
