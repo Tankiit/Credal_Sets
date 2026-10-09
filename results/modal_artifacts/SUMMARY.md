@@ -7,6 +7,7 @@
 | dataset | architecture | n | test_accuracy_mean | test_accuracy_std | test_task_loss_mean | test_task_loss_std | best_epoch_mean | best_epoch_std |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | cebab | cbm | 3 | 0.6238 | 0.0166 | 0.8965 | 0.0185 | 49.3333 | 1.1547 |
+| cebab | cbm-torch-mse | 3 | 0.6152 | 0.0208 | 0.5170 | 0.0108 | 49.6667 | 0.5774 |
 | cebab | cem | 3 | 0.6560 | 0.0033 | 0.7994 | 0.0084 | 3.6667 | 0.5774 |
 | civil_comments | cbm | 3 | 0.7778 | 0.0011 | 0.4680 | 0.0006 | 41.0000 | 3.6056 |
 | civil_comments | cem | 3 | 0.7785 | 0.0028 | 0.4601 | 0.0021 | 2.3333 | 0.5774 |

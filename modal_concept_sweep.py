@@ -111,6 +111,32 @@ def cebab_cbm_mse_all(epochs: int = 50, learning_rate: float = 1e-3) -> list[dic
     return completed
 
 
+@app.function(**COMMON)
+def torch_concepts_all(epochs: int = 50, learning_rate: float = 1e-3) -> list[dict]:
+    """Complete the Torch Concepts CBM/residual-CBM grid in one durable task."""
+    completed = []
+    for dataset in DATASETS:
+        data = Path(f"/artifacts/prepared/{dataset}")
+        if not all((data / f"{split}.pt").exists() for split in ("train", "val", "test")):
+            raise FileNotFoundError(f"Prepared data missing for {dataset}")
+        for architecture in ("cbm", "residual-cbm"):
+            for seed in SEEDS:
+                name = f"{dataset}-{architecture}-torch-concepts-s{seed}"
+                out = Path(f"/artifacts/runs/{name}")
+                metrics = out / "metrics.json"
+                if not metrics.exists():
+                    run([
+                        sys.executable, "train_concept_models.py", "train", "--data", str(data),
+                        "--arch", architecture, "--out", str(out), "--epochs", str(epochs),
+                        "--patience", str(epochs), "--lr", str(learning_rate), "--batch-size", "256",
+                        "--seed", str(seed), "--backend", "torch-concepts", "--device", "cuda",
+                        "--tensorboard-dir", f"/artifacts/tensorboard/{name}",
+                    ])
+                    results.commit()
+                completed.append({"run": name, "metrics": str(metrics)})
+    return completed
+
+
 @app.local_entrypoint()
 def sweep(epochs: int = 50, learning_rate: float = 1e-3) -> None:
     """Prepare each dataset once, then run CBM/CEM across seeds sequentially on one T4."""

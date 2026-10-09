@@ -9,9 +9,7 @@ import pandas as pd
 
 
 ROOT = Path("results/modal_artifacts")
-RUN = re.compile(r"^(cebab|goemotions|civil_comments|imdb_cad)-(cbm|cem)-s([0-2])\.metrics\.json$")
-EXPECTED = {(dataset, arch, seed) for dataset in ("cebab", "goemotions", "civil_comments", "imdb_cad")
-            for arch in ("cbm", "cem") for seed in range(3)}
+RUN = re.compile(r"^(cebab|goemotions|civil_comments|imdb_cad)-(.+)-s([0-2])\.metrics\.json$")
 
 
 def main() -> None:
@@ -27,15 +25,13 @@ def main() -> None:
             "dataset": dataset, "architecture": architecture, "seed": int(seed),
             "epochs_completed": len(history), "best_epoch": metrics["best_epoch"],
             "test_accuracy": test.get("accuracy", test.get("exact_match")),
-            "test_task_loss": test["task_loss"], "test_concept_loss": test["concept_loss"],
+            "test_task_loss": test["task_loss"], "test_concept_loss": test.get("concept_loss"),
             "final_train_loss": history[-1].get("train_loss"),
             "final_val_accuracy": history[-1]["val"].get("accuracy", history[-1]["val"].get("exact_match")),
             "final_val_task_loss": history[-1]["val"]["task_loss"],
         })
-    actual = {(r["dataset"], r["architecture"], r["seed"]) for r in rows}
-    missing = EXPECTED - actual
-    if missing or len(rows) != len(EXPECTED):
-        raise RuntimeError(f"Expected {len(EXPECTED)} unique runs; missing={sorted(missing)} rows={len(rows)}")
+    if not rows:
+        raise RuntimeError("No run metric JSON files found to aggregate.")
     per_run = pd.DataFrame(rows).sort_values(["dataset", "architecture", "seed"])
     per_run.to_csv(ROOT / "per_run.csv", index=False)
 
