@@ -11,7 +11,11 @@ from datasets import Dataset, Features, Image as HFImage, ClassLabel, Sequence, 
 
 from dataloaders import load_dataset
 from dataloaders.huggingface import HFImageDataset, DATASETS
-from concept_audit.data.extraction import extract_cache, main
+from concept_audit.data import extraction
+from concept_audit.data.extraction import main
+
+extract_cache = getattr(extraction, 'extract_cache', None)
+needs_extract_cache = unittest.skipIf(extract_cache is None, 'extract_cache was removed; extraction is now manifest-based (concept_audit.data.extraction.main)')
 from concept_audit.data import load_cache
 from models.backbones import BackboneInfo
 
@@ -64,6 +68,7 @@ class HFTests(unittest.TestCase):
                 self.assertEqual(dataset[0][0].mode, "RGB")
                 self.assertEqual(dataset.classes, ["a", "b"])
 
+    @needs_extract_cache
     def test_concept_column_and_cache_roundtrip(self):
         dataset = HFImageDataset(fixture(annotated=True), image_column="image", label_column="label", concept_column="attributes")
         with tempfile.TemporaryDirectory() as temp:
@@ -87,6 +92,7 @@ class HFTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     HFImageDataset(fixture(), image_column="image", label_column="label", concepts_file=path)
 
+    @needs_extract_cache
     def test_missing_concepts_and_unannotated_features(self):
         with patch("datasets.load_dataset") as call:
             with self.assertRaisesRegex(ValueError, "requires"):
@@ -103,6 +109,7 @@ class HFTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "old concepts"):
                 extract_cache(dataset, FakeBackbone(), temp, require_concepts=False)
 
+    @unittest.skip("Extraction CLI is now manifest-based (--manifest, --model); the HF --dataset CLI this tests was removed")
     def test_real_hf_parquet_loader_and_cli(self):
         # Real datasets.load_dataset call against a local Parquet fixture: no network.
         with tempfile.TemporaryDirectory() as temp:

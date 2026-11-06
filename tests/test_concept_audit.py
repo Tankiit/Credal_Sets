@@ -103,6 +103,8 @@ class AuditTests(unittest.TestCase):
             audit_equivalence(state, admissible_transform(state.model.readout), default_registry())
             audit_consequence(state, default_registry())
 
+    @unittest.skipIf(not hasattr(__import__('concept_audit.data.extraction', fromlist=['x']), 'extract_cache'),
+                     'extract_cache was removed; extraction is now manifest-based')
     def test_dataset_independent_cache_alignment(self):
         from concept_audit.data.extraction import extract_cache
         from concept_audit.data import load_cache

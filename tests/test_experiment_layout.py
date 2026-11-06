@@ -17,7 +17,7 @@ class ExperimentLayoutTests(unittest.TestCase):
     def test_synthetic_config_override_and_rank(self):
         with tempfile.TemporaryDirectory() as temp:
             out = Path(temp)/"synthetic.json"
-            synthetic(["--config", "experiments/synthetic/configs/full.json", "--epochs", "1", "--out", str(out)])
+            synthetic(["--config", "experiments/synthetic/configs/full.json", "--task", "model", "--epochs", "1", "--out", str(out)])
             report = json.loads(out.read_text())
             self.assertEqual(report["experiment_family"], "synthetic")
             self.assertEqual(report["epochs"], 1)
@@ -51,7 +51,7 @@ class ExperimentLayoutTests(unittest.TestCase):
                 np.save(p/"embeddings.npy", z)
                 np.save(p/"concepts.npy", (z[:, :2] > 0).astype("float32"))
                 np.save(p/"labels.npy", (z[:, 2] > 0).astype("int64"))
-            real(["--features-dir", str(root/"train"), "--eval-features-dir", str(root/"test"),
+            real(["--task", "model", "--features-dir", str(root/"train"), "--eval-features-dir", str(root/"test"),
                            "--epochs", "1", "--out", str(root/"real.json"), "--log-dir", str(root/"logs")])
             report = json.loads((root/"real.json").read_text())
             self.assertEqual(report["experiment_family"], "real")
