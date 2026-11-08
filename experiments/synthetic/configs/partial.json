@@ -1,0 +1,1 @@
+{"backend": "native", "readout": "coordinates", "epochs": 100, "seed": 0, "out": "results/synthetic/partial/audit.json"}

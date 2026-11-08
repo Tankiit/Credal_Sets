@@ -1,0 +1,9 @@
+{
+  "backend": "cem",
+  "readout": "coordinates",
+  "epochs": 100,
+  "seed": 12,
+  "features_dir": "ignore/cache/cache_mpi3d/cache_mpi3d_train",
+  "eval_features_dir": "ignore/cache/cache_mpi3d/cache_mpi3d_eval",
+  "out": "ignore/results_experiments/cem_results_seed12/mpi3d_dataset/audit.json"
+}

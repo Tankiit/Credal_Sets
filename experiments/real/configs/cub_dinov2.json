@@ -1,0 +1,9 @@
+{
+  "backend": "native",
+  "readout": "coordinates",
+  "epochs": 100,
+  "seed": 0,
+  "features_dir": "features/real/cub/dinov2/train",
+  "eval_features_dir": "features/real/cub/dinov2/test",
+  "out": "results/real/cub/dinov2/audit.json"
+}
