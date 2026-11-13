@@ -1,6 +1,5 @@
 .venv/
 features/
-results/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -21,3 +20,13 @@ SKILL.md
 *.prompt.md
 ignore/
 cache/
+# Model checkpoints / weights
+*.pt
+
+# Raw model outputs / heavy intermediate data (kept locally only)
+results/semantic_edits/latents/
+results/semantic_edits/runs/*/*/evaluation/readouts_logits.npz
+results/semantic_edits/runs/*/*/evaluation/per_pair.csv.gz
+results/semantic_edits/pairs/*/pairs.jsonl
+results/semantic_edits/pairs/*/pairs.npz
+results/semantic_edits/pairs/*/images.npz

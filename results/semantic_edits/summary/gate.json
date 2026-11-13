@@ -1,0 +1,543 @@
+{
+  "1_native_failure_not_units_or_perception": [
+    {
+      "run": "mpi3d/cbm_seed12",
+      "native_readout_decodes_edit_factor_sigmoid": 0.9819509548611111,
+      "native_readout_decodes_edit_factor_calibrated": 0.9956,
+      "reader_accuracy_edit_factor_on_real_images": 0.9998209635416667,
+      "native_logit_joint": 0.06722005208333333,
+      "native_calibrated_joint": 0.06873372395833334,
+      "native_calibrated_native_target": 1.0,
+      "reference_joint": 0.08839518229166667
+    },
+    {
+      "run": "mpi3d/cem_seed12",
+      "native_readout_decodes_edit_factor_sigmoid": 0.9819444444444444,
+      "native_readout_decodes_edit_factor_calibrated": 0.9956,
+      "reader_accuracy_edit_factor_on_real_images": 0.999560546875,
+      "native_logit_joint": 0.13421223958333334,
+      "native_calibrated_joint": 0.13932291666666666,
+      "native_calibrated_native_target": 1.0,
+      "reference_joint": 0.23453776041666666
+    },
+    {
+      "run": "shapes3d/cbm_seed0",
+      "native_readout_decodes_edit_factor_sigmoid": 0.18608125,
+      "native_readout_decodes_edit_factor_calibrated": 0.42192,
+      "reader_accuracy_edit_factor_on_real_images": 0.8390625,
+      "native_logit_joint": 0.04914930555555556,
+      "native_calibrated_joint": 0.10831597222222222,
+      "native_calibrated_native_target": 1.0,
+      "reference_joint": 0.4397048611111111
+    },
+    {
+      "run": "shapes3d/cbm_seed12",
+      "native_readout_decodes_edit_factor_sigmoid": 0.1171625,
+      "native_readout_decodes_edit_factor_calibrated": 0.34524,
+      "reader_accuracy_edit_factor_on_real_images": 0.8532118055555555,
+      "native_logit_joint": 0.01342013888888889,
+      "native_calibrated_joint": 0.0724826388888889,
+      "native_calibrated_native_target": 1.0,
+      "reference_joint": 0.45303819444444443
+    },
+    {
+      "run": "shapes3d/cem_seed0",
+      "native_readout_decodes_edit_factor_sigmoid": 0.30176875,
+      "native_readout_decodes_edit_factor_calibrated": 0.33222,
+      "reader_accuracy_edit_factor_on_real_images": 0.9470486111111112,
+      "native_logit_joint": 0.09045138888888889,
+      "native_calibrated_joint": 0.09970486111111111,
+      "native_calibrated_native_target": 1.0,
+      "reference_joint": 0.7404340277777778
+    },
+    {
+      "run": "shapes3d/cem_seed12",
+      "native_readout_decodes_edit_factor_sigmoid": 0.22400208333333332,
+      "native_readout_decodes_edit_factor_calibrated": 0.3289,
+      "reader_accuracy_edit_factor_on_real_images": 0.9546180555555556,
+      "native_logit_joint": 0.06100694444444445,
+      "native_calibrated_joint": 0.0961111111111111,
+      "native_calibrated_native_target": 1.0,
+      "reference_joint": 0.7380208333333333
+    }
+  ],
+  "2_4_learned_vs_baselines_on_unseen_combinations": [
+    {
+      "run": "mpi3d/cbm_seed12",
+      "mlp-affine": {
+        "seed0": [
+          -0.0149,
+          [
+            -0.0185,
+            -0.0112
+          ]
+        ],
+        "seed1": [
+          -0.0179,
+          [
+            -0.0216,
+            -0.0143
+          ]
+        ],
+        "seed2": [
+          -0.0142,
+          [
+            -0.0179,
+            -0.0104
+          ]
+        ]
+      },
+      "mlp-native_calibrated": {
+        "seed0": [
+          -0.0304,
+          [
+            -0.0344,
+            -0.0264
+          ]
+        ],
+        "seed1": [
+          -0.034,
+          [
+            -0.0382,
+            -0.0299
+          ]
+        ],
+        "seed2": [
+          -0.0298,
+          [
+            -0.0339,
+            -0.0257
+          ]
+        ]
+      },
+      "affine-native_calibrated": {
+        "seed0": [
+          -0.0156,
+          [
+            -0.0192,
+            -0.0117
+          ]
+        ],
+        "seed1": [
+          -0.0161,
+          [
+            -0.0198,
+            -0.0123
+          ]
+        ],
+        "seed2": [
+          -0.0156,
+          [
+            -0.0192,
+            -0.0119
+          ]
+        ]
+      },
+      "joint_mlp_minus_affine_unseen": -0.0155,
+      "target_success_mlp_minus_affine_unseen": -0.0269,
+      "conditional_retention_mlp_minus_affine_unseen": -0.0979,
+      "task_correct_mlp_minus_affine_unseen": -0.0044,
+      "mlp_joint_seen": 0.0794141206087653,
+      "mlp_joint_unseen": 0.040349248236654776,
+      "mlp_share_of_reference_joint_unseen": 0.45667404129793515
+    },
+    {
+      "run": "mpi3d/cem_seed12",
+      "mlp-affine": {
+        "seed0": [
+          -0.0113,
+          [
+            -0.017,
+            -0.0051
+          ]
+        ],
+        "seed1": [
+          -0.0093,
+          [
+            -0.0153,
+            -0.0032
+          ]
+        ],
+        "seed2": [
+          -0.011,
+          [
+            -0.0169,
+            -0.0049
+          ]
+        ]
+      },
+      "mlp-native_calibrated": {
+        "seed0": [
+          -0.0055,
+          [
+            -0.0114,
+            0.0007
+          ]
+        ],
+        "seed1": [
+          -0.0026,
+          [
+            -0.0087,
+            0.0036
+          ]
+        ],
+        "seed2": [
+          -0.0046,
+          [
+            -0.0107,
+            0.0013
+          ]
+        ]
+      },
+      "affine-native_calibrated": {
+        "seed0": [
+          0.0058,
+          [
+            0.0002,
+            0.0117
+          ]
+        ],
+        "seed1": [
+          0.0067,
+          [
+            0.0006,
+            0.0128
+          ]
+        ],
+        "seed2": [
+          0.0064,
+          [
+            0.0007,
+            0.0123
+          ]
+        ]
+      },
+      "joint_mlp_minus_affine_unseen": -0.0111,
+      "target_success_mlp_minus_affine_unseen": -0.0464,
+      "conditional_retention_mlp_minus_affine_unseen": -0.0389,
+      "task_correct_mlp_minus_affine_unseen": -0.0025,
+      "mlp_joint_seen": 0.2101090350317951,
+      "mlp_joint_unseen": 0.12544592679470265,
+      "mlp_share_of_reference_joint_unseen": 0.5362439941508252
+    },
+    {
+      "run": "shapes3d/cbm_seed0",
+      "mlp-affine": {
+        "seed0": [
+          0.0266,
+          [
+            0.0164,
+            0.0368
+          ]
+        ],
+        "seed1": [
+          0.0303,
+          [
+            0.02,
+            0.0407
+          ]
+        ],
+        "seed2": [
+          0.0298,
+          [
+            0.0197,
+            0.0404
+          ]
+        ]
+      },
+      "mlp-native_calibrated": {
+        "seed0": [
+          0.1338,
+          [
+            0.1244,
+            0.1435
+          ]
+        ],
+        "seed1": [
+          0.1364,
+          [
+            0.1267,
+            0.1461
+          ]
+        ],
+        "seed2": [
+          0.1374,
+          [
+            0.1272,
+            0.1478
+          ]
+        ]
+      },
+      "affine-native_calibrated": {
+        "seed0": [
+          0.1072,
+          [
+            0.099,
+            0.1158
+          ]
+        ],
+        "seed1": [
+          0.1061,
+          [
+            0.0973,
+            0.1149
+          ]
+        ],
+        "seed2": [
+          0.1076,
+          [
+            0.0986,
+            0.1162
+          ]
+        ]
+      },
+      "joint_mlp_minus_affine_unseen": 0.0298,
+      "target_success_mlp_minus_affine_unseen": 0.1756,
+      "conditional_retention_mlp_minus_affine_unseen": -0.0925,
+      "task_correct_mlp_minus_affine_unseen": 0.0273,
+      "mlp_joint_seen": 0.33841089164155785,
+      "mlp_joint_unseen": 0.23736577964519143,
+      "mlp_share_of_reference_joint_unseen": 0.543638064688586
+    },
+    {
+      "run": "shapes3d/cbm_seed12",
+      "mlp-affine": {
+        "seed0": [
+          0.0584,
+          [
+            0.0479,
+            0.0684
+          ]
+        ],
+        "seed1": [
+          0.0605,
+          [
+            0.0497,
+            0.0709
+          ]
+        ],
+        "seed2": [
+          0.0414,
+          [
+            0.0305,
+            0.0526
+          ]
+        ]
+      },
+      "mlp-native_calibrated": {
+        "seed0": [
+          0.2068,
+          [
+            0.1976,
+            0.216
+          ]
+        ],
+        "seed1": [
+          0.2089,
+          [
+            0.1996,
+            0.2192
+          ]
+        ],
+        "seed2": [
+          0.1906,
+          [
+            0.1809,
+            0.2002
+          ]
+        ]
+      },
+      "affine-native_calibrated": {
+        "seed0": [
+          0.1484,
+          [
+            0.14,
+            0.1564
+          ]
+        ],
+        "seed1": [
+          0.1485,
+          [
+            0.1406,
+            0.1574
+          ]
+        ],
+        "seed2": [
+          0.1492,
+          [
+            0.1404,
+            0.1581
+          ]
+        ]
+      },
+      "joint_mlp_minus_affine_unseen": 0.0534,
+      "target_success_mlp_minus_affine_unseen": 0.182,
+      "conditional_retention_mlp_minus_affine_unseen": -0.052,
+      "task_correct_mlp_minus_affine_unseen": 0.0177,
+      "mlp_joint_seen": 0.35296469888033327,
+      "mlp_joint_unseen": 0.2525093370681606,
+      "mlp_share_of_reference_joint_unseen": 0.5689677843523997
+    },
+    {
+      "run": "shapes3d/cem_seed0",
+      "mlp-affine": {
+        "seed0": [
+          0.0422,
+          [
+            0.0307,
+            0.0543
+          ]
+        ],
+        "seed1": [
+          0.0316,
+          [
+            0.0193,
+            0.044
+          ]
+        ],
+        "seed2": [
+          0.0482,
+          [
+            0.0362,
+            0.0602
+          ]
+        ]
+      },
+      "mlp-native_calibrated": {
+        "seed0": [
+          0.3349,
+          [
+            0.3241,
+            0.3468
+          ]
+        ],
+        "seed1": [
+          0.3221,
+          [
+            0.3111,
+            0.334
+          ]
+        ],
+        "seed2": [
+          0.3435,
+          [
+            0.3319,
+            0.3542
+          ]
+        ]
+      },
+      "affine-native_calibrated": {
+        "seed0": [
+          0.2927,
+          [
+            0.2821,
+            0.3037
+          ]
+        ],
+        "seed1": [
+          0.2906,
+          [
+            0.2799,
+            0.3013
+          ]
+        ],
+        "seed2": [
+          0.2953,
+          [
+            0.2844,
+            0.3059
+          ]
+        ]
+      },
+      "joint_mlp_minus_affine_unseen": 0.046,
+      "target_success_mlp_minus_affine_unseen": 0.0547,
+      "conditional_retention_mlp_minus_affine_unseen": -0.0032,
+      "task_correct_mlp_minus_affine_unseen": 0.0425,
+      "mlp_joint_seen": 0.5850165532120671,
+      "mlp_joint_unseen": 0.4336192810457516,
+      "mlp_share_of_reference_joint_unseen": 0.5883913370550737
+    },
+    {
+      "run": "shapes3d/cem_seed12",
+      "mlp-affine": {
+        "seed0": [
+          0.0569,
+          [
+            0.0452,
+            0.0687
+          ]
+        ],
+        "seed1": [
+          0.0606,
+          [
+            0.05,
+            0.0726
+          ]
+        ],
+        "seed2": [
+          0.0434,
+          [
+            0.0311,
+            0.0555
+          ]
+        ]
+      },
+      "mlp-native_calibrated": {
+        "seed0": [
+          0.3474,
+          [
+            0.3365,
+            0.3588
+          ]
+        ],
+        "seed1": [
+          0.3496,
+          [
+            0.3386,
+            0.361
+          ]
+        ],
+        "seed2": [
+          0.3334,
+          [
+            0.3224,
+            0.3448
+          ]
+        ]
+      },
+      "affine-native_calibrated": {
+        "seed0": [
+          0.2906,
+          [
+            0.2794,
+            0.3015
+          ]
+        ],
+        "seed1": [
+          0.289,
+          [
+            0.278,
+            0.2996
+          ]
+        ],
+        "seed2": [
+          0.29,
+          [
+            0.2791,
+            0.301
+          ]
+        ]
+      },
+      "joint_mlp_minus_affine_unseen": 0.0585,
+      "target_success_mlp_minus_affine_unseen": 0.0431,
+      "conditional_retention_mlp_minus_affine_unseen": 0.0307,
+      "task_correct_mlp_minus_affine_unseen": 0.0372,
+      "mlp_joint_seen": 0.5658036677454154,
+      "mlp_joint_unseen": 0.43455298786181135,
+      "mlp_share_of_reference_joint_unseen": 0.5941751446239776
+    }
+  ],
+  "mlp_beats_affine_joint_unseen_every_run_and_seed": false,
+  "mlp_beats_affine_joint_unseen_ci_excludes_zero_everywhere": false,
+  "mlp_preservation_not_worse_than_affine_unseen": false
+}

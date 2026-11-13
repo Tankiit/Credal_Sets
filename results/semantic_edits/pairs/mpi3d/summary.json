@@ -1,0 +1,180 @@
+{
+  "dataset": "mpi3d",
+  "raw_dir": "ignore/data/mpi3d_local",
+  "cache": "ignore/cache/cache_mpi3d/cache_mpi3d",
+  "seed": 0,
+  "edit_factor": "background",
+  "edit_levels": 3,
+  "edit_concept_values": [
+    0.0,
+    0.5,
+    1.0
+  ],
+  "edit_semantics": "set raw factor \"background\" to a requested level; all other raw factors fixed",
+  "concept_columns": {
+    "size": 0,
+    "height": 1,
+    "background": 2,
+    "dof1": 3,
+    "dof2": 4
+  },
+  "concept_level_values": {
+    "size": [
+      0.0,
+      1.0
+    ],
+    "height": [
+      0.0,
+      0.5,
+      1.0
+    ],
+    "background": [
+      0.0,
+      0.5,
+      1.0
+    ],
+    "dof1": [
+      0.0,
+      0.025640999898314476,
+      0.05128199979662895,
+      0.07692299783229828,
+      0.1025639995932579,
+      0.12820500135421753,
+      0.15384599566459656,
+      0.17948700487613678,
+      0.2051279991865158,
+      0.23076899349689484,
+      0.25641000270843506,
+      0.2820509970188141,
+      0.3076919913291931,
+      0.33333298563957214,
+      0.35897400975227356,
+      0.3846150040626526,
+      0.4102559983730316,
+      0.43589699268341064,
+      0.4615379869937897,
+      0.4871790111064911,
+      0.5128210186958313,
+      0.5384619832038879,
+      0.5641030073165894,
+      0.589743971824646,
+      0.6153849959373474,
+      0.6410260200500488,
+      0.6666669845581055,
+      0.6923080086708069,
+      0.7179489731788635,
+      0.7435899972915649,
+      0.7692310214042664,
+      0.794871985912323,
+      0.8205130100250244,
+      0.846153974533081,
+      0.8717949986457825,
+      0.8974360227584839,
+      0.9230769872665405,
+      0.9487180113792419,
+      0.9743589758872986,
+      1.0
+    ],
+    "dof2": [
+      0.0,
+      0.025640999898314476,
+      0.05128199979662895,
+      0.07692299783229828,
+      0.1025639995932579,
+      0.12820500135421753,
+      0.15384599566459656,
+      0.17948700487613678,
+      0.2051279991865158,
+      0.23076899349689484,
+      0.25641000270843506,
+      0.2820509970188141,
+      0.3076919913291931,
+      0.33333298563957214,
+      0.35897400975227356,
+      0.3846150040626526,
+      0.4102559983730316,
+      0.43589699268341064,
+      0.4615379869937897,
+      0.4871790111064911,
+      0.5128210186958313,
+      0.5384619832038879,
+      0.5641030073165894,
+      0.589743971824646,
+      0.6153849959373474,
+      0.6410260200500488,
+      0.6666669845581055,
+      0.6923080086708069,
+      0.7179489731788635,
+      0.7435899972915649,
+      0.7692310214042664,
+      0.794871985912323,
+      0.8205130100250244,
+      0.846153974533081,
+      0.8717949986457825,
+      0.8974360227584839,
+      0.9230769872665405,
+      0.9487180113792419,
+      0.9743589758872986,
+      1.0
+    ]
+  },
+  "factors": [
+    "color",
+    "shape",
+    "size",
+    "height",
+    "background",
+    "dof1",
+    "dof2"
+  ],
+  "factor_cardinalities": {
+    "color": 4,
+    "shape": 4,
+    "size": 2,
+    "height": 3,
+    "background": 3,
+    "dof1": 40,
+    "dof2": 40
+  },
+  "task_label": "shape_idx * 4 + color_idx",
+  "task_label_changes": false,
+  "context_definition": "all raw factors except the edited one",
+  "heldout_combination": {
+    "combo_factor": "shape",
+    "rule": "(edit_level + 1 * shape_level) mod 3 < 1"
+  },
+  "pairs_per_context": 2,
+  "splits": {
+    "train": {
+      "pairs": 184320,
+      "contexts": 92160,
+      "endpoint_images": 184320,
+      "target_heldout_combination": 0,
+      "both_endpoints_base_eval": 7134
+    },
+    "val": {
+      "pairs": 61440,
+      "contexts": 30720,
+      "endpoint_images": 61440,
+      "target_heldout_combination": 0,
+      "both_endpoints_base_eval": 2504
+    },
+    "test": {
+      "pairs": 61440,
+      "contexts": 30720,
+      "endpoint_images": 86048,
+      "target_heldout_combination": 20463,
+      "both_endpoints_base_eval": 2524
+    }
+  },
+  "duplicate_image_bytes_in_dataset": 0,
+  "checks": {
+    "pairs_differ_only_in_edit_factor": true,
+    "endpoint_ids_disjoint_across_splits": true,
+    "contexts_disjoint_across_splits": true,
+    "endpoint_image_hashes_disjoint_across_splits": true,
+    "no_heldout_combination_in_operator_train_or_val": true,
+    "task_label_invariant_for_every_pair": true,
+    "endpoints_seen_by_base_model": "all images were in the base model train or eval cache; both_endpoints_base_eval marks pairs never used for base-model gradient updates"
+  }
+}

@@ -1,0 +1,137 @@
+{
+  "dataset": "shapes3d",
+  "raw_dir": "ignore/data/shapes3d_local",
+  "cache": "ignore/cache/cache_shapes3d/cache_shapes3d",
+  "seed": 0,
+  "edit_factor": "floor",
+  "edit_levels": 10,
+  "edit_concept_values": [
+    0.0,
+    0.10000000149011612,
+    0.20000000298023224,
+    0.30000001192092896,
+    0.4000000059604645,
+    0.5,
+    0.6000000238418579,
+    0.699999988079071,
+    0.800000011920929,
+    0.8999999761581421
+  ],
+  "edit_semantics": "set raw factor \"floor\" to a requested level; all other raw factors fixed",
+  "concept_columns": {
+    "floor": 0,
+    "wall": 1,
+    "scale": 2,
+    "orientation": 3
+  },
+  "concept_level_values": {
+    "floor": [
+      0.0,
+      0.10000000149011612,
+      0.20000000298023224,
+      0.30000001192092896,
+      0.4000000059604645,
+      0.5,
+      0.6000000238418579,
+      0.699999988079071,
+      0.800000011920929,
+      0.8999999761581421
+    ],
+    "wall": [
+      0.0,
+      0.10000000149011612,
+      0.20000000298023224,
+      0.30000001192092896,
+      0.4000000059604645,
+      0.5,
+      0.6000000238418579,
+      0.699999988079071,
+      0.800000011920929,
+      0.8999999761581421
+    ],
+    "scale": [
+      0.0,
+      0.14285700023174286,
+      0.2857140004634857,
+      0.4285709857940674,
+      0.5714290142059326,
+      0.7142860293388367,
+      0.857142984867096,
+      1.0
+    ],
+    "orientation": [
+      0.0,
+      0.07142899930477142,
+      0.14285700023174286,
+      0.21428599953651428,
+      0.2857140004634857,
+      0.35714301466941833,
+      0.4285709857940674,
+      0.5,
+      0.5714290142059326,
+      0.642857015132904,
+      0.7142860293388367,
+      0.7857139706611633,
+      0.857142984867096,
+      0.9285709857940674,
+      1.0
+    ]
+  },
+  "factors": [
+    "floor",
+    "wall",
+    "object",
+    "scale",
+    "shape",
+    "orientation"
+  ],
+  "factor_cardinalities": {
+    "floor": 10,
+    "wall": 10,
+    "object": 10,
+    "scale": 8,
+    "shape": 4,
+    "orientation": 15
+  },
+  "task_label": "shape_idx * 10 + object_idx",
+  "task_label_changes": false,
+  "context_definition": "all raw factors except the edited one",
+  "heldout_combination": {
+    "combo_factor": "shape",
+    "rule": "(edit_level + 3 * shape_level) mod 10 < 2"
+  },
+  "pairs_per_context": 6,
+  "splits": {
+    "train": {
+      "pairs": 172800,
+      "contexts": 28800,
+      "endpoint_images": 193418,
+      "target_heldout_combination": 0,
+      "both_endpoints_base_eval": 6990
+    },
+    "val": {
+      "pairs": 57600,
+      "contexts": 9600,
+      "endpoint_images": 64329,
+      "target_heldout_combination": 0,
+      "both_endpoints_base_eval": 2274
+    },
+    "test": {
+      "pairs": 57600,
+      "contexts": 9600,
+      "endpoint_images": 71789,
+      "target_heldout_combination": 11424,
+      "both_endpoints_base_eval": 2325
+    }
+  },
+  "duplicate_image_bytes_in_dataset": 0,
+  "checks": {
+    "pairs_differ_only_in_edit_factor": true,
+    "endpoint_ids_disjoint_across_splits": true,
+    "contexts_disjoint_across_splits": true,
+    "endpoint_image_hashes_disjoint_across_splits": true,
+    "no_heldout_combination_in_operator_train_or_val": true,
+    "task_label_invariant_for_every_pair": true,
+    "endpoints_seen_by_base_model": "all images were in the base model train or eval cache; both_endpoints_base_eval marks pairs never used for base-model gradient updates"
+  }
+}
